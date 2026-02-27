@@ -1,39 +1,37 @@
 use std::time::Instant;
-
-use crate::model::collection::*;
 use tauri::State;
 use tokio_util::sync::CancellationToken;
-
-use crate::commands::state::RequestRegistry;
-use crate::model::collection::Request;
+use crate::commands::state::{RequestRegistry, RunningRequest};
+use crate::model::collection::{Body, HttpMethod, KeyValue, Request};
 use crate::model::http::{HttpErrorDto, HttpResponseDto};
+use uuid::Uuid;
 
 
-
-fn err(kind: &str, message: impl Into<String>, detail: Option<String>) -> HttpErrorDto {
+fn err(kind: &str, message: impl Into<String>, detail: Option<String>, duration_ms: Option<u128>) -> HttpErrorDto {
   HttpErrorDto {
     kind: kind.to_string(),
     message: message.into(),
     detail,
+    duration_ms,
   }
 }
 
-fn map_reqwest_error(e: reqwest::Error) -> HttpErrorDto {
+fn map_reqwest_error(e: reqwest::Error, duration_ms: Option<u128>) -> HttpErrorDto {
   // Url invalide / parsing
   if e.is_builder() {
-    return err("invalid_url", "Invalid request (URL/headers/body)", Some(e.to_string()));
+    return err("invalid_url", "Invalid request (URL/headers/body)", Some(e.to_string()), duration_ms);
   }
 
   // Timeout
   if e.is_timeout() {
-    return err("timeout", "Request timed out", Some(e.to_string()));
+    return err("timeout", "Request timed out", Some(e.to_string()), duration_ms);
   }
 
   // TLS / certificat
   // (reqwest ne donne pas un helper "is_tls", on garde un heuristique soft)
   let msg = e.to_string();
   if msg.to_lowercase().contains("tls") || msg.to_lowercase().contains("certificate") {
-    return err("tls", "TLS / certificate error", Some(msg));
+    return err("tls", "TLS / certificate error", Some(msg), duration_ms);
   }
 
   // DNS (typo de domaine typiquement)
@@ -43,26 +41,26 @@ fn map_reqwest_error(e: reqwest::Error) -> HttpErrorDto {
     || msg.to_lowercase().contains("name or service not known")
     || msg.to_lowercase().contains("nodename nor servname provided")
   {
-    return err("dns", "DNS lookup failed (domain not found)", Some(msg));
+    return err("dns", "DNS lookup failed (domain not found)", Some(msg), duration_ms);
   }
 
   // Connect
   if e.is_connect() {
-    return err("connect", "Could not connect to server", Some(e.to_string()));
+    return err("connect", "Could not connect to server", Some(e.to_string()), duration_ms);
   }
 
-  err("unknown", "Request failed", Some(e.to_string()))
+  err("unknown", "Request failed", Some(e.to_string()), duration_ms)
 }
 pub async fn do_send_request(req: Request) -> Result<HttpResponseDto, HttpErrorDto> {
   // 1) validate URL early
   let url = reqwest::Url::parse(&req.url)
-    .map_err(|e| err("invalid_url", "Invalid URL", Some(e.to_string())))?;
+    .map_err(|e| err("invalid_url", "Invalid URL", Some(e.to_string()), None))?;
 
   // 2) client with timeout
   let client = reqwest::Client::builder()
-    .timeout(std::time::Duration::from_secs(60))
+    .timeout(std::time::Duration::from_millis(59998)) // 1 minutes max (on gère le timeout côté JS, on veut juste éviter les timeouts automatiques de reqwest)
     .build()
-    .map_err(|e| err("unknown", "Failed to create HTTP client", Some(e.to_string())))?;
+    .map_err(|e| err("unknown", "Failed to create HTTP client", Some(e.to_string()), None))?;
 
   // 3) method + builder
   let mut builder = match req.method {
@@ -112,7 +110,10 @@ pub async fn do_send_request(req: Request) -> Result<HttpResponseDto, HttpErrorD
 
   // 4) send + measure time even on failure
   let start = Instant::now();
-  let resp = builder.send().await.map_err(map_reqwest_error)?;
+  let resp = builder.send().await.map_err(|e| {
+    let d = start.elapsed().as_millis();
+    map_reqwest_error(e, Some(d))
+  })?;
   let duration_ms = start.elapsed().as_millis();
 
   let status = resp.status().as_u16();
@@ -125,7 +126,10 @@ pub async fn do_send_request(req: Request) -> Result<HttpResponseDto, HttpErrorD
     });
   }
 
-  let body_text = resp.text().await.map_err(map_reqwest_error)?;
+  let body_text = resp.text().await.map_err(|e| {
+    let d = start.elapsed().as_millis();
+    map_reqwest_error(e, Some(d))
+  })?;
 
   Ok(HttpResponseDto {
     status,
@@ -136,11 +140,12 @@ pub async fn do_send_request(req: Request) -> Result<HttpResponseDto, HttpErrorD
 }
 
 // helper
-fn cancelled() -> HttpErrorDto {
+fn cancelled(duration_ms: Option<u128>) -> HttpErrorDto {
   HttpErrorDto {
     kind: "cancelled".into(),
     message: "Request cancelled".into(),
     detail: None,
+    duration_ms,
   }
 }
 
@@ -150,35 +155,52 @@ pub async fn send_request(
   request_id: String,
   req: Request,
 ) -> Result<HttpResponseDto, HttpErrorDto> {
-  // create token + store
   let token = CancellationToken::new();
-  {
-    let mut map = registry.tokens.lock().unwrap();
-    map.insert(request_id.clone(), token.clone());
-  }
+  let run_id = Uuid::new_v4().to_string();
 
-  // Important: always cleanup (remove token) at the end
+  // store (cancel previous)
+  {
+    let mut map = registry.running.lock().unwrap();
+    if let Some(prev) = map.get(&request_id) {
+      prev.token.cancel();
+    }
+    map.insert(
+      request_id.clone(),
+      RunningRequest {
+        run_id: run_id.clone(),
+        token: token.clone(),
+      },
+    );
+  }
+  let start = Instant::now();
+
   let result = tokio::select! {
-    _ = token.cancelled() => Err(cancelled()),
-    res = do_send_request(req) => res, // on met ta logique HTTP existante dans do_send_request()
+    _ = token.cancelled() => Err(cancelled(Some(start.elapsed().as_millis()))),
+    res = do_send_request(req) => res,
   };
 
+  // cleanup only if still the same run_id
   {
-    let mut map = registry.tokens.lock().unwrap();
-    map.remove(&request_id);
+    let mut map = registry.running.lock().unwrap();
+    if let Some(cur) = map.get(&request_id) {
+      if cur.run_id == run_id {
+        map.remove(&request_id);
+      }
+    }
   }
 
   result
 }
+
 
 #[tauri::command]
 pub fn cancel_request(
   registry: State<'_, RequestRegistry>,
   request_id: String,
 ) -> Result<(), String> {
-  let map = registry.tokens.lock().unwrap();
-  if let Some(token) = map.get(&request_id) {
-    token.cancel();
+  let map = registry.running.lock().unwrap();
+  if let Some(r) = map.get(&request_id) {
+    r.token.cancel();
     return Ok(());
   }
   Err("No in-flight request with this id".into())

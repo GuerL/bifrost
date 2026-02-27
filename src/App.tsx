@@ -63,9 +63,10 @@ export default function App() {
             setResp(r);
             setStatus(`✅ ${r.status} in ${r.duration_ms}ms`);
         } catch (e: any) {
-            const kind = e?.kind ?? "unknown";
-            const msg = e?.message ?? String(e);
-            setStatus(`❌ ${kind}: ${msg}`);
+        const kind = e?.kind ?? "unknown";
+        const msg = e?.message ?? String(e);
+        const d = e?.duration_ms;
+        setStatus(`❌ ${kind}: ${msg}${d != null ? ` (${d}ms)` : ""}`);
         } finally {
             setPendingId(null);
         }
