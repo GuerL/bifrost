@@ -4,7 +4,7 @@ use crate::model::collection::*;
 use tauri::State;
 use tokio_util::sync::CancellationToken;
 
-use crate::model::state::RequestRegistry;
+use crate::commands::state::RequestRegistry;
 use crate::model::collection::Request;
 use crate::model::http::{HttpErrorDto, HttpResponseDto};
 

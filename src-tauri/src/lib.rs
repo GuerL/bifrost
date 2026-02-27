@@ -2,7 +2,7 @@
 mod commands;
 mod model;
 mod storage;
-use model::state::RequestRegistry;
+use commands::state::RequestRegistry;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
