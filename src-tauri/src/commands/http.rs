@@ -54,7 +54,7 @@ pub async fn send_request(req: Request) -> Result<HttpResponseDto, HttpErrorDto>
 
   // 2) client with timeout
   let client = reqwest::Client::builder()
-    .timeout(std::time::Duration::from_secs(20))
+    .timeout(std::time::Duration::from_secs(60))
     .build()
     .map_err(|e| err("unknown", "Failed to create HTTP client", Some(e.to_string())))?;
 

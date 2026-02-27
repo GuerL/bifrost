@@ -11,7 +11,7 @@ pub fn init_default_collection(app: AppHandle) -> Result<(), String> {
     version: 1,
     id: "default".into(),
     name: "Default".into(),
-    request_order: vec!["ping".into(), "ping-second".into()],
+    request_order: vec!["ping".into(), "ping-second".into(), "invalid-http".into(), "timeout-http".into()],
   };
 
   let ping = Request {
@@ -34,9 +34,31 @@ pub fn init_default_collection(app: AppHandle) -> Result<(), String> {
     body: Body::Json { value: serde_json::json!({"hello": "world"}) },
   };
 
+  let invalid_htp_request = Request {
+    id: "invalid-http".into(),
+    name: "Invalid HTTP method".into(),
+    method: HttpMethod::Get,
+    url: "htp://postman-echo.com/get".into(),
+    headers: vec![],
+    query: vec![],
+    body: Body::None,
+  };
+
+  let timeout_http_request = Request {
+      id: "timeout-http".into(),
+      name: "Request with timeout".into(),
+      method: HttpMethod::Get,
+      url: "http://10.255.255.1".into(),
+      headers: vec![],
+      query: vec![],
+      body: Body::None,
+  };
+
   let meta_path = collection_meta_path(&app, "default")?;
   let ping_path = request_path(&app, "default", "ping")?;
   let ping_second_path = request_path(&app, "default", "ping-second")?;
+  let invalid_http_path = request_path(&app, "default", "invalid-http")?;
+  let timeout_http_path = request_path(&app, "default", "timeout-http")?;
 
   // N'écrase pas si déjà existant
   if !meta_path.exists() {
@@ -48,6 +70,14 @@ pub fn init_default_collection(app: AppHandle) -> Result<(), String> {
 
   if !ping_second_path.exists() {
     write_json(&ping_second_path, &ping_second)?;
+  }
+
+  if !invalid_http_path.exists(){
+    write_json(&invalid_http_path, &invalid_htp_request)?;
+  }
+
+  if !timeout_http_path.exists() {
+    write_json(&timeout_http_path, &timeout_http_request)?;
   }
 
   Ok(())
