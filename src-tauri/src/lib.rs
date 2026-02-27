@@ -2,11 +2,12 @@
 mod commands;
 mod model;
 mod storage;
-
+use model::state::RequestRegistry;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(RequestRegistry::default())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
           commands::collection::greet,
@@ -17,6 +18,7 @@ pub fn run() {
           commands::collection::init_default_collection,
           commands::collection::overwrite_default,
           commands::http::send_request,
+          commands::http::cancel_request,
           commands::collection::list_collections,
           commands::collection::load_collection
         ])

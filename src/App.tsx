@@ -47,6 +47,34 @@ export default function App() {
     const [status, setStatus] = useState<string>("");
     const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
     const [resp, setResp] = useState<HttpResponseDto | null>(null);
+    const [pendingId, setPendingId] = useState<string | null>(null);
+
+    async function sendSelected() {
+        if (!current || !selectedRequestId) return;
+        const req = current.requests.find(r => r.id === selectedRequestId);
+        if (!req) return;
+
+        const id = crypto.randomUUID();
+        setPendingId(id);
+        setStatus("Sending...");
+
+        try {
+            const r = await invoke<HttpResponseDto>("send_request", { requestId: id, req });
+            setResp(r);
+            setStatus(`✅ ${r.status} in ${r.duration_ms}ms`);
+        } catch (e: any) {
+            const kind = e?.kind ?? "unknown";
+            const msg = e?.message ?? String(e);
+            setStatus(`❌ ${kind}: ${msg}`);
+        } finally {
+            setPendingId(null);
+        }
+    }
+
+    async function cancel() {
+        if (!pendingId) return;
+        await invoke("cancel_request", { requestId: pendingId });
+    }
 
 
     useEffect(() => {
@@ -110,22 +138,22 @@ export default function App() {
         }
     }
 
-    async function sendSelected() {
-        if (!current || !selectedRequestId) return;
-        const req = current.requests.find(r => r.id === selectedRequestId);
-        if (!req) return;
-
-        try {
-            const r = await invoke<HttpResponseDto>("send_request", { req });
-            setResp(r);
-            setStatus(`✅ ${r.status} in ${r.duration_ms}ms`);
-        } catch (e: any) {
-            // Tauri renvoie souvent l'erreur sous forme d'objet
-            const kind = e?.kind ?? "unknown";
-            const msg = e?.message ?? String(e);
-            setStatus(`❌ ${kind}: ${msg}`);
-        }
-    }
+    // async function sendSelected() {
+    //     if (!current || !selectedRequestId) return;
+    //     const req = current.requests.find(r => r.id === selectedRequestId);
+    //     if (!req) return;
+    //
+    //     try {
+    //         const r = await invoke<HttpResponseDto>("send_request", { req });
+    //         setResp(r);
+    //         setStatus(`✅ ${r.status} in ${r.duration_ms}ms`);
+    //     } catch (e: any) {
+    //         // Tauri renvoie souvent l'erreur sous forme d'objet
+    //         const kind = e?.kind ?? "unknown";
+    //         const msg = e?.message ?? String(e);
+    //         setStatus(`❌ ${kind}: ${msg}`);
+    //     }
+    // }
 
 
 
@@ -183,6 +211,11 @@ export default function App() {
                             <button onClick={sendSelected} disabled={!selectedRequestId}>
                                 Send
                             </button>
+                            {pendingId && (
+                                <button onClick={cancel}>
+                                    Cancel
+                                </button>
+                            )}
                         </div>
                     </>
                 )}

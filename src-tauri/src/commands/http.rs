@@ -1,7 +1,14 @@
 use std::time::Instant;
 
 use crate::model::collection::*;
-use crate::model::http::*;
+use tauri::State;
+use tokio_util::sync::CancellationToken;
+
+use crate::model::state::RequestRegistry;
+use crate::model::collection::Request;
+use crate::model::http::{HttpErrorDto, HttpResponseDto};
+
+
 
 fn err(kind: &str, message: impl Into<String>, detail: Option<String>) -> HttpErrorDto {
   HttpErrorDto {
@@ -46,8 +53,7 @@ fn map_reqwest_error(e: reqwest::Error) -> HttpErrorDto {
 
   err("unknown", "Request failed", Some(e.to_string()))
 }
-#[tauri::command]
-pub async fn send_request(req: Request) -> Result<HttpResponseDto, HttpErrorDto> {
+pub async fn do_send_request(req: Request) -> Result<HttpResponseDto, HttpErrorDto> {
   // 1) validate URL early
   let url = reqwest::Url::parse(&req.url)
     .map_err(|e| err("invalid_url", "Invalid URL", Some(e.to_string())))?;
@@ -127,4 +133,53 @@ pub async fn send_request(req: Request) -> Result<HttpResponseDto, HttpErrorDto>
     body_text,
     duration_ms,
   })
+}
+
+// helper
+fn cancelled() -> HttpErrorDto {
+  HttpErrorDto {
+    kind: "cancelled".into(),
+    message: "Request cancelled".into(),
+    detail: None,
+  }
+}
+
+#[tauri::command]
+pub async fn send_request(
+  registry: State<'_, RequestRegistry>,
+  request_id: String,
+  req: Request,
+) -> Result<HttpResponseDto, HttpErrorDto> {
+  // create token + store
+  let token = CancellationToken::new();
+  {
+    let mut map = registry.tokens.lock().unwrap();
+    map.insert(request_id.clone(), token.clone());
+  }
+
+  // Important: always cleanup (remove token) at the end
+  let result = tokio::select! {
+    _ = token.cancelled() => Err(cancelled()),
+    res = do_send_request(req) => res, // on met ta logique HTTP existante dans do_send_request()
+  };
+
+  {
+    let mut map = registry.tokens.lock().unwrap();
+    map.remove(&request_id);
+  }
+
+  result
+}
+
+#[tauri::command]
+pub fn cancel_request(
+  registry: State<'_, RequestRegistry>,
+  request_id: String,
+) -> Result<(), String> {
+  let map = registry.tokens.lock().unwrap();
+  if let Some(token) = map.get(&request_id) {
+    token.cancel();
+    return Ok(());
+  }
+  Err("No in-flight request with this id".into())
 }
