@@ -116,58 +116,18 @@ export default function App() {
         if (!req) return;
 
         try {
-            setStatus("Sending request...");
-            const r = await invoke<HttpResponseDto>("send_request", {req});
+            const r = await invoke<HttpResponseDto>("send_request", { req });
             setResp(r);
             setStatus(`✅ ${r.status} in ${r.duration_ms}ms`);
-        } catch (e) {
-            setStatus(`❌ Send failed: ${String(e)}`);
+        } catch (e: any) {
+            // Tauri renvoie souvent l'erreur sous forme d'objet
+            const kind = e?.kind ?? "unknown";
+            const msg = e?.message ?? String(e);
+            setStatus(`❌ ${kind}: ${msg}`);
         }
     }
 
 
-    async function createDefault() {
-        if (!collectionPath) return;
-
-        // On crée le dossier parent si besoin via Rust… (pas encore)
-        // Hack temporaire: on écrira direct, et si ça fail on fera mkdir dans l’étape suivante.
-
-        const defaultCollection: Collection = {
-            version: 1,
-            name: "Default",
-            requests: [
-                {
-                    id: "ping",
-                    name: "Ping (GET)",
-                    method: "GET",
-                    url: "https://postman-echo.com/get",
-                },
-            ],
-        };
-
-        try {
-            setStatus("Writing collection...");
-            await invoke("write_text_file", {
-                path: collectionPath,
-                content: JSON.stringify(defaultCollection, null, 2),
-            });
-            setStatus("✅ Written. Now click Load.");
-        } catch (e) {
-            setStatus(`❌ Write failed: ${String(e)}`);
-        }
-    }
-
-    async function load() {
-        if (!collectionPath) return;
-        try {
-            setStatus("Reading collection...");
-            const text = await invoke<string>("read_text_file", {path: collectionPath});
-            setCollection(JSON.parse(text));
-            setStatus("✅ Loaded.");
-        } catch (e) {
-            setStatus(`❌ Load failed: ${String(e)}`);
-        }
-    }
 
     return (
         <div style={{padding: 24, fontFamily: "system-ui", display: "flex", gap: 24}}>
