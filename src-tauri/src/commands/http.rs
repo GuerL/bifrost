@@ -6,6 +6,14 @@ use crate::model::collection::{Body, HttpMethod, KeyValue, Request};
 use crate::model::http::{HttpErrorDto, HttpResponseDto};
 use uuid::Uuid;
 
+#[tauri::command]
+pub fn is_pending(
+  registry: State<'_, RequestRegistry>,
+  request_id: String,
+) -> bool {
+  let map = registry.running.lock().unwrap();
+  map.contains_key(&request_id)
+}
 
 fn err(kind: &str, message: impl Into<String>, detail: Option<String>, duration_ms: Option<u128>) -> HttpErrorDto {
   HttpErrorDto {

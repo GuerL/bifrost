@@ -1,16 +1,6 @@
-import {useEffect, useMemo, useState} from "react";
-import {invoke} from "@tauri-apps/api/core";
-
-type Collection = {
-    version: number;
-    name: string;
-    requests: Array<{
-        id: string;
-        name: string;
-        method: string;
-        url: string;
-    }>;
-};
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { isPending } from "./helpers/HttpHelper";
 
 type CollectionMeta = {
     version: number;
@@ -38,50 +28,17 @@ type HttpResponseDto = {
     duration_ms: number;
 };
 
-
 export default function App() {
     const [dataDir, setDataDir] = useState<string>("");
-    const [collection, setCollection] = useState<Collection | null>(null);
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [current, setCurrent] = useState<CollectionLoaded | null>(null);
     const [status, setStatus] = useState<string>("");
     const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
     const [resp, setResp] = useState<HttpResponseDto | null>(null);
-    const [pendingId, setPendingId] = useState<string | null>(null);
 
-    async function sendSelected() {
-        if (!current || !selectedRequestId) return;
-        const req = current.requests.find(r => r.id === selectedRequestId);
-        if (!req) return;
+    const [pending, setPending] = useState(false);
 
-        const id = crypto.randomUUID();
-        setPendingId(id);
-        setStatus("Sending...");
-
-        try {
-            const r = await invoke<HttpResponseDto>("send_request", { requestId: id, req });
-            setResp(r);
-            setStatus(`✅ ${r.status} in ${r.duration_ms}ms`);
-        } catch (e: any) {
-        const kind = e?.kind ?? "unknown";
-        const msg = e?.message ?? String(e);
-        const d = e?.duration_ms;
-        setStatus(`❌ ${kind}: ${msg}${d != null ? ` (${d}ms)` : ""}`);
-        } finally {
-            setPendingId(null);
-        }
-    }
-
-    async function cancel() {
-        if (!pendingId) return;
-        await invoke("cancel_request", { requestId: pendingId });
-    }
-
-
-    useEffect(() => {
-        initDefault();
-    }, []);
-
+    // fetch app data dir once
     useEffect(() => {
         (async () => {
             const dir = await invoke<string>("app_data_dir");
@@ -89,11 +46,38 @@ export default function App() {
         })().catch((e) => setStatus(String(e)));
     }, []);
 
-    const collectionPath = useMemo(() => {
-        if (!dataDir) return "";
-        // simple: on écrit un seul fichier pour l’instant
-        return `${dataDir}/collections/default.json`;
-    }, [dataDir]);
+    // init default on mount
+    useEffect(() => {
+        initDefault();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // whenever selection changes, ask backend if this request slot is pending
+    useEffect(() => {
+        if (!selectedRequestId) {
+            setPending(false);
+            return;
+        }
+
+        let cancelled = false;
+        (async () => {
+            try {
+                const p = await isPending(selectedRequestId);
+                if (!cancelled) setPending(p);
+            } catch {
+                if (!cancelled) setPending(false);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedRequestId]);
+
+    // const collectionPath = useMemo(() => {
+    //     if (!dataDir) return "";
+    //     return `${dataDir}/collections/default.json`;
+    // }, [dataDir]);
 
     async function initDefault() {
         try {
@@ -118,7 +102,7 @@ export default function App() {
     async function loadCollection(id: string) {
         try {
             setStatus(`Loading ${id}...`);
-            const col = await invoke<CollectionLoaded>("load_collection", {id});
+            const col = await invoke<CollectionLoaded>("load_collection", { id });
             setCurrent(col);
             setSelectedRequestId(col.requests[0]?.id ?? null);
             setResp(null);
@@ -139,94 +123,119 @@ export default function App() {
         }
     }
 
-    // async function sendSelected() {
-    //     if (!current || !selectedRequestId) return;
-    //     const req = current.requests.find(r => r.id === selectedRequestId);
-    //     if (!req) return;
-    //
-    //     try {
-    //         const r = await invoke<HttpResponseDto>("send_request", { req });
-    //         setResp(r);
-    //         setStatus(`✅ ${r.status} in ${r.duration_ms}ms`);
-    //     } catch (e: any) {
-    //         // Tauri renvoie souvent l'erreur sous forme d'objet
-    //         const kind = e?.kind ?? "unknown";
-    //         const msg = e?.message ?? String(e);
-    //         setStatus(`❌ ${kind}: ${msg}`);
-    //     }
-    // }
+    async function sendSelected() {
+        if (!current || !selectedRequestId) return;
+        const req = current.requests.find((r) => r.id === selectedRequestId);
+        if (!req) return;
 
+        setResp(null);
+        setPending(true);
+        setStatus("Sending...");
 
+        try {
+            // IMPORTANT: requestId = slot id (ex: "ping")
+            const r = await invoke<HttpResponseDto>("send_request", {
+                requestId: selectedRequestId,
+                req,
+            });
+            setResp(r);
+            setStatus(`✅ ${r.status} in ${r.duration_ms}ms`);
+        } catch (e: any) {
+            const kind = e?.kind ?? "unknown";
+            const msg = e?.message ?? String(e);
+            const d = e?.duration_ms;
+            setStatus(`❌ ${kind}: ${msg}${d != null ? ` (${d}ms)` : ""}`);
+        } finally {
+            // ask backend to be sure (in case it was cancelled/replaced)
+            const p = await isPending(selectedRequestId).catch(() => false);
+            setPending(p);
+        }
+    }
+
+    async function cancel() {
+        if (!selectedRequestId) return;
+        try {
+            await invoke("cancel_request", { requestId: selectedRequestId });
+            setStatus("⛔ Cancel requested");
+        } catch (e) {
+            setStatus(`❌ Cancel failed: ${String(e)}`);
+        } finally {
+            const p = await isPending(selectedRequestId).catch(() => false);
+            setPending(p);
+        }
+    }
 
     return (
-        <div style={{padding: 24, fontFamily: "system-ui", display: "flex", gap: 24}}>
+        <div style={{ padding: 24, fontFamily: "system-ui", display: "flex", gap: 24 }}>
             {/* Sidebar */}
-            <div style={{width: 240}}>
+            <div style={{ width: 240 }}>
                 <h3>Collections</h3>
 
-                <button onClick={initDefault}>Init default</button>
-                {" "}
-                <button onClick={refreshCollections}>Refresh</button>
-                <button onClick={overwriteDefault}>Overwrite default</button>
-                <button onClick={() => invoke("open_app_data_dir")}>
-                    Open data folder
-                </button>
+                <button onClick={initDefault}>Init default</button>{" "}
+                <button onClick={refreshCollections}>Refresh</button>{" "}
+                <button onClick={overwriteDefault}>Overwrite default</button>{" "}
+                <button onClick={() => invoke("open_app_data_dir")}>Open data folder</button>
 
-                <ul style={{marginTop: 12}}>
+                <ul style={{ marginTop: 12 }}>
                     {collections.map((c) => (
                         <li key={c.id}>
-                            <button onClick={() => loadCollection(c.id)}>
-                                {c.name}
-                            </button>
+                            <button onClick={() => loadCollection(c.id)}>{c.name}</button>
                         </li>
                     ))}
                 </ul>
             </div>
 
             {/* Main */}
-
-            <div style={{flex: 1}}>
+            <div style={{ flex: 1 }}>
                 <h3>Status</h3>
                 <div>{status}</div>
 
-                <h3 style={{marginTop: 16}}>Loaded collection</h3>
-                <pre style={{background: "#111", color: "#eee", padding: 12}}>
-                  {current ? JSON.stringify(current, null, 2) : "None"}
-                </pre>
                 {current && (
                     <>
-                        <h3 style={{marginTop: 16}}>Requests</h3>
-                        <div style={{display: "flex", gap: 8, flexWrap: "wrap"}}>
-                            {current.requests.map(r => (
+                        <h3 style={{ marginTop: 16 }}>Requests</h3>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                            {current.requests.map((r) => (
                                 <button
                                     key={r.id}
                                     onClick={() => {
                                         setSelectedRequestId(r.id);
                                         setResp(null);
                                     }}
-                                    style={{fontWeight: r.id === selectedRequestId ? "bold" : "normal"}}
+                                    style={{ fontWeight: r.id === selectedRequestId ? "bold" : "normal" }}
                                 >
                                     {r.method} {r.name}
                                 </button>
                             ))}
-                            <button onClick={sendSelected} disabled={!selectedRequestId}>
+
+                            <button onClick={sendSelected} disabled={!selectedRequestId || pending}>
                                 Send
                             </button>
-                            {pendingId && (
-                                <button onClick={cancel}>
-                                    Cancel
-                                </button>
-                            )}
+
+                            <button onClick={cancel} disabled={!selectedRequestId || !pending}>
+                                Cancel
+                            </button>
+
+                            <span style={{ opacity: 0.7 }}>
+                {selectedRequestId ? (pending ? "⏳ pending" : "✅ idle") : ""}
+              </span>
                         </div>
+
+                        <h3 style={{ marginTop: 16 }}>Response</h3>
+                        <pre style={{ background: "#111", color: "#eee", padding: 12 }}>
+              {resp ? JSON.stringify(resp, null, 2) : "No response yet."}
+            </pre>
                     </>
                 )}
 
-                <h3 style={{marginTop: 16}}>Response</h3>
-                <pre style={{background: "#111", color: "#eee", padding: 12}}>
-                  {resp ? JSON.stringify(resp, null, 2) : "No response yet."}
-                </pre>
+                {!current && (
+                    <>
+                        <h3 style={{ marginTop: 16 }}>Loaded collection</h3>
+                        <pre style={{ background: "#111", color: "#eee", padding: 12 }}>
+              None
+            </pre>
+                    </>
+                )}
             </div>
         </div>
-
     );
 }

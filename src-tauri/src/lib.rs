@@ -18,6 +18,7 @@ pub fn run() {
           commands::collection::init_default_collection,
           commands::collection::overwrite_default,
           commands::http::send_request,
+          commands::http::is_pending,
           commands::http::cancel_request,
           commands::collection::list_collections,
           commands::collection::load_collection
