@@ -49,16 +49,15 @@ export async function overwriteDefault(setStatus: (s: string) => void, setCollec
 export async function devCreate(current: CollectionLoaded | null, setCurrent: (c: CollectionLoaded) => void, setSelectedRequestId: (id: string | null) => void, setResp: (r: HttpResponseDto | null) => void, setStatus: (s: string) => void) {
     if (!current) return;
 
-    const req: Request = {
-        id: crypto.randomUUID(),
-        name: "New Request",
-        method: "get",
-        url: "https://postman-echo.com/get",
-        headers:[],
-            query: [],
-        body: {type: "none", content: ""}
-
-    };
+   const req: Request = {
+     id: crypto.randomUUID(),
+     name: "New Request",
+     method: "get",
+     url: "https://postman-echo.com/get",
+     headers: [],
+     query: [],
+     body: { type: "none" },
+   };
 
     await invoke("create_request", { collectionId: current.meta.id, request: req });
     await loadCollection(current.meta.id, setCurrent, setSelectedRequestId, setResp, setStatus); // reload

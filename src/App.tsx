@@ -16,14 +16,22 @@ export type CollectionMeta = {
     request_order: string[];
 };
 
+export type KeyValue = { key: string; value: string };
+
+export type Body =
+  | { type: "none" }
+  | { type: "raw"; content_type: string; text: string }
+  | { type: "json"; value: any }
+  | { type: "form"; fields: KeyValue[] };
+
 export type Request = {
-    id: string;
-    name: string;
-    method: string;
-    url: string;
-    headers?: { key: string; value: string }[];
-    query?: { key: string; value: string }[];
-    body?: { type: "text"; content: string } | { type: "file"; path: string };
+  id: string;
+  name: string;
+  method: "get" | "post" | "put" | "patch" | "delete" | "head" | "options";
+  url: string;
+  headers: KeyValue[];
+  query: KeyValue[];
+  body: Body;
 };
 
 export type CollectionLoaded = {
@@ -58,7 +66,7 @@ export default function App() {
 
     // init default on mount
     useEffect(() => {
-        initDefault(setStatus, refreshCollections);
+        initDefault(setStatus, setCollections);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
