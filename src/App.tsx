@@ -56,6 +56,8 @@ export default function App() {
 
     const [pending, setPending] = useState(false);
 
+    const [editorText, setEditorText] = useState("");
+
     // fetch app data dir once
     useEffect(() => {
         (async () => {
@@ -92,10 +94,29 @@ export default function App() {
         };
     }, [selectedRequestId]);
 
-    // const collectionPath = useMemo(() => {
-    //     if (!dataDir) return "";
-    //     return `${dataDir}/collections/default.json`;
-    // }, [dataDir]);
+    async function saveFromEditor() {
+        if (!current) return;
+        try {
+            const parsed = JSON.parse(editorText) as Request;
+            await invoke("update_request", { collectionId: current.meta.id, request: parsed });
+            await loadCollection(current.meta.id, setCurrent, setSelectedRequestId, setResp, setStatus);
+            setStatus("✅ Saved");
+        } catch (e) {
+            setStatus(`❌ Save failed: ${String(e)}`);
+        }
+    }
+
+    async function createFromEditor() {
+        if (!current) return;
+        try {
+            const parsed = JSON.parse(editorText) as Request;
+            await invoke("create_request", { collectionId: current.meta.id, request: parsed });
+            await loadCollection(current.meta.id, setCurrent, setSelectedRequestId, setResp, setStatus);
+            setStatus("✅ Created");
+        } catch (e) {
+            setStatus(`❌ Create failed: ${String(e)}`);
+        }
+    }
 
 
 
@@ -145,6 +166,8 @@ export default function App() {
         <div style={{ padding: 24, fontFamily: "system-ui", display: "flex", gap: 24 }}>
             {/* Sidebar */}
             <div style={{ width: 240 }}>
+                <h3>Status</h3>
+                <div>{status}</div>
                 <h3>Collections</h3>
 
                 <button onClick={()=>initDefault(setStatus,setCollections )}>Init default</button>{" "}
@@ -154,6 +177,12 @@ export default function App() {
                 <button onClick={()=> devCreate(current, setCurrent, setSelectedRequestId, setResp, setStatus)} disabled={!current}>+ New</button>
                 <button onClick={()=>devUpdate(current, selectedRequestId, setCurrent, setSelectedRequestId, setResp,setStatus)} disabled={!current || !selectedRequestId}>Save</button>
                 <button onClick={()=>devDelete(current, selectedRequestId, setCurrent, setSelectedRequestId, setResp, setStatus)} disabled={!current || !selectedRequestId}>Delete</button>
+                <button onClick={saveFromEditor} disabled={!current}>
+                    Save (editor)
+                </button>
+                <button onClick={createFromEditor} disabled={!current}>
+                    Create (editor)
+                </button>
 
                 <ul style={{ marginTop: 12 }}>
                     {collections.map((c) => (
@@ -166,8 +195,6 @@ export default function App() {
 
             {/* Main */}
             <div style={{ flex: 1 }}>
-                <h3>Status</h3>
-                <div>{status}</div>
 
                 {current && (
                     <>
@@ -179,6 +206,7 @@ export default function App() {
                                     onClick={() => {
                                         setSelectedRequestId(r.id);
                                         setResp(null);
+                                        setEditorText(JSON.stringify(r, null, 2));
                                     }}
                                     style={{ fontWeight: r.id === selectedRequestId ? "bold" : "normal" }}
                                 >
@@ -198,6 +226,13 @@ export default function App() {
                 {selectedRequestId ? (pending ? "⏳ pending" : "✅ idle") : ""}
               </span>
                         </div>
+                        <h3 style={{ marginTop: 16 }}>Editor</h3>
+                        <textarea
+                            value={editorText}
+                            onChange={(e) => setEditorText(e.target.value)}
+                            rows={14}
+                            style={{ width: "100%", fontFamily: "monospace" }}
+                        />
 
                         <h3 style={{ marginTop: 16 }}>Response</h3>
                         <pre style={{ background: "#111", color: "#eee", padding: 12 }}>
