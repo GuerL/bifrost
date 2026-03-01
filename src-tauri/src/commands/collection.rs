@@ -138,7 +138,87 @@ pub fn load_collection(app: AppHandle, id: String) -> Result<CollectionLoaded, S
   Ok(CollectionLoaded { meta, requests })
 }
 
+#[tauri::command]
+pub fn create_request(app: AppHandle, collection_id: String, request: Request) -> Result<(), String> {
+  if request.id.trim().is_empty() {
+    return Err("Request id is empty".into());
+  }
 
+  let meta_path = collection_meta_path(&app, &collection_id)?;
+  if !meta_path.exists() {
+    return Err(format!("Collection not found: {}", collection_id));
+  }
+
+  let mut meta = read_json::<CollectionMeta>(&meta_path)?;
+
+  let req_path = request_path(&app, &collection_id, &request.id)?;
+  if req_path.exists() {
+    return Err(format!("Request already exists: {}", request.id));
+  }
+
+  // write request file
+  write_json(&req_path, &request)?;
+
+  // update order
+  if !meta.request_order.iter().any(|x| x == &request.id) {
+    meta.request_order.push(request.id.clone());
+    write_json(&meta_path, &meta)?;
+  }
+
+  Ok(())
+}
+
+#[tauri::command]
+pub fn update_request(app: AppHandle, collection_id: String, request: Request) -> Result<(), String> {
+  if request.id.trim().is_empty() {
+    return Err("Request id is empty".into());
+  }
+
+  let meta_path = collection_meta_path(&app, &collection_id)?;
+  if !meta_path.exists() {
+    return Err(format!("Collection not found: {}", collection_id));
+  }
+
+  let mut meta = read_json::<CollectionMeta>(&meta_path)?;
+
+  let req_path = request_path(&app, &collection_id, &request.id)?;
+
+  // write request (overwrite)
+  write_json(&req_path, &request)?;
+
+  // ensure order contains it
+  if !meta.request_order.iter().any(|x| x == &request.id) {
+    meta.request_order.push(request.id.clone());
+    write_json(&meta_path, &meta)?;
+  }
+
+  Ok(())
+}
+
+#[tauri::command]
+pub fn delete_request(app: AppHandle, collection_id: String, request_id: String) -> Result<(), String> {
+  if request_id.trim().is_empty() {
+    return Err("Request id is empty".into());
+  }
+
+  let meta_path = collection_meta_path(&app, &collection_id)?;
+  if !meta_path.exists() {
+    return Err(format!("Collection not found: {}", collection_id));
+  }
+
+  let mut meta = read_json::<CollectionMeta>(&meta_path)?;
+
+  let req_path = request_path(&app, &collection_id, &request_id)?;
+  if req_path.exists() {
+    std::fs::remove_file(&req_path).map_err(|e| e.to_string())?;
+  }
+
+  // remove from order
+  meta.request_order.retain(|x| x != &request_id);
+  write_json(&meta_path, &meta)?;
+
+  Ok(())
+}
 
 #[tauri::command]
 pub fn greet(name: &str) -> String {

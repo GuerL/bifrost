@@ -1,27 +1,37 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isPending } from "./helpers/HttpHelper";
+import {
+    devCreate, devDelete, devUpdate,
+    initDefault,
+    loadCollection,
+    overwriteDefault,
+    refreshCollections
+} from "./helpers/CollectionsHelper.ts";
 
-type CollectionMeta = {
+export type CollectionMeta = {
     version: number;
     id: string;
     name: string;
     request_order: string[];
 };
 
-type Request = {
+export type Request = {
     id: string;
     name: string;
     method: string;
     url: string;
+    headers?: { key: string; value: string }[];
+    query?: { key: string; value: string }[];
+    body?: { type: "text"; content: string } | { type: "file"; path: string };
 };
 
-type CollectionLoaded = {
+export type CollectionLoaded = {
     meta: CollectionMeta;
     requests: Request[];
 };
 
-type HttpResponseDto = {
+export type HttpResponseDto = {
     status: number;
     headers: { key: string; value: string }[];
     body_text: string;
@@ -48,7 +58,7 @@ export default function App() {
 
     // init default on mount
     useEffect(() => {
-        initDefault();
+        initDefault(setStatus, refreshCollections);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -79,49 +89,7 @@ export default function App() {
     //     return `${dataDir}/collections/default.json`;
     // }, [dataDir]);
 
-    async function initDefault() {
-        try {
-            setStatus("Init default collection...");
-            await invoke("init_default_collection");
-            await refreshCollections();
-            setStatus("✅ Default collection ready");
-        } catch (e) {
-            setStatus(`❌ Init failed: ${String(e)}`);
-        }
-    }
 
-    async function refreshCollections() {
-        try {
-            const list = await invoke<CollectionMeta[]>("list_collections");
-            setCollections(list);
-        } catch (e) {
-            setStatus(`❌ List failed: ${String(e)}`);
-        }
-    }
-
-    async function loadCollection(id: string) {
-        try {
-            setStatus(`Loading ${id}...`);
-            const col = await invoke<CollectionLoaded>("load_collection", { id });
-            setCurrent(col);
-            setSelectedRequestId(col.requests[0]?.id ?? null);
-            setResp(null);
-            setStatus(`✅ Loaded ${id}`);
-        } catch (e) {
-            setStatus(`❌ Load failed: ${String(e)}`);
-        }
-    }
-
-    async function overwriteDefault() {
-        try {
-            setStatus("Overwriting default collection...");
-            await invoke("overwrite_default");
-            await refreshCollections();
-            setStatus("✅ Default collection overwritten");
-        } catch (e) {
-            setStatus(`❌ Overwrite failed: ${String(e)}`);
-        }
-    }
 
     async function sendSelected() {
         if (!current || !selectedRequestId) return;
@@ -171,15 +139,18 @@ export default function App() {
             <div style={{ width: 240 }}>
                 <h3>Collections</h3>
 
-                <button onClick={initDefault}>Init default</button>{" "}
-                <button onClick={refreshCollections}>Refresh</button>{" "}
-                <button onClick={overwriteDefault}>Overwrite default</button>{" "}
+                <button onClick={()=>initDefault(setStatus,setCollections )}>Init default</button>{" "}
+                <button onClick={()=> refreshCollections(setCollections, setStatus)}>Refresh</button>{" "}
+                <button onClick={()=> overwriteDefault(setStatus, setCollections)}>Overwrite default</button>{" "}
                 <button onClick={() => invoke("open_app_data_dir")}>Open data folder</button>
+                <button onClick={()=> devCreate(current, setCurrent, setSelectedRequestId, setResp, setStatus)} disabled={!current}>+ New</button>
+                <button onClick={()=>devUpdate(current, selectedRequestId, setCurrent, setSelectedRequestId, setResp,setStatus)} disabled={!current || !selectedRequestId}>Save</button>
+                <button onClick={()=>devDelete(current, selectedRequestId, setCurrent, setSelectedRequestId, setResp, setStatus)} disabled={!current || !selectedRequestId}>Delete</button>
 
                 <ul style={{ marginTop: 12 }}>
                     {collections.map((c) => (
                         <li key={c.id}>
-                            <button onClick={() => loadCollection(c.id)}>{c.name}</button>
+                            <button onClick={() => loadCollection(c.id, setCurrent, setSelectedRequestId,setResp, setStatus )}>{c.name}</button>
                         </li>
                     ))}
                 </ul>

@@ -20,6 +20,9 @@ pub fn run() {
           commands::http::send_request,
           commands::http::is_pending,
           commands::http::cancel_request,
+          commands::collection::create_request,
+          commands::collection::update_request,
+          commands::collection::delete_request,
           commands::collection::list_collections,
           commands::collection::load_collection
         ])
