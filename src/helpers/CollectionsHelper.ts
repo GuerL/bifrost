@@ -53,7 +53,7 @@ export async function devCreate(current: CollectionLoaded | null, setCurrent: (c
      id: crypto.randomUUID(),
      name: "New Request",
      method: "get",
-     url: "https://postman-echo.com/get",
+     url: "",
      headers: [],
      query: [],
      body: { type: "none" },

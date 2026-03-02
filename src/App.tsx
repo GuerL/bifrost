@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isPending } from "./helpers/HttpHelper";
+import Editor from "@monaco-editor/react";
 import {
-    devCreate, devDelete, devUpdate,
+    devCreate, devDelete,
     initDefault,
     loadCollection,
     overwriteDefault,
@@ -162,6 +163,16 @@ export default function App() {
         }
     }
 
+    function formatJson() {
+        try {
+            const obj = JSON.parse(editorText);
+            setEditorText(JSON.stringify(obj, null, 2));
+            setStatus("✅ Formatted");
+        } catch (e) {
+            setStatus(`❌ JSON invalid: ${String(e)}`);
+        }
+    }
+
     return (
         <div style={{ padding: 24, fontFamily: "system-ui", display: "flex", gap: 24 }}>
             {/* Sidebar */}
@@ -175,7 +186,6 @@ export default function App() {
                 <button onClick={()=> overwriteDefault(setStatus, setCollections)}>Overwrite default</button>{" "}
                 <button onClick={() => invoke("open_app_data_dir")}>Open data folder</button>
                 <button onClick={()=> devCreate(current, setCurrent, setSelectedRequestId, setResp, setStatus)} disabled={!current}>+ New</button>
-                <button onClick={()=>devUpdate(current, selectedRequestId, setCurrent, setSelectedRequestId, setResp,setStatus)} disabled={!current || !selectedRequestId}>Save</button>
                 <button onClick={()=>devDelete(current, selectedRequestId, setCurrent, setSelectedRequestId, setResp, setStatus)} disabled={!current || !selectedRequestId}>Delete</button>
                 <button onClick={saveFromEditor} disabled={!current}>
                     Save (editor)
@@ -183,6 +193,7 @@ export default function App() {
                 <button onClick={createFromEditor} disabled={!current}>
                     Create (editor)
                 </button>
+                <button onClick={formatJson} disabled={!current}>Format JSON</button>
 
                 <ul style={{ marginTop: 12 }}>
                     {collections.map((c) => (
@@ -199,7 +210,7 @@ export default function App() {
                 {current && (
                     <>
                         <h3 style={{ marginTop: 16 }}>Requests</h3>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <div style={{ display: "flex", flexDirection:"row", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                             {current.requests.map((r) => (
                                 <button
                                     key={r.id}
@@ -227,15 +238,26 @@ export default function App() {
               </span>
                         </div>
                         <h3 style={{ marginTop: 16 }}>Editor</h3>
-                        <textarea
+                        <Editor
+                            height="45vh"
+                            width="70vw"
+                            language="json"
+                            theme="vs-dark"
                             value={editorText}
-                            onChange={(e) => setEditorText(e.target.value)}
-                            rows={14}
-                            style={{ width: "100%", fontFamily: "monospace" }}
+                            onChange={(v) => setEditorText(v ?? "")}
+                            options={{
+                                minimap: { enabled: false },
+                                fontSize: 13,
+                                wordWrap: "on",
+                                scrollBeyondLastLine: false,
+                                formatOnPaste: true,
+                                formatOnType: true,
+                                quickSuggestions: true,
+                                tabSize: 2,
+                            }}
                         />
-
                         <h3 style={{ marginTop: 16 }}>Response</h3>
-                        <pre style={{ background: "#111", color: "#eee", padding: 12 }}>
+                        <pre style={{ background: "#111", color: "#eee", width: "70vw", height: "20vh", overflow: "auto" }}>
               {resp ? JSON.stringify(resp, null, 2) : "No response yet."}
             </pre>
                     </>
