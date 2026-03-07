@@ -99,6 +99,20 @@ export default function App() {
         };
     }, [selectedRequestId]);
 
+    useEffect(() => {
+        if (!current || !selectedRequestId) {
+            setDraft(null);
+            setEditorText("");
+            return;
+        }
+
+        const req = current.requests.find((r) => r.id === selectedRequestId);
+        if (req) {
+            setDraft(structuredClone(req));
+            setEditorText(JSON.stringify(req, null, 2));
+        }
+    }, [current, selectedRequestId]);
+
     async function saveFromEditor() {
         if (!current) return;
         try {
@@ -117,17 +131,24 @@ export default function App() {
 
     async function saveDraft() {
         if (!current || !draft) return;
-        await invoke("update_request", { collectionId: current.meta.id, request: draft });
-        await loadCollection(current.meta.id, setCurrent, setSelectedRequestId, setResp, setStatus);
-        setSelectedRequestId(draft.id);
+        try {
+            await invoke("update_request", { collectionId: current.meta.id, request: draft });
+            await loadCollection(current.meta.id, setCurrent, setSelectedRequestId, setResp, setStatus);
+            setSelectedRequestId(draft.id);
+            setStatus("✅ Draft saved");
+        } catch (e) {
+            setStatus(`❌ Save failed: ${String(e)}`);
+        }
     }
 
-
-
-
     async function sendSelected() {
-        if (!current || !selectedRequestId) return;
-        const req = current.requests.find((r) => r.id === selectedRequestId);
+        if (!selectedRequestId) return;
+
+        const req =
+            draft && draft.id === selectedRequestId
+                ? draft
+                : current?.requests.find((r) => r.id === selectedRequestId);
+
         if (!req) return;
 
         setResp(null);
@@ -135,7 +156,6 @@ export default function App() {
         setStatus("Sending...");
 
         try {
-            // IMPORTANT: requestId = slot id (ex: "ping")
             const r = await invoke<HttpResponseDto>("send_request", {
                 requestId: selectedRequestId,
                 req,
@@ -148,7 +168,6 @@ export default function App() {
             const d = e?.duration_ms;
             setStatus(`❌ ${kind}: ${msg}${d != null ? ` (${d}ms)` : ""}`);
         } finally {
-            // ask backend to be sure (in case it was cancelled/replaced)
             const p = await isPending(selectedRequestId).catch(() => false);
             setPending(p);
         }
@@ -184,6 +203,21 @@ export default function App() {
         setEditorText(JSON.stringify(r, null, 2));
     }
 
+    function applyEditorToDraft() {
+        if (!draft) return;
+        try {
+            const parsed = JSON.parse(editorText) as Request;
+            if (parsed.id !== draft.id) {
+                setStatus("❌ ID cannot be changed here. Use Rename.");
+                return;
+            }
+            setDraft(parsed);
+            setStatus("✅ JSON applied to draft");
+        } catch (e) {
+            setStatus(`❌ JSON invalid: ${String(e)}`);
+        }
+    }
+
     return (
         <div style={{ padding: 24, fontFamily: "system-ui", display: "flex", gap: 24 }}>
             {/* Sidebar */}
@@ -197,8 +231,11 @@ export default function App() {
                 <button onClick={() => invoke("open_app_data_dir")}>Open data folder</button>
                 <button onClick={()=> devCreate(current, setCurrent, setSelectedRequestId, setResp, setStatus, setSelection)} disabled={!current}>+ New</button>
                 <button onClick={()=>devDelete(current, selectedRequestId, setCurrent, setSelectedRequestId, setResp, setStatus)} disabled={!current || !selectedRequestId}>Delete</button>
-                <button onClick={saveFromEditor} disabled={!current}>
-                    Save (editor)
+                {/*<button onClick={saveFromEditor} disabled={!current}>*/}
+                {/*    Save (editor)*/}
+                {/*</button>*/}
+                <button onClick={applyEditorToDraft} disabled={!draft}>
+                    Apply JSON
                 </button>
                 <button onClick={saveDraft} disabled={!current || !draft}>
                     Save (draft)
@@ -215,7 +252,7 @@ export default function App() {
             </div>
 
             {/* Main */}
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
 
                 {current && (
                     <>
@@ -235,7 +272,10 @@ export default function App() {
 
 
                         </div>
-                        <h3 style={{ marginTop: 16 }}>Editor</h3>
+                        <div style={{ display: "flex",justifyContent:"space-between", alignItems: "center", gap: 8, marginTop: 12 }}>
+                            <h3>Editor</h3>
+                            {selectedRequestId ? (pending ? "⏳ pending" : "✅ idle") : ""}
+                        </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <select
                             value={draft?.method ?? "get"}
@@ -267,10 +307,10 @@ export default function App() {
               </span>
                         </div>
                         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                            <button onClick={() => setTab("headers")}>Headers</button>
-                            <button onClick={() => setTab("query")}>Query</button>
-                            <button onClick={() => setTab("body")}>Body</button>
-                            <button onClick={() => setTab("json")}>Raw JSON</button>
+                            <button onClick={() => setTab("headers")} style={{ fontWeight: tab === "headers" ? "bold" : "normal" }}>Headers</button>
+                            <button onClick={() => setTab("query")} style={{ fontWeight: tab === "query" ? "bold" : "normal" }}>Query</button>
+                            <button onClick={() => setTab("body")} style={{ fontWeight: tab === "body" ? "bold" : "normal" }}>Body</button>
+                            <button onClick={() => setTab("json")} style={{ fontWeight: tab === "json" ? "bold" : "normal" }}>Raw JSON</button>
                         </div>
                         {tab === "headers" && draft && (
                             <KeyValueTable
@@ -340,6 +380,13 @@ export default function App() {
                             </div>
                         )}
 
+                        {tab === "body" && draft?.body.type === "form" && (
+                            <KeyValueTable
+                                rows={draft.body.fields}
+                                onChange={(next) => setDraft({ ...draft, body: { type: "form", fields: next } })}
+                            />
+                        )}
+
                         {tab === "json" && (
                             <Editor
                                 height="400px"
@@ -350,18 +397,20 @@ export default function App() {
                                 options={{ minimap: { enabled: false }, tabSize: 2 }}
                             />
                         )}
-                        <div style={{ display: "flex", alignItems:"center" , justifyContent:"space-between", gap: 8, marginTop: "2em" }}>
-                            <div >
-                                <h3 style={{margin:0}}>Response</h3>
+                        <div style={{ display: "flex", gap: 8 , flexDirection: "column" , width:"85 vw" }}>
+                            <div style={{ display: "flex", alignItems:"center" , justifyContent:"space-between", gap: 8, marginTop: "2em" }}>
+                                <div >
+                                    <h3 style={{margin:0}}>Response</h3>
+                                </div>
+                                <div style={{ display: "flex", alignItems:"center" , gap: 8 }}>
+                                    <h3 style={{margin:0}}>Status</h3>
+                                    <div>{status}</div>
+                                </div>
                             </div>
-                            <div style={{ display: "flex", alignItems:"center" , gap: 8 }}>
-                                <h3 style={{margin:0}}>Status</h3>
-                                <div>{status}</div>
-                            </div>
-                        </div>
-                        <pre style={{ background: "#111", color: "#eee", width: "70vw", height: "20vh", overflow: "auto" }}>
+                            <pre style={{ background: "#111", color: "#eee", width: "100%",height:"40vh", overflow: "auto" }}>
               {resp ? JSON.stringify(resp, null, 2) : "No response yet."}
             </pre>
+                        </div>
                     </>
                 )}
 
