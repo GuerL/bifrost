@@ -242,7 +242,7 @@ export default function App() {
                 </button>
                 <button onClick={formatJson} disabled={!current}>Format JSON</button>
 
-                <ul style={{ marginTop: 12 }}>
+                <ul style={{ listStyle:"none", padding:0,  marginTop: 12 }}>
                     {collections.map((c) => (
                         <li key={c.id}>
                             <button onClick={() => loadCollection(c.id, setCurrent, setSelectedRequestId,setResp, setStatus )}>{c.name}</button>
