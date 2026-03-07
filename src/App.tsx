@@ -357,6 +357,7 @@ export default function App() {
                                <select
                                    value={draft?.method ?? "get"}
                                    onChange={(e) => setDraft(draft ? { ...draft, method: e.target.value as any } : null)}
+                                   onBlur={saveDraft}
                                >
                                    <option value="get">GET</option>
                                    <option value="post">POST</option>
@@ -371,6 +372,7 @@ export default function App() {
                                    value={draft?.url ?? ""}
                                    onChange={(e) => setDraft(draft ? { ...draft, url: e.target.value } : null)}
                                    style={{ flex: 1 }}
+                                   onBlur={saveDraft}
                                />
                                <button onClick={sendSelected} disabled={!selectedRequestId || pending}>
                                    Send
@@ -415,6 +417,7 @@ export default function App() {
                                                        { type: "form", fields: [] };
                                        setDraft({ ...draft, body });
                                    }}
+                                   onBlur={saveDraft}
                                >
                                    <option value="none">none</option>
                                    <option value="json">json</option>
@@ -433,7 +436,7 @@ export default function App() {
                                            const parsed = JSON.parse(v ?? "{}");
                                            setDraft({ ...draft, body: { type: "json", value: parsed } });
                                        } catch {
-                                           // option: status "invalid json"
+                                           // on laisse l'utilisateur finir de taper
                                        }
                                    }}
                                    options={{ minimap: { enabled: false }, tabSize: 2 }}
