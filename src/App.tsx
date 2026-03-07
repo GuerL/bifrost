@@ -10,6 +10,7 @@ import {
     refreshCollections
 } from "./helpers/CollectionsHelper.ts";
 import KeyValueTable from "./KeyValueTable.tsx";
+import TopBar from "./TopBar.tsx";
 
 export type CollectionMeta = {
     version: number;
@@ -218,211 +219,304 @@ export default function App() {
         }
     }
 
+    function onDeleteSelectedRequest() {
+        if (!current || !selectedRequestId) {
+            console.log("FUCK")
+            return;
+        }
+
+        devDelete(current, selectedRequestId, setCurrent, setSelectedRequestId, setResp, setStatus);
+    }
+
+    function onNewRequest() {
+        if (!current) return;
+        devCreate(current, setCurrent, setSelectedRequestId, setResp, setStatus, setSelection);
+    }
+
     return (
-        <div style={{ padding: 24, fontFamily: "system-ui", display: "flex", gap: 24 }}>
-            {/* Sidebar */}
-            <div style={{ width: 240 }}>
+       <>
+           <TopBar
+               collections={collections}
+               currentCollectionId={current?.meta.id ?? null}
+               onSelectCollection={(collectionId) =>
+                   loadCollection(collectionId, setCurrent, setSelectedRequestId, setResp, setStatus)
+               }
+               onSaveDraft={saveDraft}
+               onNewRequest={onNewRequest}
+               onDeleteSelectedRequest={onDeleteSelectedRequest}
+               onOpenRawJson={() => setTab("json")}
+               canSaveDraft={!!current && !!draft}
+               hasDraft={!!draft}
+           />
 
-                <h3>Collections</h3>
+           <div
+               style={{
+                   height: "calc(100vh - 52px)",
+                   padding: "10px 24px",
+                   fontFamily: "system-ui",
+                   display: "flex",
+                   gap: 24,
+                   overflow: "hidden",
+                   boxSizing: "border-box",
+               }}
+           >
+               {/* Sidebar */}
+               <div
+                   style={{
+                       display: "flex",
+                       flexDirection: "column",
+                       width: 240,
+                       height: "100%",
+                       minHeight: 0,
+                       flexShrink: 0,
+                   }}
+               >
 
-                <button onClick={()=>initDefault(setStatus,setCollections )}>Init default</button>{" "}
-                <button onClick={()=> refreshCollections(setCollections, setStatus)}>Refresh</button>{" "}
-                <button onClick={()=> overwriteDefault(setStatus, setCollections)}>Overwrite default</button>{" "}
-                <button onClick={() => invoke("open_app_data_dir")}>Open data folder</button>
-                <button onClick={()=> devCreate(current, setCurrent, setSelectedRequestId, setResp, setStatus, setSelection)} disabled={!current}>+ New</button>
-                <button onClick={()=>devDelete(current, selectedRequestId, setCurrent, setSelectedRequestId, setResp, setStatus)} disabled={!current || !selectedRequestId}>Delete</button>
-                {/*<button onClick={saveFromEditor} disabled={!current}>*/}
-                {/*    Save (editor)*/}
-                {/*</button>*/}
-                <button onClick={applyEditorToDraft} disabled={!draft}>
-                    Apply JSON
-                </button>
-                <button onClick={saveDraft} disabled={!current || !draft}>
-                    Save (draft)
-                </button>
-                <button onClick={formatJson} disabled={!current}>Format JSON</button>
+                  <div>
+                      <h3>Collections</h3>
 
-                <ul style={{ listStyle:"none", padding:0,  marginTop: 12 }}>
-                    {collections.map((c) => (
-                        <li key={c.id}>
-                            <button onClick={() => loadCollection(c.id, setCurrent, setSelectedRequestId,setResp, setStatus )}>{c.name}</button>
-                        </li>
-                    ))}
-                </ul>
-            </div>
+                      <button onClick={()=>initDefault(setStatus,setCollections )}>Init default</button>
+                      <button onClick={()=> refreshCollections(setCollections, setStatus)}>Refresh</button>
+                      <button onClick={()=> overwriteDefault(setStatus, setCollections)}>Overwrite default</button>
+                      <button onClick={() => invoke("open_app_data_dir")}>Open data folder</button>
+                      {/*<button onClick={()=> devCreate(current, setCurrent, setSelectedRequestId, setResp, setStatus, setSelection)} disabled={!current}>+ New</button>*/}
+                      {/*<button onClick={()=>devDelete(current, selectedRequestId, setCurrent, setSelectedRequestId, setResp, setStatus)} disabled={!current || !selectedRequestId}>Delete</button>*/}
+                      {/*<button onClick={saveFromEditor} disabled={!current}>*/}
+                      {/*    Save (editor)*/}
+                      {/*</button>*/}
 
-            {/* Main */}
-            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                      {/*<button onClick={saveDraft} disabled={!current || !draft}>*/}
+                      {/*    Save (draft)*/}
+                      {/*</button>*/}
+                  </div>
+                   <div
+                       style={{
+                           display: "flex",
+                           flexDirection: "column",
+                           minHeight: 0,
+                           flex: 1,
+                           overflow: "hidden",
+                       }}
+                   >
+                       <h3 style={{ marginTop: 16, marginBottom: 8, flexShrink: 0 }}>Requests</h3>
 
-                {current && (
-                    <>
-                        <h3 style={{ marginTop: 16 }}>Requests</h3>
-                        <div style={{ display: "flex", flexDirection:"row", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                            {current.requests.map((r) => (
-                                <button
-                                    key={r.id}
-                                    onClick={() => {
-                                        setSelection(r);
-                                    }}
-                                    style={{ fontWeight: r.id === selectedRequestId ? "bold" : "normal" }}
-                                >
-                                    {r.method} {r.name}
-                                </button>
-                            ))}
+                       <div
+                           style={{
+                               display: "flex",
+                               flexDirection: "column",
+                               gap: 4,
+                               overflowY: "auto",
+                               minHeight: 0,
+                               flex: 1,
+                               paddingRight: 4,
+                           }}
+                       >
+                           {current && current.requests.map((r) => (
+                               <button
+                                   key={r.id}
+                                   onClick={() => {
+                                       setSelection(r);
+                                   }}
+                                   style={{
+                                       fontWeight: r.id === selectedRequestId ? "bold" : "normal",
+                                       width: "100%",
+                                       padding: "8px",
+                                       textAlign: "left",
+                                       flexShrink: 0,
+                                   }}
+                               >
+                                   {r.method} {r.name}
+                               </button>
+                           ))}
+                       </div>
+                   </div>
 
 
-                        </div>
-                        <div style={{ display: "flex",justifyContent:"space-between", alignItems: "center", gap: 8, marginTop: 12 }}>
-                            <h3>Editor</h3>
-                            {selectedRequestId ? (pending ? "⏳ pending" : "✅ idle") : ""}
-                        </div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <select
-                            value={draft?.method ?? "get"}
-                            onChange={(e) => setDraft(draft ? { ...draft, method: e.target.value as any } : null)}
-                            >
-                                <option value="get">GET</option>
-                                <option value="post">POST</option>
-                                <option value="put">PUT</option>
-                                <option value="patch">PATCH</option>
-                                <option value="delete">DELETE</option>
-                                <option value="head">HEAD</option>
-                                <option value="options">OPTIONS</option>
-                            </select>
-                            <input
-                                placeholder="URL"
-                                value={draft?.url ?? ""}
-                                onChange={(e) => setDraft(draft ? { ...draft, url: e.target.value } : null)}
-                                style={{ flex: 1 }}
-                            />
-                            <button onClick={sendSelected} disabled={!selectedRequestId || pending}>
-                                Send
-                            </button>
+               </div>
 
-                            <button onClick={cancel} disabled={!selectedRequestId || !pending}>
-                                Cancel
-                            </button>
+               {/* Main */}
+               <div
+                   style={{
+                       flex: 1,
+                       display: "flex",
+                       flexDirection: "column",
+                       minWidth: 0,
+                       minHeight: 0,
+                       overflow: "hidden",
+                   }}
+               >
 
-                            <span style={{ opacity: 0.7 }}>
+                   {current && (
+                       <>
+
+                           <div style={{ display: "flex",justifyContent:"space-between", alignItems: "center", gap: 8, marginTop: 12 }}>
+                               <h3>Editor</h3>
+                               {selectedRequestId ? (pending ? "⏳ pending" : "✅ idle") : ""}
+                           </div>
+                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                               <select
+                                   value={draft?.method ?? "get"}
+                                   onChange={(e) => setDraft(draft ? { ...draft, method: e.target.value as any } : null)}
+                               >
+                                   <option value="get">GET</option>
+                                   <option value="post">POST</option>
+                                   <option value="put">PUT</option>
+                                   <option value="patch">PATCH</option>
+                                   <option value="delete">DELETE</option>
+                                   <option value="head">HEAD</option>
+                                   <option value="options">OPTIONS</option>
+                               </select>
+                               <input
+                                   placeholder="URL"
+                                   value={draft?.url ?? ""}
+                                   onChange={(e) => setDraft(draft ? { ...draft, url: e.target.value } : null)}
+                                   style={{ flex: 1 }}
+                               />
+                               <button onClick={sendSelected} disabled={!selectedRequestId || pending}>
+                                   Send
+                               </button>
+
+                               <button onClick={cancel} disabled={!selectedRequestId || !pending}>
+                                   Cancel
+                               </button>
+
+                               <span style={{ opacity: 0.7 }}>
               </span>
-                        </div>
-                        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                            <button onClick={() => setTab("headers")} style={{ fontWeight: tab === "headers" ? "bold" : "normal" }}>Headers</button>
-                            <button onClick={() => setTab("query")} style={{ fontWeight: tab === "query" ? "bold" : "normal" }}>Query</button>
-                            <button onClick={() => setTab("body")} style={{ fontWeight: tab === "body" ? "bold" : "normal" }}>Body</button>
-                            <button onClick={() => setTab("json")} style={{ fontWeight: tab === "json" ? "bold" : "normal" }}>Raw JSON</button>
-                        </div>
-                        {tab === "headers" && draft && (
-                            <KeyValueTable
-                                rows={draft.headers}
-                                onChange={(next) => setDraft({ ...draft, headers: next })}
-                            />
-                        )}
-                        {tab === "query" && draft && (
-                            <KeyValueTable
-                                rows={draft.query}
-                                onChange={(next) => setDraft({ ...draft, query: next })}
-                            />
-                        )}
+                           </div>
+                           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                               <button onClick={() => setTab("headers")} style={{ fontWeight: tab === "headers" ? "bold" : "normal" }}>Headers</button>
+                               <button onClick={() => setTab("query")} style={{ fontWeight: tab === "query" ? "bold" : "normal" }}>Query</button>
+                               <button onClick={() => setTab("body")} style={{ fontWeight: tab === "body" ? "bold" : "normal" }}>Body</button>
+                               {/*<button onClick={() => setTab("json")} style={{ fontWeight: tab === "json" ? "bold" : "normal" }}>Raw JSON</button>*/}
+                           </div>
+                           {tab === "headers" && draft && (
+                               <KeyValueTable
+                                   rows={draft.headers}
+                                   onChange={(next) => setDraft({ ...draft, headers: next })}
+                               />
+                           )}
+                           {tab === "query" && draft && (
+                               <KeyValueTable
+                                   rows={draft.query}
+                                   onChange={(next) => setDraft({ ...draft, query: next })}
+                               />
+                           )}
 
-                        {tab === "body" && draft && (
-                            <select
-                                value={draft?.body.type ?? "none"}
-                                onChange={(e) => {
-                                    if (!draft) return;
-                                    const t = e.target.value as any;
-                                    const body =
-                                        t === "none" ? { type: "none" } :
-                                            t === "json" ? { type: "json", value: {} } :
-                                                t === "raw" ? { type: "raw", content_type: "text/plain", text: "" } :
-                                                    { type: "form", fields: [] };
-                                    setDraft({ ...draft, body });
-                                }}
-                            >
-                                <option value="none">none</option>
-                                <option value="json">json</option>
-                                <option value="raw">raw</option>
-                                <option value="form">form</option>
-                            </select>
-                        )}
-                        {tab === "body" && draft?.body.type === "json" && (
-                            <Editor
-                                height="220px"
-                                language="json"
-                                theme="vs-dark"
-                                value={JSON.stringify(draft.body.value, null, 2)}
-                                onChange={(v) => {
-                                    try {
-                                        const parsed = JSON.parse(v ?? "{}");
-                                        setDraft({ ...draft, body: { type: "json", value: parsed } });
-                                    } catch {
-                                        // option: status "invalid json"
-                                    }
-                                }}
-                                options={{ minimap: { enabled: false }, tabSize: 2 }}
-                            />
-                        )}
-                        {tab === "body" && draft?.body.type === "raw" && (
-                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                <input
-                                    placeholder="Content-Type"
-                                    value={draft.body.content_type}
-                                    onChange={(e) => setDraft({ ...draft, body: { ...draft.body, content_type: e.target.value } })}
-                                />
-                                <Editor
-                                    height="220px"
-                                    language="text"
-                                    theme="vs-dark"
-                                    value={draft.body.text}
-                                    onChange={(v) => setDraft({ ...draft, body: { ...draft.body, text: v ?? "" } })}
-                                    options={{ minimap: { enabled: false }, tabSize: 2 }}
-                                />
-                            </div>
-                        )}
+                           {tab === "body" && draft && (
+                               <select
+                                   value={draft?.body.type ?? "none"}
+                                   onChange={(e) => {
+                                       if (!draft) return;
+                                       const t = e.target.value as any;
+                                       const body =
+                                           t === "none" ? { type: "none" } :
+                                               t === "json" ? { type: "json", value: {} } :
+                                                   t === "raw" ? { type: "raw", content_type: "text/plain", text: "" } :
+                                                       { type: "form", fields: [] };
+                                       setDraft({ ...draft, body });
+                                   }}
+                               >
+                                   <option value="none">none</option>
+                                   <option value="json">json</option>
+                                   <option value="raw">raw</option>
+                                   <option value="form">form</option>
+                               </select>
+                           )}
+                           {tab === "body" && draft?.body.type === "json" && (
+                               <Editor
+                                   height="220px"
+                                   language="json"
+                                   theme="vs-dark"
+                                   value={JSON.stringify(draft.body.value, null, 2)}
+                                   onChange={(v) => {
+                                       try {
+                                           const parsed = JSON.parse(v ?? "{}");
+                                           setDraft({ ...draft, body: { type: "json", value: parsed } });
+                                       } catch {
+                                           // option: status "invalid json"
+                                       }
+                                   }}
+                                   options={{ minimap: { enabled: false }, tabSize: 2 }}
+                               />
+                           )}
+                           {tab === "body" && draft?.body.type === "raw" && (
+                               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                   <input
+                                       placeholder="Content-Type"
+                                       value={draft.body.content_type}
+                                       onChange={(e) => setDraft({ ...draft, body: { ...draft.body, content_type: e.target.value } })}
+                                   />
+                                   <Editor
+                                       height="220px"
+                                       language="text"
+                                       theme="vs-dark"
+                                       value={draft.body.text}
+                                       onChange={(v) => setDraft({ ...draft, body: { ...draft.body, text: v ?? "" } })}
+                                       options={{ minimap: { enabled: false }, tabSize: 2 }}
+                                   />
+                               </div>
+                           )}
 
-                        {tab === "body" && draft?.body.type === "form" && (
-                            <KeyValueTable
-                                rows={draft.body.fields}
-                                onChange={(next) => setDraft({ ...draft, body: { type: "form", fields: next } })}
-                            />
-                        )}
+                           {tab === "body" && draft?.body.type === "form" && (
+                               <KeyValueTable
+                                   rows={draft.body.fields}
+                                   onChange={(next) => setDraft({ ...draft, body: { type: "form", fields: next } })}
+                               />
+                           )}
 
-                        {tab === "json" && (
-                            <Editor
-                                height="400px"
-                                language="json"
-                                theme="vs-dark"
-                                value={editorText}
-                                onChange={(v) => setEditorText(v ?? "")}
-                                options={{ minimap: { enabled: false }, tabSize: 2 }}
-                            />
-                        )}
-                        <div style={{ display: "flex", gap: 8 , flexDirection: "column" , width:"85 vw" }}>
-                            <div style={{ display: "flex", alignItems:"center" , justifyContent:"space-between", gap: 8, marginTop: "2em" }}>
-                                <div >
-                                    <h3 style={{margin:0}}>Response</h3>
-                                </div>
-                                <div style={{ display: "flex", alignItems:"center" , gap: 8 }}>
-                                    <h3 style={{margin:0}}>Status</h3>
-                                    <div>{status}</div>
-                                </div>
-                            </div>
-                            <pre style={{ background: "#111", color: "#eee", width: "100%",height:"40vh", overflow: "auto" }}>
+                           {tab === "json" && (
+                               <>
+                                   <Editor
+                                       height="400px"
+                                       language="json"
+                                       theme="vs-dark"
+                                       value={editorText}
+                                       onChange={(v) => setEditorText(v ?? "")}
+                                       options={{ minimap: { enabled: false }, tabSize: 2 }}
+                                   />
+                                   <div style={{ display: "flex", gap: 8 }}>
+                                       <button onClick={applyEditorToDraft} disabled={!draft}>
+                                           Apply JSON
+                                       </button>
+                                       <button onClick={formatJson} disabled={!current}>Format JSON</button>
+                                   </div>
+                               </>
+                           )}
+                           <div
+                               style={{
+                                   display: "flex",
+                                   gap: 8,
+                                   flexDirection: "column",
+                                   width: "100%",
+                                   minHeight: 0,
+                               }}
+                           >
+                               <div style={{ display: "flex", alignItems:"center" , justifyContent:"space-between", gap: 8, marginTop: "2em" }}>
+                                   <div >
+                                       <h3 style={{margin:0}}>Response</h3>
+                                   </div>
+                                   <div style={{ display: "flex", alignItems:"center" , gap: 8 }}>
+                                       <h3 style={{margin:0}}>Status</h3>
+                                       <div>{status}</div>
+                                   </div>
+                               </div>
+                               <pre style={{ background: "#111", color: "#eee", width: "100%",height:"40vh", overflow: "auto" }}>
               {resp ? JSON.stringify(resp, null, 2) : "No response yet."}
             </pre>
-                        </div>
-                    </>
-                )}
+                           </div>
+                       </>
+                   )}
 
-                {!current && (
-                    <>
-                        <h3 style={{ marginTop: 16 }}>Loaded collection</h3>
-                        <pre style={{ background: "#111", color: "#eee", padding: 12 }}>
+                   {!current && (
+                       <>
+                           <h3 style={{ marginTop: 16 }}>Loaded collection</h3>
+                           <pre style={{ background: "#111", color: "#eee", padding: 12 }}>
               None
             </pre>
-                    </>
-                )}
-            </div>
-        </div>
+                       </>
+                   )}
+               </div>
+           </div>
+       </>
     );
 }
