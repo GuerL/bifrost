@@ -9,6 +9,7 @@ import {
     overwriteDefault,
     refreshCollections
 } from "./helpers/CollectionsHelper.ts";
+import KeyValueTable from "./KeyValueTable.tsx";
 
 export type CollectionMeta = {
     version: number;
@@ -59,6 +60,9 @@ export default function App() {
 
     const [editorText, setEditorText] = useState("");
 
+    const [draft, setDraft] = useState<Request | null>(null);
+    const [tab, setTab] = useState<"headers" | "query" | "body" | "json">("headers");
+
     // fetch app data dir once
     useEffect(() => {
         (async () => {
@@ -99,6 +103,10 @@ export default function App() {
         if (!current) return;
         try {
             const parsed = JSON.parse(editorText) as Request;
+            if (parsed.id !== draft.id) {
+                setStatus("❌ ID cannot be changed here. Use Rename.");
+                return;
+            }
             await invoke("update_request", { collectionId: current.meta.id, request: parsed });
             await loadCollection(current.meta.id, setCurrent, setSelectedRequestId, setResp, setStatus);
             setStatus("✅ Saved");
@@ -107,17 +115,13 @@ export default function App() {
         }
     }
 
-    async function createFromEditor() {
-        if (!current) return;
-        try {
-            const parsed = JSON.parse(editorText) as Request;
-            await invoke("create_request", { collectionId: current.meta.id, request: parsed });
-            await loadCollection(current.meta.id, setCurrent, setSelectedRequestId, setResp, setStatus);
-            setStatus("✅ Created");
-        } catch (e) {
-            setStatus(`❌ Create failed: ${String(e)}`);
-        }
+    async function saveDraft() {
+        if (!current || !draft) return;
+        await invoke("update_request", { collectionId: current.meta.id, request: draft });
+        await loadCollection(current.meta.id, setCurrent, setSelectedRequestId, setResp, setStatus);
+        setSelectedRequestId(draft.id);
     }
+
 
 
 
@@ -173,25 +177,31 @@ export default function App() {
         }
     }
 
+    function setSelection(r: Request) {
+        setSelectedRequestId(r.id);
+        setDraft(structuredClone(r)); // ou JSON.parse(JSON.stringify(r))
+        setResp(null);
+        setEditorText(JSON.stringify(r, null, 2));
+    }
+
     return (
         <div style={{ padding: 24, fontFamily: "system-ui", display: "flex", gap: 24 }}>
             {/* Sidebar */}
             <div style={{ width: 240 }}>
-                <h3>Status</h3>
-                <div>{status}</div>
+
                 <h3>Collections</h3>
 
                 <button onClick={()=>initDefault(setStatus,setCollections )}>Init default</button>{" "}
                 <button onClick={()=> refreshCollections(setCollections, setStatus)}>Refresh</button>{" "}
                 <button onClick={()=> overwriteDefault(setStatus, setCollections)}>Overwrite default</button>{" "}
                 <button onClick={() => invoke("open_app_data_dir")}>Open data folder</button>
-                <button onClick={()=> devCreate(current, setCurrent, setSelectedRequestId, setResp, setStatus)} disabled={!current}>+ New</button>
+                <button onClick={()=> devCreate(current, setCurrent, setSelectedRequestId, setResp, setStatus, setSelection)} disabled={!current}>+ New</button>
                 <button onClick={()=>devDelete(current, selectedRequestId, setCurrent, setSelectedRequestId, setResp, setStatus)} disabled={!current || !selectedRequestId}>Delete</button>
                 <button onClick={saveFromEditor} disabled={!current}>
                     Save (editor)
                 </button>
-                <button onClick={createFromEditor} disabled={!current}>
-                    Create (editor)
+                <button onClick={saveDraft} disabled={!current || !draft}>
+                    Save (draft)
                 </button>
                 <button onClick={formatJson} disabled={!current}>Format JSON</button>
 
@@ -215,9 +225,7 @@ export default function App() {
                                 <button
                                     key={r.id}
                                     onClick={() => {
-                                        setSelectedRequestId(r.id);
-                                        setResp(null);
-                                        setEditorText(JSON.stringify(r, null, 2));
+                                        setSelection(r);
                                     }}
                                     style={{ fontWeight: r.id === selectedRequestId ? "bold" : "normal" }}
                                 >
@@ -225,6 +233,28 @@ export default function App() {
                                 </button>
                             ))}
 
+
+                        </div>
+                        <h3 style={{ marginTop: 16 }}>Editor</h3>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <select
+                            value={draft?.method ?? "get"}
+                            onChange={(e) => setDraft(draft ? { ...draft, method: e.target.value as any } : null)}
+                            >
+                                <option value="get">GET</option>
+                                <option value="post">POST</option>
+                                <option value="put">PUT</option>
+                                <option value="patch">PATCH</option>
+                                <option value="delete">DELETE</option>
+                                <option value="head">HEAD</option>
+                                <option value="options">OPTIONS</option>
+                            </select>
+                            <input
+                                placeholder="URL"
+                                value={draft?.url ?? ""}
+                                onChange={(e) => setDraft(draft ? { ...draft, url: e.target.value } : null)}
+                                style={{ flex: 1 }}
+                            />
                             <button onClick={sendSelected} disabled={!selectedRequestId || pending}>
                                 Send
                             </button>
@@ -234,29 +264,101 @@ export default function App() {
                             </button>
 
                             <span style={{ opacity: 0.7 }}>
-                {selectedRequestId ? (pending ? "⏳ pending" : "✅ idle") : ""}
               </span>
                         </div>
-                        <h3 style={{ marginTop: 16 }}>Editor</h3>
-                        <Editor
-                            height="45vh"
-                            width="70vw"
-                            language="json"
-                            theme="vs-dark"
-                            value={editorText}
-                            onChange={(v) => setEditorText(v ?? "")}
-                            options={{
-                                minimap: { enabled: false },
-                                fontSize: 13,
-                                wordWrap: "on",
-                                scrollBeyondLastLine: false,
-                                formatOnPaste: true,
-                                formatOnType: true,
-                                quickSuggestions: true,
-                                tabSize: 2,
-                            }}
-                        />
-                        <h3 style={{ marginTop: 16 }}>Response</h3>
+                        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                            <button onClick={() => setTab("headers")}>Headers</button>
+                            <button onClick={() => setTab("query")}>Query</button>
+                            <button onClick={() => setTab("body")}>Body</button>
+                            <button onClick={() => setTab("json")}>Raw JSON</button>
+                        </div>
+                        {tab === "headers" && draft && (
+                            <KeyValueTable
+                                rows={draft.headers}
+                                onChange={(next) => setDraft({ ...draft, headers: next })}
+                            />
+                        )}
+                        {tab === "query" && draft && (
+                            <KeyValueTable
+                                rows={draft.query}
+                                onChange={(next) => setDraft({ ...draft, query: next })}
+                            />
+                        )}
+
+                        {tab === "body" && draft && (
+                            <select
+                                value={draft?.body.type ?? "none"}
+                                onChange={(e) => {
+                                    if (!draft) return;
+                                    const t = e.target.value as any;
+                                    const body =
+                                        t === "none" ? { type: "none" } :
+                                            t === "json" ? { type: "json", value: {} } :
+                                                t === "raw" ? { type: "raw", content_type: "text/plain", text: "" } :
+                                                    { type: "form", fields: [] };
+                                    setDraft({ ...draft, body });
+                                }}
+                            >
+                                <option value="none">none</option>
+                                <option value="json">json</option>
+                                <option value="raw">raw</option>
+                                <option value="form">form</option>
+                            </select>
+                        )}
+                        {tab === "body" && draft?.body.type === "json" && (
+                            <Editor
+                                height="220px"
+                                language="json"
+                                theme="vs-dark"
+                                value={JSON.stringify(draft.body.value, null, 2)}
+                                onChange={(v) => {
+                                    try {
+                                        const parsed = JSON.parse(v ?? "{}");
+                                        setDraft({ ...draft, body: { type: "json", value: parsed } });
+                                    } catch {
+                                        // option: status "invalid json"
+                                    }
+                                }}
+                                options={{ minimap: { enabled: false }, tabSize: 2 }}
+                            />
+                        )}
+                        {tab === "body" && draft?.body.type === "raw" && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                <input
+                                    placeholder="Content-Type"
+                                    value={draft.body.content_type}
+                                    onChange={(e) => setDraft({ ...draft, body: { ...draft.body, content_type: e.target.value } })}
+                                />
+                                <Editor
+                                    height="220px"
+                                    language="text"
+                                    theme="vs-dark"
+                                    value={draft.body.text}
+                                    onChange={(v) => setDraft({ ...draft, body: { ...draft.body, text: v ?? "" } })}
+                                    options={{ minimap: { enabled: false }, tabSize: 2 }}
+                                />
+                            </div>
+                        )}
+
+                        {tab === "json" && (
+                            <Editor
+                                height="400px"
+                                language="json"
+                                theme="vs-dark"
+                                value={editorText}
+                                onChange={(v) => setEditorText(v ?? "")}
+                                options={{ minimap: { enabled: false }, tabSize: 2 }}
+                            />
+                        )}
+                        <div style={{ display: "flex", alignItems:"center" , justifyContent:"space-between", gap: 8, marginTop: "2em" }}>
+                            <div >
+                                <h3 style={{margin:0}}>Response</h3>
+                            </div>
+                            <div style={{ display: "flex", alignItems:"center" , gap: 8 }}>
+                                <h3 style={{margin:0}}>Status</h3>
+                                <div>{status}</div>
+                            </div>
+                        </div>
                         <pre style={{ background: "#111", color: "#eee", width: "70vw", height: "20vh", overflow: "auto" }}>
               {resp ? JSON.stringify(resp, null, 2) : "No response yet."}
             </pre>

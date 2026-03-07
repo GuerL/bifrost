@@ -46,11 +46,11 @@ export async function overwriteDefault(setStatus: (s: string) => void, setCollec
         setStatus(`❌ Overwrite failed: ${String(e)}`);
     }
 }
-export async function devCreate(current: CollectionLoaded | null, setCurrent: (c: CollectionLoaded) => void, setSelectedRequestId: (id: string | null) => void, setResp: (r: HttpResponseDto | null) => void, setStatus: (s: string) => void) {
+export async function devCreate(current: CollectionLoaded | null, setCurrent: (c: CollectionLoaded) => void, setSelectedRequestId: (id: string | null) => void, setResp: (r: HttpResponseDto | null) => void, setStatus: (s: string) => void, setSelection:(r:Request)=>void) {
     if (!current) return;
-
+    let id = crypto.randomUUID();
    const req: Request = {
-     id: crypto.randomUUID(),
+     id: id,
      name: "New Request",
      method: "get",
      url: "",
@@ -61,6 +61,7 @@ export async function devCreate(current: CollectionLoaded | null, setCurrent: (c
 
     await invoke("create_request", { collectionId: current.meta.id, request: req });
     await loadCollection(current.meta.id, setCurrent, setSelectedRequestId, setResp, setStatus); // reload
+    setSelection(req);
 }
 
 export async function devUpdate(current: CollectionLoaded | null, selectedRequestId: string | null,  setCurrent: (c: CollectionLoaded) => void, setSelectedRequestId: (id: string | null) => void, setResp: (r: HttpResponseDto | null) => void, setStatus: (s: string) => void) {
