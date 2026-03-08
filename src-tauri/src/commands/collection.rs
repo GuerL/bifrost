@@ -225,4 +225,41 @@ pub fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+#[tauri::command]
+pub fn load_drafts(
+  app: AppHandle,
+  collection_id: String,
+) -> Result<std::collections::HashMap<String, Request>, String> {
+  let path = draft_collection_path(&app, &collection_id)?;
+  if !path.exists() {
+    return Ok(std::collections::HashMap::new());
+  }
+
+  read_json(&path)
+}
+
+#[tauri::command]
+pub fn save_drafts(
+  app: AppHandle,
+  collection_id: String,
+  drafts: std::collections::HashMap<String, Request>,
+) -> Result<(), String> {
+  let path = draft_collection_path(&app, &collection_id)?;
+  write_json(&path, &drafts)
+}
+
+#[tauri::command]
+pub fn clear_draft(
+  app: AppHandle,
+  collection_id: String,
+  request_id: String,
+) -> Result<(), String> {
+  let path = draft_collection_path(&app, &collection_id)?;
+  let mut drafts: std::collections::HashMap<String, Request> =
+    if path.exists() { read_json(&path)? } else { std::collections::HashMap::new() };
+
+  drafts.remove(&request_id);
+  write_json(&path, &drafts)
+}
+
 

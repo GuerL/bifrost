@@ -24,7 +24,10 @@ pub fn run() {
           commands::collection::update_request,
           commands::collection::delete_request,
           commands::collection::list_collections,
-          commands::collection::load_collection
+          commands::collection::load_collection,
+          commands::collection::load_drafts,
+            commands::collection::save_drafts,
+            commands::collection::clear_draft
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

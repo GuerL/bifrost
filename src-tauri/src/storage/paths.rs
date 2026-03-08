@@ -46,3 +46,11 @@ pub fn delete_dir(path: &Path) -> Result<(), String> {
   }
   Ok(())
 }
+
+pub fn drafts_dir(app: &AppHandle) -> Result<PathBuf, String> {
+  Ok(app_dir(app)?.join("drafts"))
+}
+
+pub fn draft_collection_path(app: &AppHandle, collection_id: &str) -> Result<PathBuf, String> {
+  Ok(drafts_dir(app)?.join(format!("{collection_id}.json")))
+}

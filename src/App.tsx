@@ -73,12 +73,39 @@ export default function App() {
 
     const isDirty = useMemo(() => {
         if (!selectedRequestId || !selectedSavedRequest || !draft) return false;
-        return JSON.stringify(draft) !== JSON.stringify(selectedSavedRequest);
+        return JSON.stringify(draft) !== JSON.stringify(selectedSavedRequest) || !!draftsById[selectedRequestId];
     }, [selectedRequestId, selectedSavedRequest, draft]);
 
     useEffect(() => {
         initDefault(setStatus, setCollections);
     }, []);
+    useEffect(() => {
+        if (!current) return;
+        console.log("Loading drafts for collection", current.meta.id);
+        (async () => {
+            try {
+                const drafts = await invoke<Record<string, Request>>("load_drafts", {
+                    collectionId: current.meta.id,
+                });
+                setDraftsById(drafts);
+            } catch (e) {
+                setStatus(`❌ Failed to load drafts: ${String(e)}`);
+            }
+        })();
+    }, [current?.meta.id]);
+
+    useEffect(() => {
+        if (!current) return;
+
+        const timeout = setTimeout(() => {
+            void invoke("save_drafts", {
+                collectionId: current.meta.id,
+                drafts: draftsById,
+            });
+        }, 300);
+
+        return () => clearTimeout(timeout);
+    }, [draftsById, current?.meta.id]);
 
     useEffect(() => {
         if (!selectedRequestId) {
