@@ -23,12 +23,12 @@ export async function refreshCollections(setCollections: (cols: CollectionMeta[]
     }
 }
 
-export async function loadCollection(id: string, setCurrent: (c: CollectionLoaded) => void, setSelectedRequestId: (id: string | null) => void, setResp: (r: HttpResponseDto | null) => void, setStatus: (s: string) => void) {
+export async function loadCollection(id: string,requestId:string|null ,  setCurrent: (c: CollectionLoaded) => void, setSelectedRequestId: (id: string | null) => void, setResp: (r: HttpResponseDto | null) => void, setStatus: (s: string) => void) {
     try {
         setStatus(`Loading ${id}...`);
         const col = await invoke<CollectionLoaded>("load_collection", { id });
         setCurrent(col);
-        setSelectedRequestId(col.requests[0]?.id ?? null);
+        setSelectedRequestId(requestId ?? col.requests[0]?.id ?? null);
         setResp(null);
         setStatus(`✅ Loaded ${id}`);
     } catch (e) {
@@ -60,22 +60,13 @@ export async function devCreate(current: CollectionLoaded | null, setCurrent: (c
    };
 
     await invoke("create_request", { collectionId: current.meta.id, request: req });
-    await loadCollection(current.meta.id, setCurrent, setSelectedRequestId, setResp, setStatus); // reload
+    await loadCollection(current.meta.id, req.id, setCurrent, setSelectedRequestId, setResp, setStatus); // reload
     setSelection(req);
 }
 
-export async function devUpdate(current: CollectionLoaded | null, selectedRequestId: string | null,  setCurrent: (c: CollectionLoaded) => void, setSelectedRequestId: (id: string | null) => void, setResp: (r: HttpResponseDto | null) => void, setStatus: (s: string) => void) {
-    if (!current || !selectedRequestId) return;
-    const old = current.requests.find(r => r.id === selectedRequestId);
-    if (!old) return;
-
-    const updated = { ...old, name: old.name + " (edited)" };
-    await invoke("update_request", { collectionId: current.meta.id, request: updated });
-    await loadCollection(current.meta.id, setCurrent, setSelectedRequestId, setResp, setStatus);
-}
 
 export async function devDelete(current: CollectionLoaded | null, selectedRequestId: string | null,  setCurrent: (c: CollectionLoaded) => void, setSelectedRequestId: (id: string | null) => void, setResp: (r: HttpResponseDto | null) => void, setStatus: (s: string) => void) {
     if (!current || !selectedRequestId) return;
     await invoke("delete_request", { collectionId: current.meta.id, requestId: selectedRequestId });
-    await loadCollection(current.meta.id ,setCurrent, setSelectedRequestId, setResp, setStatus);
+    await loadCollection(current.meta.id, null ,setCurrent, setSelectedRequestId, setResp, setStatus);
 }
