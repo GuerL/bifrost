@@ -3,10 +3,12 @@ import {CollectionMeta} from "./App.tsx";
 type TopBarProps = {
     collections: CollectionMeta[];
     currentCollectionId: string | null;
+    selectedRequestId: string | null;
     onSelectCollection: (collectionId: string) => void;
     onSaveDraft: () => void;
     onNewRequest: () => void;
     onDeleteSelectedRequest: () => void;
+    onDuplicateSelectedRequest: () => void;
     onOpenRawJson: () => void;
     canSaveDraft: boolean;
     hasDraft: boolean;
@@ -15,10 +17,12 @@ type TopBarProps = {
 export default function TopBar({
                                    collections,
                                    currentCollectionId,
+                                   selectedRequestId,
                                    onSelectCollection,
                                    onSaveDraft,
                                    onNewRequest,
                                    onDeleteSelectedRequest,
+                                      onDuplicateSelectedRequest,
                                    onOpenRawJson,
                                    canSaveDraft,
                                    hasDraft,
@@ -94,6 +98,13 @@ export default function TopBar({
                     style={buttonStyle(!currentCollectionId)}
                 >
                     New Request
+                </button>
+                <button
+                    onClick={onDuplicateSelectedRequest}
+                    disabled={!currentCollectionId || !selectedRequestId}
+                    style={buttonStyle(!currentCollectionId)}
+                >
+                    Duplicate
                 </button>
                 <button
                     onClick={onSaveDraft}

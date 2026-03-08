@@ -70,3 +70,45 @@ export async function devDelete(current: CollectionLoaded | null, selectedReques
     await invoke("delete_request", { collectionId: current.meta.id, requestId: selectedRequestId });
     await loadCollection(current.meta.id, null ,setCurrent, setSelectedRequestId, setResp, setStatus);
 }
+
+
+export async function devDuplicate(
+    current: CollectionLoaded | null,
+    selectedRequestId: string | null,
+    setCurrent: (c: CollectionLoaded) => void,
+    setSelectedRequestId: (id: string | null) => void,
+    setResp: (r: HttpResponseDto | null) => void,
+    setStatus: (s: string) => void
+) {
+    if (!current || !selectedRequestId) return;
+
+    const source = current.requests.find((r) => r.id === selectedRequestId);
+    if (!source) return;
+
+    const newId = crypto.randomUUID();
+    const newName = `${source.name} Copy`;
+
+    try {
+        setStatus("Duplicating request...");
+        await invoke("duplicate_request", {
+            collectionId: current.meta.id,
+            sourceRequestId: source.id,
+            newRequestId: newId,
+            newName,
+        });
+
+        await loadCollection(
+            current.meta.id,
+            newId,
+            setCurrent,
+            setSelectedRequestId,
+            setResp,
+            setStatus
+        );
+
+        setSelectedRequestId(newId);
+        setStatus("✅ Request duplicated");
+    } catch (e) {
+        setStatus(`❌ Duplicate failed: ${String(e)}`);
+    }
+}

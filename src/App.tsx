@@ -5,6 +5,7 @@ import Editor from "@monaco-editor/react";
 import {
     devCreate,
     devDelete,
+    devDuplicate,
     initDefault,
     loadCollection,
     overwriteDefault,
@@ -304,6 +305,18 @@ export default function App() {
         );
     }
 
+    function onDuplicateSelectedRequest() {
+        if (!current || !selectedRequestId) return;
+
+        devDuplicate(
+            current,
+            selectedRequestId,
+            setCurrent,
+            setSelectedRequestId,
+            setResp,
+            setStatus
+        );
+    }
     function onNewRequest() {
         if (!current) return;
         devCreate(
@@ -321,12 +334,14 @@ export default function App() {
             <TopBar
                 collections={collections}
                 currentCollectionId={current?.meta.id ?? null}
+                selectedRequestId={selectedRequestId}
                 onSelectCollection={(collectionId) =>
                     loadCollection(collectionId,null, setCurrent, setSelectedRequestId, setResp, setStatus)
                 }
                 onSaveDraft={saveDraft}
                 onNewRequest={onNewRequest}
                 onDeleteSelectedRequest={onDeleteSelectedRequest}
+                onDuplicateSelectedRequest={onDuplicateSelectedRequest}
                 onOpenRawJson={() => setTab("json")}
                 canSaveDraft={!!current && !!draft && isDirty}
                 hasDraft={!!draft}

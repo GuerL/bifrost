@@ -263,3 +263,62 @@ pub fn clear_draft(
 }
 
 
+#[tauri::command]
+pub fn duplicate_request(
+  app: tauri::AppHandle,
+  collection_id: String,
+  source_request_id: String,
+  new_request_id: String,
+  new_name: Option<String>,
+) -> Result<(), String> {
+  if source_request_id.trim().is_empty() {
+    return Err("Source request id is empty".into());
+  }
+
+  if new_request_id.trim().is_empty() {
+    return Err("New request id is empty".into());
+  }
+
+  if source_request_id == new_request_id {
+    return Err("New request id must be different from source request id".into());
+  }
+
+  let meta_path = collection_meta_path(&app, &collection_id)?;
+  if !meta_path.exists() {
+    return Err(format!("Collection not found: {}", collection_id));
+  }
+
+  let mut meta = read_json::<CollectionMeta>(&meta_path)?;
+
+  let source_path = request_path(&app, &collection_id, &source_request_id)?;
+  if !source_path.exists() {
+    return Err(format!("Source request not found: {}", source_request_id));
+  }
+
+  let target_path = request_path(&app, &collection_id, &new_request_id)?;
+  if target_path.exists() {
+    return Err(format!("Target request already exists: {}", new_request_id));
+  }
+
+  let mut duplicated = read_json::<Request>(&source_path)?;
+  duplicated.id = new_request_id.clone();
+
+  duplicated.name = match new_name {
+    Some(name) if !name.trim().is_empty() => name,
+    _ => format!("{} Copy", duplicated.name),
+  };
+
+  write_json(&target_path, &duplicated)?;
+
+  if !meta.request_order.iter().any(|x| x == &new_request_id) {
+    if let Some(pos) = meta.request_order.iter().position(|x| x == &source_request_id) {
+      meta.request_order.insert(pos + 1, new_request_id);
+    } else {
+      meta.request_order.push(new_request_id);
+    }
+    write_json(&meta_path, &meta)?;
+  }
+
+  Ok(())
+}
+
