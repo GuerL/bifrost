@@ -7,6 +7,7 @@ type TopBarProps = {
     onSelectCollection: (collectionId: string) => void;
     onSaveDraft: () => void;
     onNewRequest: () => void;
+    onRenameSelectedRequest: () => void;
     onDeleteSelectedRequest: () => void;
     onDuplicateSelectedRequest: () => void;
     onOpenRawJson: () => void;
@@ -21,6 +22,7 @@ export default function TopBar({
                                    onSelectCollection,
                                    onSaveDraft,
                                    onNewRequest,
+                                   onRenameSelectedRequest,
                                    onDeleteSelectedRequest,
                                       onDuplicateSelectedRequest,
                                    onOpenRawJson,
@@ -102,9 +104,16 @@ export default function TopBar({
                 <button
                     onClick={onDuplicateSelectedRequest}
                     disabled={!currentCollectionId || !selectedRequestId}
-                    style={buttonStyle(!currentCollectionId)}
+                    style={buttonStyle(!currentCollectionId || !selectedRequestId)}
                 >
                     Duplicate
+                </button>
+                <button
+                    onClick={onRenameSelectedRequest}
+                    disabled={!currentCollectionId || !selectedRequestId}
+                    style={buttonStyle(!currentCollectionId || !selectedRequestId)}
+                >
+                    Rename
                 </button>
                 <button
                     onClick={onSaveDraft}

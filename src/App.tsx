@@ -6,6 +6,7 @@ import {
     devCreate,
     devDelete,
     devDuplicate,
+    devRename,
     initDefault,
     loadCollection,
     overwriteDefault,
@@ -51,6 +52,12 @@ export type HttpResponseDto = {
     duration_ms: number;
 };
 
+type RequestContextMenu = {
+    x: number;
+    y: number;
+    requestId: string;
+};
+
 export default function App() {
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [current, setCurrent] = useState<CollectionLoaded | null>(null);
@@ -61,6 +68,12 @@ export default function App() {
     const [pending, setPending] = useState(false);
     const [editorText, setEditorText] = useState("");
     const [tab, setTab] = useState<"headers" | "query" | "body" | "json">("headers");
+    const [contextMenu, setContextMenu] = useState<RequestContextMenu | null>(null);
+    const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
+    const [renameIdInput, setRenameIdInput] = useState("");
+    const [renameNameInput, setRenameNameInput] = useState("");
+    const [renameError, setRenameError] = useState("");
+    const [renameBusy, setRenameBusy] = useState(false);
 
     const selectedSavedRequest = useMemo(() => {
         if (!current || !selectedRequestId) return null;
@@ -137,6 +150,20 @@ export default function App() {
         }
         setEditorText(JSON.stringify(draft, null, 2));
     }, [draft]);
+
+    useEffect(() => {
+        function onKeyDown(e: KeyboardEvent) {
+            if (e.key !== "Escape") return;
+            setContextMenu(null);
+            if (!renameBusy) {
+                setRenameTargetId(null);
+                setRenameError("");
+            }
+        }
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [renameBusy]);
 
     const updateDraft = useCallback(
         (patch: Partial<Request>) => {
@@ -289,15 +316,21 @@ export default function App() {
     function onDeleteSelectedRequest() {
         if (!current || !selectedRequestId) return;
 
+        onDeleteRequest(selectedRequestId);
+    }
+
+    function onDeleteRequest(requestId: string) {
+        if (!current) return;
+
         setDraftsById((prev) => {
             const next = { ...prev };
-            delete next[selectedRequestId];
+            delete next[requestId];
             return next;
         });
 
         devDelete(
             current,
-            selectedRequestId,
+            requestId,
             setCurrent,
             setSelectedRequestId,
             setResp,
@@ -308,14 +341,109 @@ export default function App() {
     function onDuplicateSelectedRequest() {
         if (!current || !selectedRequestId) return;
 
+        onDuplicateRequest(selectedRequestId);
+    }
+
+    function onDuplicateRequest(requestId: string) {
+        if (!current) return;
+
         devDuplicate(
             current,
-            selectedRequestId,
+            requestId,
             setCurrent,
             setSelectedRequestId,
             setResp,
             setStatus
         );
+    }
+
+    function openRenameModal(requestId: string) {
+        if (!current) return;
+        const req = current.requests.find((r) => r.id === requestId);
+        if (!req) return;
+
+        setRenameTargetId(requestId);
+        setRenameIdInput(req.id);
+        setRenameNameInput(req.name);
+        setRenameError("");
+        setContextMenu(null);
+    }
+
+    function closeRenameModal() {
+        if (renameBusy) return;
+        setRenameTargetId(null);
+        setRenameError("");
+    }
+
+    async function submitRenameModal() {
+        if (!current || !renameTargetId || renameBusy) return;
+
+        const nextId = renameIdInput.trim();
+        const nextName = renameNameInput.trim();
+
+        if (!nextId) {
+            setRenameError("Request id cannot be empty.");
+            return;
+        }
+
+        if (!nextName) {
+            setRenameError("Request name cannot be empty.");
+            return;
+        }
+
+        const source = current.requests.find((r) => r.id === renameTargetId);
+        if (!source) {
+            setRenameError("Source request not found.");
+            return;
+        }
+
+        if (nextId === source.id && nextName === source.name) {
+            setRenameError("Nothing to rename.");
+            return;
+        }
+
+        const oldId = renameTargetId;
+        setRenameBusy(true);
+        setRenameError("");
+
+        const ok = await devRename(
+            current,
+            oldId,
+            nextId,
+            nextName,
+            setCurrent,
+            setSelectedRequestId,
+            setResp,
+            setStatus
+        );
+
+        if (ok) {
+            setDraftsById((prev) => {
+                if (!prev[oldId]) return prev;
+                const next = { ...prev };
+                const existing = next[oldId];
+                delete next[oldId];
+
+                if (existing) {
+                    next[nextId] = {
+                        ...existing,
+                        id: nextId,
+                        name: nextName,
+                    };
+                }
+
+                return next;
+            });
+
+            setRenameTargetId(null);
+            setRenameError("");
+        }
+        setRenameBusy(false);
+    }
+
+    function onRenameSelectedRequest() {
+        if (!selectedRequestId) return;
+        openRenameModal(selectedRequestId);
     }
     function onNewRequest() {
         if (!current) return;
@@ -340,6 +468,7 @@ export default function App() {
                 }
                 onSaveDraft={saveDraft}
                 onNewRequest={onNewRequest}
+                onRenameSelectedRequest={onRenameSelectedRequest}
                 onDeleteSelectedRequest={onDeleteSelectedRequest}
                 onDuplicateSelectedRequest={onDuplicateSelectedRequest}
                 onOpenRawJson={() => setTab("json")}
@@ -410,6 +539,15 @@ export default function App() {
                                         <button
                                             key={r.id}
                                             onClick={() => setSelection(r)}
+                                            onContextMenu={(e) => {
+                                                e.preventDefault();
+                                                setSelection(r);
+                                                setContextMenu({
+                                                    x: e.clientX,
+                                                    y: e.clientY,
+                                                    requestId: r.id,
+                                                });
+                                            }}
                                             style={{
                                                 fontWeight: r.id === selectedRequestId ? "bold" : "normal",
                                                 width: "100%",
@@ -567,39 +705,44 @@ export default function App() {
                                 />
                             )}
 
-                            {tab === "body" && draft.body.type === "raw" && (
-                                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                    <input
-                                        placeholder="Content-Type"
-                                        value={draft.body.content_type}
-                                        onChange={(e) =>
-                                            setFullDraft({
-                                                ...draft,
-                                                body: {
-                                                    ...draft.body,
-                                                    content_type: e.target.value,
-                                                },
-                                            })
-                                        }
-                                    />
-                                    <Editor
-                                        height="220px"
-                                        language="text"
-                                        theme="vs-dark"
-                                        value={draft.body.text}
-                                        onChange={(v) =>
-                                            setFullDraft({
-                                                ...draft,
-                                                body: {
-                                                    ...draft.body,
-                                                    text: v ?? "",
-                                                },
-                                            })
-                                        }
-                                        options={{ minimap: { enabled: false }, tabSize: 2 }}
-                                    />
-                                </div>
-                            )}
+                            {tab === "body" && draft.body.type === "raw" && (() => {
+                                const rawBody = draft.body;
+                                return (
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                        <input
+                                            placeholder="Content-Type"
+                                            value={rawBody.content_type}
+                                            onChange={(e) =>
+                                                setFullDraft({
+                                                    ...draft,
+                                                    body: {
+                                                        type: "raw",
+                                                        content_type: e.target.value,
+                                                        text: rawBody.text,
+                                                    },
+                                                })
+                                            }
+                                        />
+                                        <Editor
+                                            height="220px"
+                                            language="text"
+                                            theme="vs-dark"
+                                            value={rawBody.text}
+                                            onChange={(v) =>
+                                                setFullDraft({
+                                                    ...draft,
+                                                    body: {
+                                                        type: "raw",
+                                                        content_type: rawBody.content_type,
+                                                        text: v ?? "",
+                                                    },
+                                                })
+                                            }
+                                            options={{ minimap: { enabled: false }, tabSize: 2 }}
+                                        />
+                                    </div>
+                                );
+                            })()}
 
                             {tab === "body" && draft.body.type === "form" && (
                                 <KeyValueTable
@@ -684,6 +827,157 @@ export default function App() {
                     )}
                 </div>
             </div>
+
+            {contextMenu && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1200,
+                    }}
+                    onClick={() => setContextMenu(null)}
+                >
+                    <div
+                        style={{
+                            position: "fixed",
+                            top: contextMenu.y,
+                            left: contextMenu.x,
+                            minWidth: 180,
+                            padding: 6,
+                            borderRadius: 10,
+                            border: "1px solid #3a3a3c",
+                            background: "#1f1f22",
+                            boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4,
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                            onClick={() => openRenameModal(contextMenu.requestId)}
+                        >
+                            Rename
+                        </button>
+                        <button
+                            style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                            onClick={() => {
+                                setContextMenu(null);
+                                onDuplicateRequest(contextMenu.requestId);
+                            }}
+                        >
+                            Duplicate
+                        </button>
+                        <button
+                            style={{
+                                ...buttonStyle(false),
+                                width: "100%",
+                                textAlign: "left",
+                                color: "#fca5a5",
+                                borderColor: "#7f1d1d",
+                            }}
+                            onClick={() => {
+                                setContextMenu(null);
+                                onDeleteRequest(contextMenu.requestId);
+                            }}
+                        >
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {renameTargetId && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1300,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={closeRenameModal}
+                >
+                    <form
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            void submitRenameModal();
+                        }}
+                        style={{
+                            width: "100%",
+                            maxWidth: 460,
+                            border: "1px solid #3a3a3c",
+                            borderRadius: 12,
+                            background: "#1f1f22",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <h3 style={{ margin: 0 }}>Rename request</h3>
+
+                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <span style={{ fontSize: 13, color: "#a1a1aa" }}>Request id</span>
+                            <input
+                                value={renameIdInput}
+                                onChange={(e) => setRenameIdInput(e.target.value)}
+                                disabled={renameBusy}
+                            />
+                        </label>
+
+                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <span style={{ fontSize: 13, color: "#a1a1aa" }}>Request name</span>
+                            <input
+                                value={renameNameInput}
+                                onChange={(e) => setRenameNameInput(e.target.value)}
+                                disabled={renameBusy}
+                            />
+                        </label>
+
+                        {renameError && <div style={{ color: "#fca5a5", fontSize: 13 }}>{renameError}</div>}
+
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+                            <button type="button" onClick={closeRenameModal} style={buttonStyle(renameBusy)}>
+                                Cancel
+                            </button>
+                            <button type="submit" disabled={renameBusy} style={primaryButtonStyle(renameBusy)}>
+                                {renameBusy ? "Renaming..." : "Rename"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
         </>
     );
+}
+
+function buttonStyle(disabled: boolean): React.CSSProperties {
+    return {
+        height: 32,
+        padding: "0 12px",
+        borderRadius: 8,
+        border: "1px solid #3a3a3c",
+        background: disabled ? "#2a2a2a" : "#2c2c2e",
+        color: disabled ? "#6b7280" : "#f4f4f5",
+        cursor: disabled ? "not-allowed" : "pointer",
+    };
+}
+
+function primaryButtonStyle(disabled: boolean): React.CSSProperties {
+    return {
+        height: 32,
+        padding: "0 12px",
+        borderRadius: 8,
+        border: "1px solid #2563eb",
+        background: disabled ? "#1f2937" : "#2563eb",
+        color: "#ffffff",
+        cursor: disabled ? "not-allowed" : "pointer",
+        fontWeight: 600,
+    };
 }

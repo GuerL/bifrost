@@ -23,6 +23,7 @@ pub fn run() {
           commands::collection::create_request,
           commands::collection::update_request,
           commands::collection::delete_request,
+          commands::collection::rename_request,
           commands::collection::list_collections,
           commands::collection::load_collection,
           commands::collection::load_drafts,
