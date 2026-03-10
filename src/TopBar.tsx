@@ -102,32 +102,11 @@ export default function TopBar({
                     New Request
                 </button>
                 <button
-                    onClick={onDuplicateSelectedRequest}
-                    disabled={!currentCollectionId || !selectedRequestId}
-                    style={buttonStyle(!currentCollectionId || !selectedRequestId)}
-                >
-                    Duplicate
-                </button>
-                <button
-                    onClick={onRenameSelectedRequest}
-                    disabled={!currentCollectionId || !selectedRequestId}
-                    style={buttonStyle(!currentCollectionId || !selectedRequestId)}
-                >
-                    Rename
-                </button>
-                <button
                     onClick={onSaveDraft}
                     disabled={!canSaveDraft}
                     style={primaryButtonStyle(!canSaveDraft)}
                 >
                     Save draft
-                </button>
-                <button
-                    onClick={onDeleteSelectedRequest}
-                    disabled={!currentCollectionId}
-                    style={buttonStyle(!currentCollectionId)}
-                >
-                    Delete
                 </button>
             </div>
         </div>
