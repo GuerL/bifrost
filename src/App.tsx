@@ -690,11 +690,12 @@ export default function App() {
                             {tab === "body" && draft.body.type === "json" && (
                                 <div style={editorPanelStyle(240)}>
                                     <Editor
+                                        key={`body-json-${selectedRequestId ?? "none"}`}
                                         height="240px"
                                         language="json"
                                         theme="postguerl-midnight"
                                         beforeMount={beforeMountMonaco}
-                                        value={JSON.stringify(draft.body.value ?? {}, null, 2)}
+                                        defaultValue={JSON.stringify(draft.body.value ?? {}, null, 2)}
                                         onChange={(value) => {
                                             try {
                                                 const parsed = JSON.parse(value ?? "{}");
