@@ -70,7 +70,6 @@ export default function App() {
     const [tab, setTab] = useState<"headers" | "query" | "body" | "json">("headers");
     const [contextMenu, setContextMenu] = useState<RequestContextMenu | null>(null);
     const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
-    const [renameIdInput, setRenameIdInput] = useState("");
     const [renameNameInput, setRenameNameInput] = useState("");
     const [renameError, setRenameError] = useState("");
     const [renameBusy, setRenameBusy] = useState(false);
@@ -303,7 +302,7 @@ export default function App() {
         try {
             const parsed = JSON.parse(editorText) as Request;
             if (parsed.id !== draft.id) {
-                setStatus("❌ ID cannot be changed here. Use Rename.");
+                setStatus("❌ ID cannot be changed.");
                 return;
             }
             setFullDraft(parsed);
@@ -311,12 +310,6 @@ export default function App() {
         } catch (e) {
             setStatus(`❌ JSON invalid: ${String(e)}`);
         }
-    }
-
-    function onDeleteSelectedRequest() {
-        if (!current || !selectedRequestId) return;
-
-        onDeleteRequest(selectedRequestId);
     }
 
     function onDeleteRequest(requestId: string) {
@@ -338,12 +331,6 @@ export default function App() {
         );
     }
 
-    function onDuplicateSelectedRequest() {
-        if (!current || !selectedRequestId) return;
-
-        onDuplicateRequest(selectedRequestId);
-    }
-
     function onDuplicateRequest(requestId: string) {
         if (!current) return;
 
@@ -363,7 +350,6 @@ export default function App() {
         if (!req) return;
 
         setRenameTargetId(requestId);
-        setRenameIdInput(req.id);
         setRenameNameInput(req.name);
         setRenameError("");
         setContextMenu(null);
@@ -378,13 +364,7 @@ export default function App() {
     async function submitRenameModal() {
         if (!current || !renameTargetId || renameBusy) return;
 
-        const nextId = renameIdInput.trim();
         const nextName = renameNameInput.trim();
-
-        if (!nextId) {
-            setRenameError("Request id cannot be empty.");
-            return;
-        }
 
         if (!nextName) {
             setRenameError("Request name cannot be empty.");
@@ -397,19 +377,17 @@ export default function App() {
             return;
         }
 
-        if (nextId === source.id && nextName === source.name) {
+        if (nextName === source.name) {
             setRenameError("Nothing to rename.");
             return;
         }
 
-        const oldId = renameTargetId;
         setRenameBusy(true);
         setRenameError("");
 
         const ok = await devRename(
             current,
-            oldId,
-            nextId,
+            renameTargetId,
             nextName,
             setCurrent,
             setSelectedRequestId,
@@ -419,19 +397,10 @@ export default function App() {
 
         if (ok) {
             setDraftsById((prev) => {
-                if (!prev[oldId]) return prev;
+                const existing = prev[renameTargetId];
+                if (!existing) return prev;
                 const next = { ...prev };
-                const existing = next[oldId];
-                delete next[oldId];
-
-                if (existing) {
-                    next[nextId] = {
-                        ...existing,
-                        id: nextId,
-                        name: nextName,
-                    };
-                }
-
+                next[renameTargetId] = { ...existing, name: nextName };
                 return next;
             });
 
@@ -441,10 +410,6 @@ export default function App() {
         setRenameBusy(false);
     }
 
-    function onRenameSelectedRequest() {
-        if (!selectedRequestId) return;
-        openRenameModal(selectedRequestId);
-    }
     function onNewRequest() {
         if (!current) return;
         devCreate(
@@ -462,15 +427,11 @@ export default function App() {
             <TopBar
                 collections={collections}
                 currentCollectionId={current?.meta.id ?? null}
-                selectedRequestId={selectedRequestId}
                 onSelectCollection={(collectionId) =>
                     loadCollection(collectionId,null, setCurrent, setSelectedRequestId, setResp, setStatus)
                 }
                 onSaveDraft={saveDraft}
                 onNewRequest={onNewRequest}
-                onRenameSelectedRequest={onRenameSelectedRequest}
-                onDeleteSelectedRequest={onDeleteSelectedRequest}
-                onDuplicateSelectedRequest={onDuplicateSelectedRequest}
                 onOpenRawJson={() => setTab("json")}
                 canSaveDraft={!!current && !!draft && isDirty}
                 hasDraft={!!draft}
@@ -922,14 +883,12 @@ export default function App() {
                     >
                         <h3 style={{ margin: 0 }}>Rename request</h3>
 
-                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                            <span style={{ fontSize: 13, color: "#a1a1aa" }}>Request id</span>
-                            <input
-                                value={renameIdInput}
-                                onChange={(e) => setRenameIdInput(e.target.value)}
-                                disabled={renameBusy}
-                            />
-                        </label>
+                        <div style={{ fontSize: 13, color: "#a1a1aa" }}>
+                            Request id:{" "}
+                            <code style={{ color: "#f4f4f5" }}>
+                                {renameTargetId}
+                            </code>
+                        </div>
 
                         <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                             <span style={{ fontSize: 13, color: "#a1a1aa" }}>Request name</span>

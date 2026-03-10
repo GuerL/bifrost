@@ -225,16 +225,10 @@ pub fn rename_request(
   app: AppHandle,
   collection_id: String,
   request_id: String,
-  new_request_id: String,
   new_name: String,
 ) -> Result<(), String> {
   if request_id.trim().is_empty() {
     return Err("Request id is empty".into());
-  }
-
-  let new_request_id = new_request_id.trim().to_string();
-  if new_request_id.is_empty() {
-    return Err("New request id is empty".into());
   }
 
   let new_name = new_name.trim().to_string();
@@ -247,62 +241,16 @@ pub fn rename_request(
     return Err(format!("Collection not found: {}", collection_id));
   }
 
-  let mut meta = read_json::<CollectionMeta>(&meta_path)?;
-
   let source_path = request_path(&app, &collection_id, &request_id)?;
   if !source_path.exists() {
     return Err(format!("Request not found: {}", request_id));
   }
 
-  let target_path = request_path(&app, &collection_id, &new_request_id)?;
-  if request_id != new_request_id && target_path.exists() {
-    return Err(format!("Target request already exists: {}", new_request_id));
-  }
-
   let mut req = read_json::<Request>(&source_path)?;
-  req.id = new_request_id.clone();
+  req.id = request_id;
   req.name = new_name;
 
-  if request_id != new_request_id {
-    fs::rename(&source_path, &target_path).map_err(|e| e.to_string())?;
-  }
-
-  write_json(&target_path, &req)?;
-
-  let mut replaced = false;
-  for id in &mut meta.request_order {
-    if id == &request_id {
-      if replaced {
-        id.clear();
-      } else {
-        *id = new_request_id.clone();
-        replaced = true;
-      }
-    }
-  }
-  meta.request_order.retain(|id| !id.is_empty());
-
-  if !replaced {
-    meta.request_order.push(new_request_id.clone());
-  }
-
-  if request_id != new_request_id {
-    let mut seen_new_id = false;
-    meta.request_order.retain(|id| {
-      if id == &new_request_id {
-        if seen_new_id {
-          false
-        } else {
-          seen_new_id = true;
-          true
-        }
-      } else {
-        true
-      }
-    });
-  }
-
-  write_json(&meta_path, &meta)?;
+  write_json(&source_path, &req)?;
 
   Ok(())
 }

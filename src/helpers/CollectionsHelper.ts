@@ -116,7 +116,6 @@ export async function devDuplicate(
 export async function devRename(
     current: CollectionLoaded | null,
     selectedRequestId: string | null,
-    newRequestId: string,
     newName: string,
     setCurrent: (c: CollectionLoaded) => void,
     setSelectedRequestId: (id: string | null) => void,
@@ -125,13 +124,7 @@ export async function devRename(
 ): Promise<boolean> {
     if (!current || !selectedRequestId) return false;
 
-    const trimmedId = newRequestId.trim();
     const trimmedName = newName.trim();
-
-    if (!trimmedId) {
-        setStatus("❌ Request id cannot be empty");
-        return false;
-    }
 
     if (!trimmedName) {
         setStatus("❌ Request name cannot be empty");
@@ -143,20 +136,19 @@ export async function devRename(
         await invoke("rename_request", {
             collectionId: current.meta.id,
             requestId: selectedRequestId,
-            newRequestId: trimmedId,
             newName: trimmedName,
         });
 
         await loadCollection(
             current.meta.id,
-            trimmedId,
+            selectedRequestId,
             setCurrent,
             setSelectedRequestId,
             setResp,
             setStatus
         );
 
-        setSelectedRequestId(trimmedId);
+        setSelectedRequestId(selectedRequestId);
         setStatus("✅ Request renamed");
         return true;
     } catch (e) {
