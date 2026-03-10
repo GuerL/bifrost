@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isPending } from "./helpers/HttpHelper";
-import Editor from "@monaco-editor/react";
+import Editor, { type BeforeMount } from "@monaco-editor/react";
 import {
     devCreate,
     devDelete,
@@ -73,6 +73,48 @@ export default function App() {
     const [renameNameInput, setRenameNameInput] = useState("");
     const [renameError, setRenameError] = useState("");
     const [renameBusy, setRenameBusy] = useState(false);
+
+    const beforeMountMonaco = useCallback<BeforeMount>((monaco) => {
+        monaco.editor.defineTheme("postguerl-midnight", {
+            base: "vs-dark",
+            inherit: true,
+            rules: [
+                { token: "keyword", foreground: "7dd3fc" },
+                { token: "number", foreground: "f59e0b" },
+                { token: "string", foreground: "86efac" },
+            ],
+            colors: {
+                "editor.background": "#0b1220",
+                "editor.foreground": "#e2e8f0",
+                "editorLineNumber.foreground": "#475569",
+                "editorLineNumber.activeForeground": "#94a3b8",
+                "editorCursor.foreground": "#22d3ee",
+                "editor.selectionBackground": "#164e63AA",
+                "editor.lineHighlightBackground": "#0f172a",
+                "editorIndentGuide.background1": "#1e293b",
+                "editorIndentGuide.activeBackground1": "#334155",
+            },
+        });
+    }, []);
+
+    const editorOptions = useMemo(
+        () => ({
+            minimap: { enabled: false },
+            fontSize: 13,
+            lineHeight: 22,
+            fontLigatures: true,
+            smoothScrolling: true,
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+            tabSize: 2,
+            insertSpaces: true,
+            padding: { top: 12, bottom: 12 },
+            renderLineHighlight: "all" as const,
+            roundedSelection: true,
+            wordWrap: "on" as const,
+        }),
+        []
+    );
 
     const selectedSavedRequest = useMemo(() => {
         if (!current || !selectedRequestId) return null;
@@ -646,24 +688,27 @@ export default function App() {
                             )}
 
                             {tab === "body" && draft.body.type === "json" && (
-                                <Editor
-                                    height="220px"
-                                    language="json"
-                                    theme="vs-dark"
-                                    value={JSON.stringify(draft.body.value, null, 2)}
-                                    onChange={(v) => {
-                                        try {
-                                            const parsed = JSON.parse(v ?? "{}");
-                                            setFullDraft({
-                                                ...draft,
-                                                body: { type: "json", value: parsed },
-                                            });
-                                        } catch {
-                                            // On laisse l'utilisateur finir de taper
-                                        }
-                                    }}
-                                    options={{ minimap: { enabled: false }, tabSize: 2 }}
-                                />
+                                <div style={editorPanelStyle(240)}>
+                                    <Editor
+                                        height="240px"
+                                        language="json"
+                                        theme="postguerl-midnight"
+                                        beforeMount={beforeMountMonaco}
+                                        value={JSON.stringify(draft.body.value ?? {}, null, 2)}
+                                        onChange={(value) => {
+                                            try {
+                                                const parsed = JSON.parse(value ?? "{}");
+                                                setFullDraft({
+                                                    ...draft,
+                                                    body: { type: "json", value: parsed },
+                                                });
+                                            } catch {
+                                                // keep last valid value while user types invalid json
+                                            }
+                                        }}
+                                        options={editorOptions}
+                                    />
+                                </div>
                             )}
 
                             {tab === "body" && draft.body.type === "raw" && (() => {
@@ -684,23 +729,26 @@ export default function App() {
                                                 })
                                             }
                                         />
-                                        <Editor
-                                            height="220px"
-                                            language="text"
-                                            theme="vs-dark"
-                                            value={rawBody.text}
-                                            onChange={(v) =>
-                                                setFullDraft({
-                                                    ...draft,
-                                                    body: {
-                                                        type: "raw",
-                                                        content_type: rawBody.content_type,
-                                                        text: v ?? "",
-                                                    },
-                                                })
-                                            }
-                                            options={{ minimap: { enabled: false }, tabSize: 2 }}
-                                        />
+                                        <div style={editorPanelStyle(240)}>
+                                            <Editor
+                                                height="240px"
+                                                language={languageFromContentType(rawBody.content_type)}
+                                                theme="postguerl-midnight"
+                                                beforeMount={beforeMountMonaco}
+                                                value={rawBody.text}
+                                                onChange={(value) =>
+                                                    setFullDraft({
+                                                        ...draft,
+                                                        body: {
+                                                            type: "raw",
+                                                            content_type: rawBody.content_type,
+                                                            text: value ?? "",
+                                                        },
+                                                    })
+                                                }
+                                                options={editorOptions}
+                                            />
+                                        </div>
                                     </div>
                                 );
                             })()}
@@ -719,14 +767,17 @@ export default function App() {
 
                             {tab === "json" && (
                                 <>
-                                    <Editor
-                                        height="400px"
-                                        language="json"
-                                        theme="vs-dark"
-                                        value={editorText}
-                                        onChange={(v) => setEditorText(v ?? "")}
-                                        options={{ minimap: { enabled: false }, tabSize: 2 }}
-                                    />
+                                    <div style={editorPanelStyle(400)}>
+                                        <Editor
+                                            height="400px"
+                                            language="json"
+                                            theme="postguerl-midnight"
+                                            beforeMount={beforeMountMonaco}
+                                            value={editorText}
+                                            onChange={(value) => setEditorText(value ?? "")}
+                                            options={editorOptions}
+                                        />
+                                    </div>
                                     <div style={{ display: "flex", gap: 8 }}>
                                         <button onClick={applyEditorToDraft} disabled={!draft}>
                                             Apply JSON
@@ -939,4 +990,28 @@ function primaryButtonStyle(disabled: boolean): React.CSSProperties {
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
     };
+}
+
+function editorPanelStyle(height: number): React.CSSProperties {
+    return {
+        height,
+        borderRadius: 12,
+        overflow: "hidden",
+        border: "1px solid #1e293b",
+        boxShadow: "inset 0 0 0 1px #0f172a, 0 14px 28px rgba(2, 6, 23, 0.35)",
+        background:
+            "linear-gradient(180deg, rgba(15,23,42,0.96) 0%, rgba(11,18,32,0.98) 100%)",
+    };
+}
+
+function languageFromContentType(contentType: string): string {
+    const lower = contentType.toLowerCase();
+    if (lower.includes("json")) return "json";
+    if (lower.includes("xml")) return "xml";
+    if (lower.includes("html")) return "html";
+    if (lower.includes("javascript")) return "javascript";
+    if (lower.includes("typescript")) return "typescript";
+    if (lower.includes("css")) return "css";
+    if (lower.includes("sql")) return "sql";
+    return "plaintext";
 }
