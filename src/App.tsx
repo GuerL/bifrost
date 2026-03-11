@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isPending } from "./helpers/HttpHelper";
 import Editor, { type BeforeMount } from "@monaco-editor/react";
@@ -73,6 +73,7 @@ export default function App() {
     const [renameNameInput, setRenameNameInput] = useState("");
     const [renameError, setRenameError] = useState("");
     const [renameBusy, setRenameBusy] = useState(false);
+    const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
 
     const beforeMountMonaco = useCallback<BeforeMount>((monaco) => {
         monaco.editor.defineTheme("postguerl-midnight", {
@@ -112,6 +113,14 @@ export default function App() {
             renderLineHighlight: "all" as const,
             roundedSelection: true,
             wordWrap: "on" as const,
+            scrollbar: {
+                vertical: "auto" as const,
+                horizontal: "auto" as const,
+                alwaysConsumeMouseWheel: true,
+                useShadows: false,
+            },
+            mouseWheelScrollSensitivity: 1,
+            fastScrollSensitivity: 3,
         }),
         []
     );
@@ -187,9 +196,16 @@ export default function App() {
     useEffect(() => {
         if (!draft) {
             setEditorText("");
+            if (rawJsonEditorRef.current) {
+                rawJsonEditorRef.current.setValue("");
+            }
             return;
         }
-        setEditorText(JSON.stringify(draft, null, 2));
+        const nextText = JSON.stringify(draft, null, 2);
+        setEditorText(nextText);
+        if (rawJsonEditorRef.current && rawJsonEditorRef.current.getValue() !== nextText) {
+            rawJsonEditorRef.current.setValue(nextText);
+        }
     }, [draft]);
 
     useEffect(() => {
@@ -326,7 +342,11 @@ export default function App() {
     function formatJson() {
         try {
             const obj = JSON.parse(editorText);
-            setEditorText(JSON.stringify(obj, null, 2));
+            const formatted = JSON.stringify(obj, null, 2);
+            setEditorText(formatted);
+            if (rawJsonEditorRef.current) {
+                rawJsonEditorRef.current.setValue(formatted);
+            }
             setStatus("✅ Formatted");
         } catch (e) {
             setStatus(`❌ JSON invalid: ${String(e)}`);
@@ -688,10 +708,10 @@ export default function App() {
                             )}
 
                             {tab === "body" && draft.body.type === "json" && (
-                                <div style={editorPanelStyle(240)}>
+                                <div style={editorPanelStyle("34vh", 280)}>
                                     <Editor
                                         key={`body-json-${selectedRequestId ?? "none"}`}
-                                        height="240px"
+                                        height="100%"
                                         language="json"
                                         theme="postguerl-midnight"
                                         beforeMount={beforeMountMonaco}
@@ -730,13 +750,14 @@ export default function App() {
                                                 })
                                             }
                                         />
-                                        <div style={editorPanelStyle(240)}>
+                                        <div style={editorPanelStyle("34vh", 280)}>
                                             <Editor
-                                                height="240px"
+                                                key={`body-raw-${selectedRequestId ?? "none"}`}
+                                                height="100%"
                                                 language={languageFromContentType(rawBody.content_type)}
                                                 theme="postguerl-midnight"
                                                 beforeMount={beforeMountMonaco}
-                                                value={rawBody.text}
+                                                defaultValue={rawBody.text}
                                                 onChange={(value) =>
                                                     setFullDraft({
                                                         ...draft,
@@ -768,13 +789,23 @@ export default function App() {
 
                             {tab === "json" && (
                                 <>
-                                    <div style={editorPanelStyle(400)}>
+                                    <div style={editorPanelStyle("52vh", 360)}>
                                         <Editor
-                                            height="400px"
+                                            key={`request-json-${selectedRequestId ?? "none"}`}
+                                            height="100%"
                                             language="json"
                                             theme="postguerl-midnight"
                                             beforeMount={beforeMountMonaco}
-                                            value={editorText}
+                                            defaultValue={editorText}
+                                            onMount={(editor) => {
+                                                rawJsonEditorRef.current = editor as {
+                                                    getValue: () => string;
+                                                    setValue: (value: string) => void;
+                                                };
+                                                if (editor.getValue() !== editorText) {
+                                                    editor.setValue(editorText);
+                                                }
+                                            }}
                                             onChange={(value) => setEditorText(value ?? "")}
                                             options={editorOptions}
                                         />
@@ -993,9 +1024,10 @@ function primaryButtonStyle(disabled: boolean): React.CSSProperties {
     };
 }
 
-function editorPanelStyle(height: number): React.CSSProperties {
+function editorPanelStyle(height: number | string, minHeight = 220): React.CSSProperties {
     return {
         height,
+        minHeight,
         borderRadius: 12,
         overflow: "hidden",
         border: "1px solid #1e293b",
