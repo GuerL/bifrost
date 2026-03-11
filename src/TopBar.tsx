@@ -1,5 +1,9 @@
 import { CollectionMeta, Environment } from "./types.ts";
 
+const isMacOS =
+    typeof navigator !== "undefined" &&
+    /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
+
 type TopBarProps = {
     collections: CollectionMeta[];
     currentCollectionId: string | null;
@@ -37,7 +41,7 @@ export default function TopBar({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                paddingLeft: 88, // espace pour les traffic lights macOS
+                paddingLeft: isMacOS ? 88 : 12, // espace pour les traffic lights macOS
                 paddingRight: 12,
                 // background: "#1c1c1e",
                 // borderBottom: "1px solid #2c2c2e",
