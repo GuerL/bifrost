@@ -51,11 +51,12 @@ export default function TopBar({
 
     return (
         <div
+            data-tauri-drag-region
             style={{
                 height: 52,
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "space-between",
+                gap: 12,
                 paddingLeft: isMacOS ? 88 : 12, // espace pour les traffic lights macOS
                 paddingRight: 12,
                 // background: "#1c1c1e",
@@ -65,7 +66,6 @@ export default function TopBar({
             }}
         >
             <div
-                data-tauri-drag-region
                 style={{
                     display: "flex",
                     alignItems: "center",
@@ -120,6 +120,15 @@ export default function TopBar({
 
 
             </div>
+
+            <div
+                data-tauri-drag-region
+                style={{
+                    flex: 1,
+                    minWidth: 40,
+                    height: "100%",
+                }}
+            />
 
             <div
                 style={{
