@@ -65,8 +65,7 @@ export default function TopBar({
                 paddingLeft: isMacOS ? 88 : 12, // space for macOS traffic lights
                 paddingRight: 12,
                 borderBottom: "1px solid var(--pg-border)",
-                background:
-                    "linear-gradient(180deg, rgba(var(--pg-primary-rgb), 0.16) 0%, rgba(2,6,23,0.98) 45%, rgba(2,6,23,0.98) 100%)",
+                background: "var(--pg-surface-0)",
                 userSelect: "none",
                 flexShrink: 0,
             }}
@@ -190,9 +189,7 @@ function primaryButtonStyle(disabled: boolean): React.CSSProperties {
         padding: "0 14px",
         borderRadius: 10,
         border: "1px solid var(--pg-primary-strong)",
-        background: disabled
-            ? "linear-gradient(180deg, rgba(var(--pg-primary-rgb), 0.5) 0%, rgba(var(--pg-primary-rgb), 0.35) 100%)"
-            : "linear-gradient(180deg, var(--pg-primary-soft) 0%, var(--pg-primary) 100%)",
+        background: disabled ? "rgba(var(--pg-primary-rgb), 0.45)" : "var(--pg-primary)",
         color: "var(--pg-primary-ink)",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 700,

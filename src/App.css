@@ -5,15 +5,12 @@
   --pg-primary-ink: #032325;
   --pg-primary-rgb: 0, 157, 166;
 
-  --pg-bg-main:
-    radial-gradient(circle at 12% 8%, rgba(var(--pg-primary-rgb), 0.42) 0%, rgba(var(--pg-primary-rgb), 0.08) 26%, transparent 42%),
-    radial-gradient(circle at 88% 18%, rgba(var(--pg-primary-rgb), 0.22) 0%, rgba(var(--pg-primary-rgb), 0.03) 24%, transparent 44%),
-    linear-gradient(180deg, #0c1326 0%, #0a1020 42%, #060a14 100%);
+  --pg-bg-main: #0b1220;
   --pg-surface-0: #0f172a;
   --pg-surface-1: #111827;
   --pg-surface-2: #1f2937;
-  --pg-surface-gradient: linear-gradient(180deg, rgba(var(--pg-primary-rgb), 0.16) 0%, rgba(var(--pg-primary-rgb), 0.06) 28%, var(--pg-surface-2) 58%, var(--pg-surface-1) 100%);
-  --pg-surface-soft: linear-gradient(180deg, rgba(var(--pg-primary-rgb), 0.24) 0%, #13233f 42%, #0f172a 100%);
+  --pg-surface-gradient: var(--pg-surface-2);
+  --pg-surface-soft: #162033;
 
   --pg-border: #334155;
   --pg-border-muted: #475569;
@@ -67,18 +64,18 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, var(--pg-primary-soft) 0%, var(--pg-primary) 100%);
+  background: var(--pg-primary);
   border-radius: 999px;
   border: 2px solid rgba(11, 18, 32, 0.85);
   min-height: 26px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, var(--pg-scrollbar-thumb-hover) 0%, var(--pg-primary) 100%);
+  background: var(--pg-scrollbar-thumb-hover);
 }
 
 *::-webkit-scrollbar-thumb:active {
-  background: linear-gradient(180deg, var(--pg-primary) 0%, var(--pg-primary-strong) 100%);
+  background: var(--pg-scrollbar-thumb-active);
 }
 
 *::-webkit-scrollbar-corner {
@@ -138,7 +135,7 @@ button:focus-visible {
 
 h2,
 h3 {
-  color: var(--pg-primary-soft);
+  color: var(--pg-text);
 }
 
 .variable-input-field::placeholder {

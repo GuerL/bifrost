@@ -1640,9 +1640,7 @@ function primaryButtonStyle(disabled: boolean): React.CSSProperties {
         padding: "0 14px",
         borderRadius: 10,
         border: "1px solid var(--pg-primary-strong)",
-        background: disabled
-            ? "linear-gradient(180deg, rgba(var(--pg-primary-rgb), 0.5) 0%, rgba(var(--pg-primary-rgb), 0.35) 100%)"
-            : "linear-gradient(180deg, var(--pg-primary-soft) 0%, var(--pg-primary) 100%)",
+        background: disabled ? "rgba(var(--pg-primary-rgb), 0.45)" : "var(--pg-primary)",
         color: "var(--pg-primary-ink)",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 700,
@@ -1656,9 +1654,7 @@ function dangerButtonStyle(disabled: boolean): React.CSSProperties {
         padding: "0 14px",
         borderRadius: 10,
         border: "1px solid var(--pg-danger)",
-        background: disabled
-            ? "var(--pg-danger-dark)"
-            : "linear-gradient(180deg, var(--pg-danger) 0%, var(--pg-danger-strong) 100%)",
+        background: disabled ? "var(--pg-danger-dark)" : "var(--pg-danger)",
         color: "var(--pg-text)",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
@@ -1685,9 +1681,7 @@ function requestListItemStyle(active: boolean, hasLocalDraft: boolean): React.CS
             : hasLocalDraft
                 ? "var(--pg-primary-soft)"
                 : "var(--pg-border)",
-        background: active
-            ? "linear-gradient(180deg, var(--pg-primary-soft) 0%, var(--pg-primary) 100%)"
-            : "var(--pg-surface-gradient)",
+        background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
         boxShadow: active ? "0 12px 24px rgba(var(--pg-primary-rgb), 0.35)" : "none",
         color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
         fontWeight: active ? 700 : 500,
@@ -1698,9 +1692,7 @@ function editorTabStyle(active: boolean): React.CSSProperties {
     return {
         ...buttonStyle(false),
         borderColor: active ? "var(--pg-primary)" : "var(--pg-border)",
-        background: active
-            ? "linear-gradient(180deg, var(--pg-primary-soft) 0%, var(--pg-primary) 100%)"
-            : "var(--pg-surface-gradient)",
+        background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
         color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
     };
 }
@@ -1712,9 +1704,7 @@ function draftTabContainerStyle(active: boolean): React.CSSProperties {
         borderRadius: 10,
         overflow: "hidden",
         border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
-        background: active
-            ? "linear-gradient(180deg, var(--pg-primary-soft) 0%, var(--pg-primary) 100%)"
-            : "var(--pg-surface-gradient)",
+        background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
         minWidth: 200,
         boxShadow: active ? "0 12px 24px rgba(var(--pg-primary-rgb), 0.35)" : "none",
     };
@@ -1761,7 +1751,6 @@ function editorPanelStyle(height: number | string, minHeight = 220): React.CSSPr
         overflow: "hidden",
         border: "1px solid var(--pg-border)",
         boxShadow: "inset 0 0 0 1px var(--pg-surface-0), 0 14px 28px rgba(2, 6, 23, 0.35)",
-        background:
-            "linear-gradient(180deg, rgba(var(--pg-primary-rgb), 0.12) 0%, var(--pg-editor-deep) 100%)",
+        background: "var(--pg-editor-deep)",
     };
 }
