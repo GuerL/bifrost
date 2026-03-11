@@ -127,6 +127,7 @@ export default function TopBar({
             </div>
 
             <div
+                data-tauri-drag-region
                 style={{
                     flex: 1,
                     minWidth: 40,
