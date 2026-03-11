@@ -149,6 +149,112 @@ pub fn list_collections(app: AppHandle) -> Result<Vec<CollectionMeta>, String> {
     Ok(out)
 }
 
+fn slugify_collection_id(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut last_dash = false;
+
+    for ch in name.chars() {
+        let c = ch.to_ascii_lowercase();
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "collection".to_string()
+    } else {
+        trimmed
+    }
+}
+
+#[tauri::command]
+pub fn create_collection(
+    app: AppHandle,
+    name: String,
+) -> Result<CollectionMeta, String> {
+    let trimmed_name = name.trim().to_string();
+    if trimmed_name.is_empty() {
+        return Err("Collection name cannot be empty".into());
+    }
+
+    let base_id = slugify_collection_id(&trimmed_name);
+    let mut candidate_id = base_id.clone();
+    let mut counter = 2;
+
+    while collection_meta_path(&app, &candidate_id)?.exists() {
+        candidate_id = format!("{base_id}-{counter}");
+        counter += 1;
+    }
+
+    let meta = CollectionMeta {
+        version: 1,
+        id: candidate_id,
+        name: trimmed_name,
+        request_order: vec![],
+    };
+
+    let meta_path = collection_meta_path(&app, &meta.id)?;
+    write_json(&meta_path, &meta)?;
+    Ok(meta)
+}
+
+#[tauri::command]
+pub fn rename_collection(
+    app: AppHandle,
+    collection_id: String,
+    new_name: String,
+) -> Result<(), String> {
+    if collection_id.trim().is_empty() {
+        return Err("Collection id is empty".into());
+    }
+
+    let trimmed_name = new_name.trim().to_string();
+    if trimmed_name.is_empty() {
+        return Err("Collection name cannot be empty".into());
+    }
+
+    let meta_path = collection_meta_path(&app, &collection_id)?;
+    if !meta_path.exists() {
+        return Err(format!("Collection not found: {}", collection_id));
+    }
+
+    let mut meta = read_json::<CollectionMeta>(&meta_path)?;
+    meta.name = trimmed_name;
+    write_json(&meta_path, &meta)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_collection(
+    app: AppHandle,
+    collection_id: String,
+) -> Result<(), String> {
+    if collection_id.trim().is_empty() {
+        return Err("Collection id is empty".into());
+    }
+
+    let meta_path = collection_meta_path(&app, &collection_id)?;
+    if !meta_path.exists() {
+        return Err(format!("Collection not found: {}", collection_id));
+    }
+
+    let dir = collection_dir(&app, &collection_id)?;
+    delete_dir(&dir)?;
+
+    let mut idx = load_or_init_collections_index(&app)?;
+    if idx.active_collection_id.as_deref() == Some(collection_id.as_str()) {
+        idx.active_collection_id = None;
+        save_collections_index(&app, &idx)?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn load_collection(app: AppHandle, id: String) -> Result<CollectionLoaded, String> {
     let meta_path = collection_meta_path(&app, &id)?;

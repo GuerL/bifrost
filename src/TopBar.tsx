@@ -15,6 +15,7 @@ type TopBarProps = {
     currentEnvironmentId: string | null;
     onSelectCollection: (collectionId: string) => void;
     onSelectEnvironment: (environmentId: string | null) => void;
+    onManageCollections: () => void;
     onManageEnvironments: () => void;
     onSaveDraft: () => void;
     onNewRequest: () => void;
@@ -30,6 +31,7 @@ export default function TopBar({
                                    currentEnvironmentId,
                                    onSelectCollection,
                                    onSelectEnvironment,
+                                   onManageCollections,
                                    onManageEnvironments,
                                    onSaveDraft,
                                    onNewRequest,
@@ -130,6 +132,12 @@ export default function TopBar({
                     style={buttonStyle(!hasDraft)}
                 >
                     Raw JSON
+                </button>
+                <button
+                    onClick={onManageCollections}
+                    style={buttonStyle(false)}
+                >
+                    Collections
                 </button>
                 <button
                     onClick={onNewRequest}

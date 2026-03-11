@@ -34,6 +34,11 @@ type CloseDraftModal = {
     requestId: string;
 };
 
+type DeleteCollectionModal = {
+    id: string;
+    name: string;
+};
+
 type PersistedTabsEntry = {
     openRequestIds: string[];
     activeRequestId: string | null;
@@ -104,6 +109,13 @@ export default function App() {
     const [envDraftVars, setEnvDraftVars] = useState<KeyValue[]>([]);
     const [envBusy, setEnvBusy] = useState(false);
     const [envError, setEnvError] = useState("");
+    const [collectionsModalOpen, setCollectionsModalOpen] = useState(false);
+    const [collectionSelectedId, setCollectionSelectedId] = useState<string | null>(null);
+    const [collectionDraftName, setCollectionDraftName] = useState("");
+    const [collectionCreateName, setCollectionCreateName] = useState("");
+    const [collectionBusy, setCollectionBusy] = useState(false);
+    const [collectionError, setCollectionError] = useState("");
+    const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
@@ -188,6 +200,14 @@ export default function App() {
     const activeEnvironment = useMemo(
         () => environments.find((env) => env.id === activeEnvironmentId) ?? null,
         [environments, activeEnvironmentId]
+    );
+
+    const selectedCollectionForEdit = useMemo(
+        () =>
+            collectionSelectedId
+                ? collections.find((entry) => entry.id === collectionSelectedId) ?? null
+                : null,
+        [collections, collectionSelectedId]
     );
 
     const activeEnvironmentValues = useMemo(() => {
@@ -349,6 +369,18 @@ export default function App() {
     }, [selectedRequestId]);
 
     useEffect(() => {
+        if (!collectionsModalOpen) return;
+        if (collectionSelectedId && collections.some((entry) => entry.id === collectionSelectedId)) {
+            return;
+        }
+
+        const next =
+            collections.find((entry) => entry.id === (current?.meta.id ?? "")) ?? collections[0] ?? null;
+        setCollectionSelectedId(next?.id ?? null);
+        setCollectionDraftName(next?.name ?? "");
+    }, [collectionsModalOpen, collections, collectionSelectedId, current?.meta.id]);
+
+    useEffect(() => {
         if (!current) return;
         if (hydratedTabsCollectionIdRef.current !== current.meta.id) return;
 
@@ -415,6 +447,11 @@ export default function App() {
                 setEnvironmentsModalOpen(false);
                 setEnvError("");
             }
+            if (!collectionBusy) {
+                setCollectionsModalOpen(false);
+                setCollectionError("");
+                setDeleteCollectionModal(null);
+            }
             if (!closeDraftBusy) {
                 setCloseDraftModal(null);
             }
@@ -422,7 +459,7 @@ export default function App() {
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [renameBusy, envBusy, closeDraftBusy]);
+    }, [renameBusy, envBusy, collectionBusy, closeDraftBusy]);
 
     const updateDraft = useCallback(
         (patch: Partial<Request>) => {
@@ -788,6 +825,144 @@ export default function App() {
         }
     }
 
+    function openCollectionsModal() {
+        const selected =
+            collections.find((collection) => collection.id === (current?.meta.id ?? "")) ??
+            collections[0] ??
+            null;
+        setCollectionSelectedId(selected?.id ?? null);
+        setCollectionDraftName(selected?.name ?? "");
+        setCollectionCreateName("");
+        setCollectionError("");
+        setDeleteCollectionModal(null);
+        setCollectionsModalOpen(true);
+    }
+
+    function closeCollectionsModal() {
+        if (collectionBusy) return;
+        setCollectionsModalOpen(false);
+        setCollectionError("");
+        setDeleteCollectionModal(null);
+    }
+
+    function pickCollectionForEdit(collectionId: string) {
+        const collection = collections.find((entry) => entry.id === collectionId);
+        if (!collection) return;
+        setCollectionSelectedId(collection.id);
+        setCollectionDraftName(collection.name);
+        setCollectionError("");
+        setDeleteCollectionModal(null);
+    }
+
+    async function onCreateCollection() {
+        if (collectionBusy) return;
+        const name = collectionCreateName.trim();
+        if (!name) {
+            setCollectionError("Collection name cannot be empty.");
+            return;
+        }
+
+        setCollectionBusy(true);
+        setCollectionError("");
+        try {
+            const created = await invoke<CollectionMeta>("create_collection", { name });
+            await invoke("set_active_collection", { collectionId: created.id });
+            await reloadCollectionsAndRestoreActive(created.id);
+            setCollectionSelectedId(created.id);
+            setCollectionDraftName(created.name);
+            setCollectionCreateName("");
+            setStatus(`✅ Collection created: ${created.name}`);
+        } catch (e) {
+            setCollectionError(`Create failed: ${String(e)}`);
+        } finally {
+            setCollectionBusy(false);
+        }
+    }
+
+    async function onSaveCollection() {
+        if (!collectionSelectedId || collectionBusy) return;
+        const name = collectionDraftName.trim();
+        if (!name) {
+            setCollectionError("Collection name cannot be empty.");
+            return;
+        }
+
+        setCollectionBusy(true);
+        setCollectionError("");
+        try {
+            await invoke("rename_collection", {
+                collectionId: collectionSelectedId,
+                newName: name,
+            });
+            await reloadCollectionsAndRestoreActive(current?.meta.id ?? collectionSelectedId);
+            setStatus("✅ Collection saved");
+        } catch (e) {
+            setCollectionError(`Save failed: ${String(e)}`);
+        } finally {
+            setCollectionBusy(false);
+        }
+    }
+
+    function requestDeleteSelectedCollection() {
+        if (!collectionSelectedId || collectionBusy) return;
+        const selected = collections.find((entry) => entry.id === collectionSelectedId);
+        if (!selected) return;
+        setDeleteCollectionModal({ id: selected.id, name: selected.name });
+    }
+
+    async function onDeleteCollection() {
+        if (!deleteCollectionModal || collectionBusy) return;
+
+        setCollectionBusy(true);
+        setCollectionError("");
+        try {
+            const deletingId = deleteCollectionModal.id;
+            const remaining = collections.filter((entry) => entry.id !== deletingId);
+            const nextActive =
+                (current?.meta.id ?? null) === deletingId
+                    ? (remaining[0]?.id ?? null)
+                    : (current?.meta.id ?? null);
+
+            await invoke("delete_collection", { collectionId: deletingId });
+            await invoke("set_active_collection", { collectionId: nextActive });
+            await reloadCollectionsAndRestoreActive(nextActive);
+
+            const nextSelected =
+                remaining.find((entry) => entry.id === nextActive) ?? remaining[0] ?? null;
+            setCollectionSelectedId(nextSelected?.id ?? null);
+            setCollectionDraftName(nextSelected?.name ?? "");
+            setDeleteCollectionModal(null);
+            setStatus("✅ Collection deleted");
+        } catch (e) {
+            setCollectionError(`Delete failed: ${String(e)}`);
+        } finally {
+            setCollectionBusy(false);
+        }
+    }
+
+    async function onSetActiveCollectionFromModal() {
+        if (!collectionSelectedId || collectionBusy) return;
+
+        setCollectionBusy(true);
+        setCollectionError("");
+        try {
+            await invoke("set_active_collection", { collectionId: collectionSelectedId });
+            await loadCollection(
+                collectionSelectedId,
+                null,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                setStatus
+            );
+            setStatus("✅ Collection selected");
+        } catch (e) {
+            setCollectionError(`Set active failed: ${String(e)}`);
+        } finally {
+            setCollectionBusy(false);
+        }
+    }
+
     function openEnvironmentsModal() {
         const selected = environments.find((e) => e.id === activeEnvironmentId) ?? environments[0] ?? null;
         setEnvSelectedId(selected?.id ?? null);
@@ -896,6 +1071,7 @@ export default function App() {
                 currentEnvironmentId={activeEnvironmentId}
                 onSelectCollection={(collectionId) => void onSelectCollection(collectionId || null)}
                 onSelectEnvironment={onSelectEnvironment}
+                onManageCollections={openCollectionsModal}
                 onManageEnvironments={openEnvironmentsModal}
                 onSaveDraft={saveDraft}
                 onNewRequest={onNewRequest}
@@ -1474,6 +1650,225 @@ export default function App() {
                 </div>
             )}
 
+            {collectionsModalOpen && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1380,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={closeCollectionsModal}
+                >
+                    <div
+                        onMouseDown={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 920,
+                            height: "78vh",
+                            maxHeight: 700,
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 12,
+                            background: "var(--pg-surface-1)",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <h3 style={{ margin: 0 }}>Collections</h3>
+                            <button onClick={closeCollectionsModal} style={buttonStyle(collectionBusy)}>
+                                Close
+                            </button>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 12, minHeight: 0, flex: 1 }}>
+                            <div
+                                style={{
+                                    width: 280,
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 10,
+                                    minHeight: 0,
+                                }}
+                            >
+                                <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                    <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>New collection name</span>
+                                    <input
+                                        value={collectionCreateName}
+                                        onChange={(e) => setCollectionCreateName(e.target.value)}
+                                        disabled={collectionBusy}
+                                        placeholder="Team APIs"
+                                        style={modalInputStyle()}
+                                    />
+                                </label>
+                                <button
+                                    onClick={() => void onCreateCollection()}
+                                    disabled={collectionBusy}
+                                    style={primaryButtonStyle(collectionBusy)}
+                                >
+                                    {collectionBusy ? "Working..." : "Create Collection"}
+                                </button>
+
+                                <div style={{ overflowY: "auto", minHeight: 0, flex: 1, paddingRight: 4 }}>
+                                    {collections.map((entry) => (
+                                        <button
+                                            key={entry.id}
+                                            onClick={() => pickCollectionForEdit(entry.id)}
+                                            style={{
+                                                ...buttonStyle(false),
+                                                width: "100%",
+                                                marginBottom: 6,
+                                                textAlign: "left",
+                                                borderColor:
+                                                    entry.id === collectionSelectedId
+                                                        ? "var(--pg-primary)"
+                                                        : "var(--pg-border)",
+                                            }}
+                                        >
+                                            {entry.name}
+                                            {entry.id === current?.meta.id ? " (active)" : ""}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div
+                                style={{
+                                    flex: 1,
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 12,
+                                    minHeight: 0,
+                                }}
+                            >
+                                {!selectedCollectionForEdit && (
+                                    <div style={{ color: "var(--pg-text-muted)" }}>No collection selected.</div>
+                                )}
+
+                                {selectedCollectionForEdit && (
+                                    <>
+                                        <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
+                                            Collection id:{" "}
+                                            <code style={{ color: "var(--pg-text)" }}>
+                                                {selectedCollectionForEdit.id}
+                                            </code>
+                                        </div>
+
+                                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                            <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>Collection name</span>
+                                            <input
+                                                value={collectionDraftName}
+                                                onChange={(e) => setCollectionDraftName(e.target.value)}
+                                                disabled={collectionBusy}
+                                                style={modalInputStyle()}
+                                            />
+                                        </label>
+
+                                        <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
+                                            Requests: {selectedCollectionForEdit.request_order.length}
+                                        </div>
+
+                                        <div style={{ marginTop: "auto", display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                            <button
+                                                onClick={() => void onSetActiveCollectionFromModal()}
+                                                disabled={
+                                                    collectionBusy ||
+                                                    selectedCollectionForEdit.id === (current?.meta.id ?? null)
+                                                }
+                                                style={buttonStyle(
+                                                    collectionBusy ||
+                                                    selectedCollectionForEdit.id === (current?.meta.id ?? null)
+                                                )}
+                                            >
+                                                Set Active
+                                            </button>
+                                            <div style={{ display: "flex", gap: 8 }}>
+                                                <button
+                                                    onClick={requestDeleteSelectedCollection}
+                                                    disabled={collectionBusy}
+                                                    style={dangerButtonStyle(collectionBusy)}
+                                                >
+                                                    Delete
+                                                </button>
+                                                <button
+                                                    onClick={() => void onSaveCollection()}
+                                                    disabled={collectionBusy}
+                                                    style={primaryButtonStyle(collectionBusy)}
+                                                >
+                                                    Save Collection
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
+
+                                {collectionError && <div style={{ color: "var(--pg-danger)", fontSize: 13 }}>{collectionError}</div>}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {deleteCollectionModal && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1390,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={() => {
+                        if (!collectionBusy) setDeleteCollectionModal(null);
+                    }}
+                >
+                    <div
+                        onMouseDown={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 500,
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 12,
+                            background: "var(--pg-surface-1)",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <h3 style={{ margin: 0 }}>Delete collection</h3>
+                        <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.5 }}>
+                            Delete <strong>{deleteCollectionModal.name}</strong>? This will remove all requests in this collection.
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <button
+                                onClick={() => setDeleteCollectionModal(null)}
+                                disabled={collectionBusy}
+                                style={buttonStyle(collectionBusy)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => void onDeleteCollection()}
+                                disabled={collectionBusy}
+                                style={dangerButtonStyle(collectionBusy)}
+                            >
+                                {collectionBusy ? "Deleting..." : "Delete"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {environmentsModalOpen && (
                 <div
                     style={{
@@ -1670,6 +2065,18 @@ function selectStyle(): React.CSSProperties {
         background: "var(--pg-surface-0)",
         color: "var(--pg-text)",
         padding: "0 12px",
+    };
+}
+
+function modalInputStyle(): React.CSSProperties {
+    return {
+        height: 36,
+        borderRadius: 10,
+        border: "1px solid var(--pg-border)",
+        background: "var(--pg-surface-0)",
+        color: "var(--pg-text)",
+        padding: "0 12px",
+        outline: "none",
     };
 }
 
