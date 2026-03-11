@@ -15,6 +15,7 @@ import TopBar from "./TopBar.tsx";
 import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
 import RequestBodyEditor from "./components/RequestBodyEditor.tsx";
 import CollectionsModal from "./components/CollectionsModal.tsx";
+import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
 import type {
     CollectionLoaded,
@@ -1674,148 +1675,28 @@ export default function App() {
                 onConfirmDelete={() => void onDeleteCollection()}
             />
 
-            {environmentsModalOpen && (
-                <div
-                    style={{
-                        position: "fixed",
-                        inset: 0,
-                        zIndex: 1400,
-                        background: "rgba(0,0,0,0.45)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        padding: 16,
-                    }}
-                    onMouseDown={closeEnvironmentsModal}
-                >
-                    <div
-                        onMouseDown={(e) => e.stopPropagation()}
-                        style={{
-                            width: "100%",
-                            maxWidth: 900,
-                            height: "78vh",
-                            maxHeight: 700,
-                            border: "1px solid var(--pg-border)",
-                            borderRadius: 12,
-                            background: "var(--pg-surface-1)",
-                            padding: 16,
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 12,
-                        }}
-                    >
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                            <h3 style={{ margin: 0 }}>Environments</h3>
-                            <button onClick={closeEnvironmentsModal} style={buttonStyle(envBusy)}>
-                                Close
-                            </button>
-                        </div>
-
-                        <div style={{ display: "flex", gap: 12, minHeight: 0, flex: 1 }}>
-                            <div
-                                style={{
-                                    width: 260,
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    minHeight: 0,
-                                    gap: 8,
-                                }}
-                            >
-                                <div style={{ display: "flex", gap: 8 }}>
-                                    <button onClick={onCreateEnvironment} style={buttonStyle(envBusy)}>+ New</button>
-                                    <button
-                                        onClick={onDuplicateEnvironment}
-                                        disabled={!envSelectedId || envBusy}
-                                        style={buttonStyle(!envSelectedId || envBusy)}
-                                    >
-                                        Duplicate
-                                    </button>
-                                </div>
-                                <button
-                                    onClick={onDeleteEnvironment}
-                                    disabled={!envSelectedId || envBusy}
-                                    style={buttonStyle(!envSelectedId || envBusy)}
-                                >
-                                    Delete
-                                </button>
-
-                                <div style={{ overflowY: "auto", minHeight: 0, flex: 1, paddingRight: 4 }}>
-                                    {environments.map((env) => (
-                                        <button
-                                            key={env.id}
-                                            onClick={() => pickEnvironmentForEdit(env.id)}
-                                            style={{
-                                                ...buttonStyle(false),
-                                                width: "100%",
-                                                marginBottom: 6,
-                                                textAlign: "left",
-                                                borderColor: env.id === envSelectedId ? "var(--pg-primary)" : "var(--pg-border)",
-                                            }}
-                                        >
-                                            {env.name}
-                                            {env.id === activeEnvironmentId ? " (active)" : ""}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div
-                                style={{
-                                    flex: 1,
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    minHeight: 0,
-                                    gap: 12,
-                                }}
-                            >
-                                {!envSelectedId && (
-                                    <div style={{ color: "var(--pg-text-muted)" }}>No environment selected.</div>
-                                )}
-
-                                {envSelectedId && (
-                                    <>
-                                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                            <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>Name</span>
-                                            <input
-                                                value={envDraftName}
-                                                onChange={(e) => setEnvDraftName(e.target.value)}
-                                                disabled={envBusy}
-                                            />
-                                        </label>
-
-                                        <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
-                                            Use variables in requests with <code>{"{{variable_name}}"}</code>.
-                                        </div>
-
-                                        <div style={{ minHeight: 0, overflowY: "auto", flex: 1, paddingRight: 4 }}>
-                                            <KeyValueTable rows={envDraftVars} onChange={setEnvDraftVars} />
-                                        </div>
-
-                                        {envError && <div style={{ color: "var(--pg-danger)", fontSize: 13 }}>{envError}</div>}
-
-                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                                            <button
-                                                onClick={() => void onSelectEnvironment(envSelectedId)}
-                                                disabled={envBusy}
-                                                style={buttonStyle(envBusy)}
-                                            >
-                                                Set Active
-                                            </button>
-                                            <button
-                                                onClick={onSaveEnvironment}
-                                                disabled={envBusy}
-                                                style={primaryButtonStyle(envBusy)}
-                                            >
-                                                Save Environment
-                                            </button>
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <EnvironmentsModal
+                open={environmentsModalOpen}
+                busy={envBusy}
+                error={envError}
+                environments={environments}
+                activeEnvironmentId={activeEnvironmentId}
+                selectedEnvironmentId={envSelectedId}
+                draftName={envDraftName}
+                draftVars={envDraftVars}
+                onClose={closeEnvironmentsModal}
+                onCreate={() => void onCreateEnvironment()}
+                onDuplicate={() => void onDuplicateEnvironment()}
+                onDelete={() => void onDeleteEnvironment()}
+                onPickEnvironment={pickEnvironmentForEdit}
+                onDraftNameChange={setEnvDraftName}
+                onDraftVarsChange={setEnvDraftVars}
+                onSetActive={() => {
+                    if (!envSelectedId) return;
+                    void onSelectEnvironment(envSelectedId);
+                }}
+                onSave={() => void onSaveEnvironment()}
+            />
         </>
     );
 }
