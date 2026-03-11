@@ -5,9 +5,8 @@
       {
         "label": "main",
         "title": "postguerl",
-        "decorations": true,
-        "titleBarStyle": "Visible",
-        "hiddenTitle": false,
+        "decorations": false,
+        "shadow": true,
         "height": 800,
         "width": 1400
       }
