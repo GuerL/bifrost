@@ -14,6 +14,7 @@ import KeyValueTable from "./KeyValueTable.tsx";
 import TopBar from "./TopBar.tsx";
 import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
 import RequestBodyEditor from "./components/RequestBodyEditor.tsx";
+import CollectionsModal from "./components/CollectionsModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
 import type {
     CollectionLoaded,
@@ -1650,224 +1651,28 @@ export default function App() {
                 </div>
             )}
 
-            {collectionsModalOpen && (
-                <div
-                    style={{
-                        position: "fixed",
-                        inset: 0,
-                        zIndex: 1380,
-                        background: "rgba(0,0,0,0.45)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        padding: 16,
-                    }}
-                    onMouseDown={closeCollectionsModal}
-                >
-                    <div
-                        onMouseDown={(e) => e.stopPropagation()}
-                        style={{
-                            width: "100%",
-                            maxWidth: 920,
-                            height: "78vh",
-                            maxHeight: 700,
-                            border: "1px solid var(--pg-border)",
-                            borderRadius: 12,
-                            background: "var(--pg-surface-1)",
-                            padding: 16,
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 12,
-                        }}
-                    >
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                            <h3 style={{ margin: 0 }}>Collections</h3>
-                            <button onClick={closeCollectionsModal} style={buttonStyle(collectionBusy)}>
-                                Close
-                            </button>
-                        </div>
-
-                        <div style={{ display: "flex", gap: 12, minHeight: 0, flex: 1 }}>
-                            <div
-                                style={{
-                                    width: 280,
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    gap: 10,
-                                    minHeight: 0,
-                                }}
-                            >
-                                <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                    <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>New collection name</span>
-                                    <input
-                                        value={collectionCreateName}
-                                        onChange={(e) => setCollectionCreateName(e.target.value)}
-                                        disabled={collectionBusy}
-                                        placeholder="Team APIs"
-                                        style={modalInputStyle()}
-                                    />
-                                </label>
-                                <button
-                                    onClick={() => void onCreateCollection()}
-                                    disabled={collectionBusy}
-                                    style={primaryButtonStyle(collectionBusy)}
-                                >
-                                    {collectionBusy ? "Working..." : "Create Collection"}
-                                </button>
-
-                                <div style={{ overflowY: "auto", minHeight: 0, flex: 1, paddingRight: 4 }}>
-                                    {collections.map((entry) => (
-                                        <button
-                                            key={entry.id}
-                                            onClick={() => pickCollectionForEdit(entry.id)}
-                                            style={{
-                                                ...buttonStyle(false),
-                                                width: "100%",
-                                                marginBottom: 6,
-                                                textAlign: "left",
-                                                borderColor:
-                                                    entry.id === collectionSelectedId
-                                                        ? "var(--pg-primary)"
-                                                        : "var(--pg-border)",
-                                            }}
-                                        >
-                                            {entry.name}
-                                            {entry.id === current?.meta.id ? " (active)" : ""}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div
-                                style={{
-                                    flex: 1,
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    gap: 12,
-                                    minHeight: 0,
-                                }}
-                            >
-                                {!selectedCollectionForEdit && (
-                                    <div style={{ color: "var(--pg-text-muted)" }}>No collection selected.</div>
-                                )}
-
-                                {selectedCollectionForEdit && (
-                                    <>
-                                        <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
-                                            Collection id:{" "}
-                                            <code style={{ color: "var(--pg-text)" }}>
-                                                {selectedCollectionForEdit.id}
-                                            </code>
-                                        </div>
-
-                                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                            <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>Collection name</span>
-                                            <input
-                                                value={collectionDraftName}
-                                                onChange={(e) => setCollectionDraftName(e.target.value)}
-                                                disabled={collectionBusy}
-                                                style={modalInputStyle()}
-                                            />
-                                        </label>
-
-                                        <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
-                                            Requests: {selectedCollectionForEdit.request_order.length}
-                                        </div>
-
-                                        <div style={{ marginTop: "auto", display: "flex", justifyContent: "space-between", gap: 8 }}>
-                                            <button
-                                                onClick={() => void onSetActiveCollectionFromModal()}
-                                                disabled={
-                                                    collectionBusy ||
-                                                    selectedCollectionForEdit.id === (current?.meta.id ?? null)
-                                                }
-                                                style={buttonStyle(
-                                                    collectionBusy ||
-                                                    selectedCollectionForEdit.id === (current?.meta.id ?? null)
-                                                )}
-                                            >
-                                                Set Active
-                                            </button>
-                                            <div style={{ display: "flex", gap: 8 }}>
-                                                <button
-                                                    onClick={requestDeleteSelectedCollection}
-                                                    disabled={collectionBusy}
-                                                    style={dangerButtonStyle(collectionBusy)}
-                                                >
-                                                    Delete
-                                                </button>
-                                                <button
-                                                    onClick={() => void onSaveCollection()}
-                                                    disabled={collectionBusy}
-                                                    style={primaryButtonStyle(collectionBusy)}
-                                                >
-                                                    Save Collection
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </>
-                                )}
-
-                                {collectionError && <div style={{ color: "var(--pg-danger)", fontSize: 13 }}>{collectionError}</div>}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {deleteCollectionModal && (
-                <div
-                    style={{
-                        position: "fixed",
-                        inset: 0,
-                        zIndex: 1390,
-                        background: "rgba(0,0,0,0.45)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        padding: 16,
-                    }}
-                    onMouseDown={() => {
-                        if (!collectionBusy) setDeleteCollectionModal(null);
-                    }}
-                >
-                    <div
-                        onMouseDown={(e) => e.stopPropagation()}
-                        style={{
-                            width: "100%",
-                            maxWidth: 500,
-                            border: "1px solid var(--pg-border)",
-                            borderRadius: 12,
-                            background: "var(--pg-surface-1)",
-                            padding: 16,
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 12,
-                        }}
-                    >
-                        <h3 style={{ margin: 0 }}>Delete collection</h3>
-                        <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.5 }}>
-                            Delete <strong>{deleteCollectionModal.name}</strong>? This will remove all requests in this collection.
-                        </div>
-                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                            <button
-                                onClick={() => setDeleteCollectionModal(null)}
-                                disabled={collectionBusy}
-                                style={buttonStyle(collectionBusy)}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={() => void onDeleteCollection()}
-                                disabled={collectionBusy}
-                                style={dangerButtonStyle(collectionBusy)}
-                            >
-                                {collectionBusy ? "Deleting..." : "Delete"}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <CollectionsModal
+                open={collectionsModalOpen}
+                busy={collectionBusy}
+                error={collectionError}
+                collections={collections}
+                activeCollectionId={current?.meta.id ?? null}
+                selectedCollectionId={collectionSelectedId}
+                selectedCollection={selectedCollectionForEdit}
+                createName={collectionCreateName}
+                draftName={collectionDraftName}
+                deleteTarget={deleteCollectionModal}
+                onClose={closeCollectionsModal}
+                onCreateNameChange={setCollectionCreateName}
+                onDraftNameChange={setCollectionDraftName}
+                onCreate={() => void onCreateCollection()}
+                onPickCollection={pickCollectionForEdit}
+                onSetActive={() => void onSetActiveCollectionFromModal()}
+                onRequestDelete={requestDeleteSelectedCollection}
+                onSave={() => void onSaveCollection()}
+                onCancelDelete={() => setDeleteCollectionModal(null)}
+                onConfirmDelete={() => void onDeleteCollection()}
+            />
 
             {environmentsModalOpen && (
                 <div
@@ -2065,18 +1870,6 @@ function selectStyle(): React.CSSProperties {
         background: "var(--pg-surface-0)",
         color: "var(--pg-text)",
         padding: "0 12px",
-    };
-}
-
-function modalInputStyle(): React.CSSProperties {
-    return {
-        height: 36,
-        borderRadius: 10,
-        border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-0)",
-        color: "var(--pg-text)",
-        padding: "0 12px",
-        outline: "none",
     };
 }
 
