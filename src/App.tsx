@@ -9,8 +9,6 @@ import {
     devRename,
     initDefault,
     loadCollection,
-    overwriteDefault,
-    refreshCollections,
 } from "./helpers/CollectionsHelper.ts";
 import KeyValueTable from "./KeyValueTable.tsx";
 import TopBar from "./TopBar.tsx";
@@ -1029,6 +1027,7 @@ export default function App() {
                         flex: 1,
                         display: "flex",
                         flexDirection: "column",
+                        gap :10,
                         minWidth: 0,
                         minHeight: 0,
                         overflow: "hidden",
@@ -1043,6 +1042,7 @@ export default function App() {
                                     gap: 8,
                                     overflowX: "auto",
                                     paddingBottom: 4,
+                                    flexShrink: 0,
                                 }}
                             >
                                 {openTabs.map((openTab) => {
@@ -1076,23 +1076,24 @@ export default function App() {
                                 })}
                             </div>
 
-                            <div
-                                style={{
-                                    display: "flex",
-                                    justifyContent: "space-between",
-                                    alignItems: "center",
-                                    gap: 8,
-                                    marginTop: 12,
-                                }}
-                            >
-                                <h3>Editor</h3>
-                                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                                    {isDirty && <span style={{ color: "var(--pg-warning)" }}>● Unsaved</span>}
-                                    {selectedRequestId ? (pending ? "⏳ pending" : "✅ idle") : ""}
-                                </div>
-                            </div>
+                            {/*<div*/}
+                            {/*    style={{*/}
+                            {/*        display: "flex",*/}
+                            {/*        justifyContent: "space-between",*/}
+                            {/*        alignItems: "center",*/}
+                            {/*        gap: 8,*/}
+                            {/*        marginTop: 12,*/}
+                            {/*        flexShrink: 0,*/}
+                            {/*    }}*/}
+                            {/*>*/}
+                            {/*    <h3>Editor</h3>*/}
+                            {/*    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>*/}
+                            {/*        {isDirty && <span style={{ color: "var(--pg-warning)" }}>● Unsaved</span>}*/}
+                            {/*        {selectedRequestId ? (pending ? "⏳ pending" : "✅ idle") : ""}*/}
+                            {/*    </div>*/}
+                            {/*</div>*/}
 
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
                                 <select
                                     value={draft.method}
                                     onChange={(e) =>
@@ -1136,7 +1137,7 @@ export default function App() {
                                 </button>
                             </div>
 
-                            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                            <div style={{ display: "flex", gap: 8, marginTop: 12, flexShrink: 0 }}>
                                 <button
                                     onClick={() => setTab("headers")}
                                     style={editorTabStyle(tab === "headers")}
@@ -1229,7 +1230,7 @@ export default function App() {
                                     gap: 8,
                                     flexDirection: "column",
                                     width: "100%",
-                                    minHeight: 0,
+                                    flexShrink: 0,
                                 }}
                             >
                                 <div
@@ -1238,7 +1239,6 @@ export default function App() {
                                         alignItems: "center",
                                         justifyContent: "space-between",
                                         gap: 8,
-                                        marginTop: "2em",
                                     }}
                                 >
                                     <div>
@@ -1255,7 +1255,7 @@ export default function App() {
                                         background: "var(--pg-surface-1)",
                                         color: "var(--pg-text-dim)",
                                         width: "100%",
-                                        height: "40vh",
+                                        height: "clamp(180px, 30vh, 360px)",
                                         overflow: "auto",
                                     }}
                                 >
