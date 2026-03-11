@@ -1,0 +1,163 @@
+import Editor, { type BeforeMount } from "@monaco-editor/react";
+import type * as MonacoApi from "monaco-editor";
+import KeyValueTable from "../KeyValueTable.tsx";
+import VariableInput, { type VariableStatus } from "../VariableInput.tsx";
+import type { Body, Request } from "../types.ts";
+
+type RequestBodyEditorProps = {
+    draft: Request;
+    selectedRequestId: string | null;
+    beforeMountMonaco: BeforeMount;
+    editorOptions: MonacoApi.editor.IStandaloneEditorConstructionOptions;
+    onPatchDraft: (patch: Partial<Request>) => void;
+    onSetFullDraft: (next: Request) => void;
+    onMountBodyJsonEditor: (editor: MonacoApi.editor.IStandaloneCodeEditor) => void;
+    onMountBodyRawEditor: (editor: MonacoApi.editor.IStandaloneCodeEditor) => void;
+    resolveVariableStatus: (name: string) => VariableStatus;
+    resolveVariableValue: (name: string) => string | undefined;
+    variableSuggestions: string[];
+    editorPanelStyle: (height: number | string, minHeight?: number) => React.CSSProperties;
+};
+
+function languageFromContentType(contentType: string): string {
+    const lower = contentType.toLowerCase();
+    if (lower.includes("json")) return "json";
+    if (lower.includes("xml")) return "xml";
+    if (lower.includes("html")) return "html";
+    if (lower.includes("javascript")) return "javascript";
+    if (lower.includes("typescript")) return "typescript";
+    if (lower.includes("css")) return "css";
+    if (lower.includes("sql")) return "sql";
+    return "plaintext";
+}
+
+export default function RequestBodyEditor({
+    draft,
+    selectedRequestId,
+    beforeMountMonaco,
+    editorOptions,
+    onPatchDraft,
+    onSetFullDraft,
+    onMountBodyJsonEditor,
+    onMountBodyRawEditor,
+    resolveVariableStatus,
+    resolveVariableValue,
+    variableSuggestions,
+    editorPanelStyle,
+}: RequestBodyEditorProps) {
+    return (
+        <>
+            <select
+                value={draft.body.type}
+                onChange={(e) => {
+                    const t = e.target.value as Body["type"];
+                    const body: Body =
+                        t === "none"
+                            ? { type: "none" }
+                            : t === "json"
+                                ? { type: "json", value: {} }
+                                : t === "raw"
+                                    ? { type: "raw", content_type: "text/plain", text: "" }
+                                    : { type: "form", fields: [] };
+
+                    onPatchDraft({ body });
+                }}
+            >
+                <option value="none">none</option>
+                <option value="json">json</option>
+                <option value="raw">raw</option>
+                <option value="form">form</option>
+            </select>
+
+            {draft.body.type === "json" && (
+                <div style={editorPanelStyle("34vh", 280)}>
+                    <Editor
+                        key={`body-json-${selectedRequestId ?? "none"}`}
+                        height="100%"
+                        language="json"
+                        path={`/postguerl-body/${selectedRequestId ?? "none"}.json`}
+                        theme="postguerl-midnight"
+                        beforeMount={beforeMountMonaco}
+                        onMount={onMountBodyJsonEditor}
+                        defaultValue={JSON.stringify(draft.body.value ?? {}, null, 2)}
+                        onChange={(value) => {
+                            try {
+                                const parsed = JSON.parse(value ?? "{}");
+                                onSetFullDraft({
+                                    ...draft,
+                                    body: { type: "json", value: parsed },
+                                });
+                            } catch {
+                                // keep last valid value while user types invalid json
+                            }
+                        }}
+                        options={editorOptions}
+                    />
+                </div>
+            )}
+
+            {draft.body.type === "raw" && (() => {
+                const rawBody = draft.body;
+                return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <VariableInput
+                            placeholder="Content-Type"
+                            value={rawBody.content_type}
+                            onChange={(nextContentType) =>
+                                onSetFullDraft({
+                                    ...draft,
+                                    body: {
+                                        type: "raw",
+                                        content_type: nextContentType,
+                                        text: rawBody.text,
+                                    },
+                                })
+                            }
+                            resolveVariableStatus={resolveVariableStatus}
+                            resolveVariableValue={resolveVariableValue}
+                            variableSuggestions={variableSuggestions}
+                        />
+                        <div style={editorPanelStyle("34vh", 280)}>
+                            <Editor
+                                key={`body-raw-${selectedRequestId ?? "none"}`}
+                                height="100%"
+                                language={languageFromContentType(rawBody.content_type)}
+                                path={`/postguerl-body/${selectedRequestId ?? "none"}.raw`}
+                                theme="postguerl-midnight"
+                                beforeMount={beforeMountMonaco}
+                                onMount={onMountBodyRawEditor}
+                                defaultValue={rawBody.text}
+                                onChange={(value) =>
+                                    onSetFullDraft({
+                                        ...draft,
+                                        body: {
+                                            type: "raw",
+                                            content_type: rawBody.content_type,
+                                            text: value ?? "",
+                                        },
+                                    })
+                                }
+                                options={editorOptions}
+                            />
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {draft.body.type === "form" && (
+                <KeyValueTable
+                    rows={draft.body.fields}
+                    onChange={(next) =>
+                        onSetFullDraft({
+                            ...draft,
+                            body: { type: "form", fields: next },
+                        })
+                    }
+                    resolveVariableStatus={resolveVariableStatus}
+                    resolveVariableValue={resolveVariableValue}
+                    variableSuggestions={variableSuggestions}
+                />
+            )}
+        </>
+    );
+}
