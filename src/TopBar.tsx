@@ -64,8 +64,8 @@ export default function TopBar({
                 gap: 12,
                 paddingLeft: isMacOS ? 88 : 12, // espace pour les traffic lights macOS
                 paddingRight: 12,
-                // background: "#1c1c1e",
-                // borderBottom: "1px solid #2c2c2e",
+                borderBottom: "1px solid #1f2937",
+                background: "linear-gradient(180deg, rgba(15,23,42,0.98) 0%, rgba(2,6,23,0.98) 100%)",
                 userSelect: "none",
                 flexShrink: 0,
             }}
@@ -82,16 +82,7 @@ export default function TopBar({
                 <select
                     value={currentCollectionId ?? ""}
                     onChange={(e) => onSelectCollection(e.target.value)}
-                    style={{
-                        height: 32,
-                        minWidth: 180,
-                        borderRadius: 8,
-                        border: "1px solid #3a3a3c",
-                        background: "#2c2c2e",
-                        color: "#f4f4f5",
-                        padding: "0 10px",
-                        outline: "none",
-                    }}
+                    style={topbarSelectStyle()}
                 >
                     <option value="">No collection</option>
                     {collections.map((collection) => (
@@ -104,16 +95,7 @@ export default function TopBar({
                 <select
                     value={currentEnvironmentId ?? ""}
                     onChange={(e) => onSelectEnvironment(e.target.value ? e.target.value : null)}
-                    style={{
-                        height: 32,
-                        minWidth: 180,
-                        borderRadius: 8,
-                        border: "1px solid #3a3a3c",
-                        background: "#2c2c2e",
-                        color: "#f4f4f5",
-                        padding: "0 10px",
-                        outline: "none",
-                    }}
+                    style={topbarSelectStyle()}
                 >
                     {!currentEnvironmentId && <option value="">No environment</option>}
                     {environments.map((env) => (
@@ -189,26 +171,29 @@ export default function TopBar({
 
 function buttonStyle(disabled: boolean): React.CSSProperties {
     return {
-        height: 32,
+        height: 34,
         padding: "0 12px",
-        borderRadius: 8,
-        border: "1px solid #3a3a3c",
-        background: disabled ? "#2a2a2a" : "#2c2c2e",
-        color: disabled ? "#6b7280" : "#f4f4f5",
+        borderRadius: 10,
+        border: "1px solid #334155",
+        background: disabled ? "#1f2937" : "linear-gradient(180deg, #1f2937 0%, #111827 100%)",
+        color: disabled ? "#6b7280" : "#f8fafc",
         cursor: disabled ? "not-allowed" : "pointer",
+        fontWeight: 600,
+        boxShadow: disabled ? "none" : "0 8px 20px rgba(2, 6, 23, 0.2)",
     };
 }
 
 function primaryButtonStyle(disabled: boolean): React.CSSProperties {
     return {
-        height: 32,
-        padding: "0 12px",
-        borderRadius: 8,
+        height: 34,
+        padding: "0 14px",
+        borderRadius: 10,
         border: "1px solid #2563eb",
-        background: disabled ? "#1f2937" : "#2563eb",
+        background: disabled ? "#1e3a8a" : "linear-gradient(180deg, #3b82f6 0%, #2563eb 100%)",
         color: "#ffffff",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
+        boxShadow: disabled ? "none" : "0 10px 24px rgba(37, 99, 235, 0.35)",
     };
 }
 
@@ -218,14 +203,27 @@ function windowButtonStyle(
 ): React.CSSProperties {
     return {
         width: 32,
-        height: 28,
-        borderRadius: 6,
+        height: 30,
+        borderRadius: 8,
         border: `1px solid ${borderColor}`,
-        background: "#2c2c2e",
+        background: "linear-gradient(180deg, #1f2937 0%, #111827 100%)",
         color,
         cursor: "pointer",
         lineHeight: 1,
         padding: 0,
-        boxShadow: "none",
+        boxShadow: "0 8px 20px rgba(2, 6, 23, 0.2)",
+    };
+}
+
+function topbarSelectStyle(): React.CSSProperties {
+    return {
+        height: 34,
+        minWidth: 180,
+        borderRadius: 10,
+        border: "1px solid #334155",
+        background: "#0f172a",
+        color: "#f8fafc",
+        padding: "0 10px",
+        outline: "none",
     };
 }

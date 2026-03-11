@@ -32,6 +32,56 @@ type RequestContextMenu = {
     requestId: string;
 };
 
+type CloseDraftModal = {
+    requestId: string;
+};
+
+type PersistedTabsEntry = {
+    openRequestIds: string[];
+    activeRequestId: string | null;
+};
+
+type PersistedTabsState = Record<string, PersistedTabsEntry>;
+
+const OPEN_TABS_STORAGE_KEY = "postguerl:open-tabs:v1";
+
+function readPersistedTabsState(): PersistedTabsState {
+    if (typeof window === "undefined") return {};
+
+    try {
+        const raw = window.localStorage.getItem(OPEN_TABS_STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw) as unknown;
+        if (!parsed || typeof parsed !== "object") return {};
+        return parsed as PersistedTabsState;
+    } catch {
+        return {};
+    }
+}
+
+function sanitizePersistedTabsEntry(entry: unknown): PersistedTabsEntry {
+    if (!entry || typeof entry !== "object") {
+        return { openRequestIds: [], activeRequestId: null };
+    }
+
+    const source = entry as { openRequestIds?: unknown; activeRequestId?: unknown };
+    const openRequestIds = Array.isArray(source.openRequestIds)
+        ? source.openRequestIds.filter((id): id is string => typeof id === "string")
+        : [];
+    const activeRequestId = typeof source.activeRequestId === "string" ? source.activeRequestId : null;
+
+    return { openRequestIds, activeRequestId };
+}
+
+function writePersistedTabsState(state: PersistedTabsState) {
+    if (typeof window === "undefined") return;
+    try {
+        window.localStorage.setItem(OPEN_TABS_STORAGE_KEY, JSON.stringify(state));
+    } catch {
+        // ignore storage write failures
+    }
+}
+
 export default function App() {
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
@@ -39,6 +89,7 @@ export default function App() {
     const [current, setCurrent] = useState<CollectionLoaded | null>(null);
     const [status, setStatus] = useState<string>("");
     const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+    const [openRequestIds, setOpenRequestIds] = useState<string[]>([]);
     const [resp, setResp] = useState<HttpResponseDto | null>(null);
     const [draftsById, setDraftsById] = useState<Record<string, Request>>({});
     const [pending, setPending] = useState(false);
@@ -55,13 +106,20 @@ export default function App() {
     const [envDraftVars, setEnvDraftVars] = useState<KeyValue[]>([]);
     const [envBusy, setEnvBusy] = useState(false);
     const [envError, setEnvError] = useState("");
+    const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
+    const [closeDraftBusy, setCloseDraftBusy] = useState(false);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
+    const hydratedTabsCollectionIdRef = useRef<string | null>(null);
 
     async function clearCurrentCollectionView() {
         setCurrent(null);
         setSelectedRequestId(null);
+        setOpenRequestIds([]);
         setResp(null);
         setDraftsById({});
+        setCloseDraftModal(null);
+        setCloseDraftBusy(false);
+        hydratedTabsCollectionIdRef.current = null;
     }
 
     async function reloadCollectionsAndRestoreActive(preferredCollectionId?: string | null) {
@@ -107,6 +165,27 @@ export default function App() {
         if (!selectedRequestId) return null;
         return draftsById[selectedRequestId] ?? selectedSavedRequest;
     }, [draftsById, selectedRequestId, selectedSavedRequest]);
+
+    const openTabs = useMemo(() => {
+        if (!current) return [];
+
+        const requestsById = new Map(current.requests.map((request) => [request.id, request]));
+        return openRequestIds
+            .map((requestId) => {
+                const saved = requestsById.get(requestId);
+                if (!saved) return null;
+                const fromDraft = draftsById[requestId];
+                const source = fromDraft ?? saved;
+
+                return {
+                    requestId,
+                    method: source.method,
+                    name: source.name,
+                    hasLocalDraft: !!fromDraft,
+                };
+            })
+            .filter((value): value is { requestId: string; method: Request["method"]; name: string; hasLocalDraft: boolean } => value !== null);
+    }, [current, openRequestIds, draftsById]);
 
     const activeEnvironment = useMemo(
         () => environments.find((env) => env.id === activeEnvironmentId) ?? null,
@@ -199,7 +278,6 @@ export default function App() {
     }, []);
     useEffect(() => {
         if (!current) return;
-        console.log("Loading drafts for collection", current.meta.id);
         (async () => {
             try {
                 const drafts = await invoke<Record<string, Request>>("load_drafts", {
@@ -224,6 +302,71 @@ export default function App() {
 
         return () => clearTimeout(timeout);
     }, [draftsById, current?.meta.id]);
+
+    useEffect(() => {
+        if (!current) {
+            setOpenRequestIds([]);
+            hydratedTabsCollectionIdRef.current = null;
+            return;
+        }
+
+        const validIds = new Set(current.requests.map((request) => request.id));
+        const persistedState = readPersistedTabsState();
+        const persistedEntry = sanitizePersistedTabsEntry(persistedState[current.meta.id]);
+        const restoredIds = persistedEntry.openRequestIds.filter((requestId) =>
+            validIds.has(requestId)
+        );
+
+        setOpenRequestIds((previous) =>
+            restoredIds.length > 0
+                ? restoredIds
+                : previous.filter((requestId) => validIds.has(requestId))
+        );
+
+        if (persistedEntry.activeRequestId && validIds.has(persistedEntry.activeRequestId)) {
+            setSelectedRequestId(persistedEntry.activeRequestId);
+            setResp(null);
+        } else if (
+            restoredIds.length > 0 &&
+            (!selectedRequestId || !validIds.has(selectedRequestId))
+        ) {
+            setSelectedRequestId(restoredIds[0]);
+            setResp(null);
+        }
+
+        hydratedTabsCollectionIdRef.current = current.meta.id;
+    }, [current?.meta.id]);
+
+    useEffect(() => {
+        if (!current) return;
+        const validIds = new Set(current.requests.map((request) => request.id));
+        setOpenRequestIds((previous) => previous.filter((requestId) => validIds.has(requestId)));
+    }, [current?.requests]);
+
+    useEffect(() => {
+        if (!selectedRequestId) return;
+        setOpenRequestIds((previous) =>
+            previous.includes(selectedRequestId) ? previous : [...previous, selectedRequestId]
+        );
+    }, [selectedRequestId]);
+
+    useEffect(() => {
+        if (!current) return;
+        if (hydratedTabsCollectionIdRef.current !== current.meta.id) return;
+
+        const uniqueOpenRequestIds = Array.from(new Set(openRequestIds));
+        const activeRequestId =
+            selectedRequestId && uniqueOpenRequestIds.includes(selectedRequestId)
+                ? selectedRequestId
+                : uniqueOpenRequestIds[0] ?? null;
+
+        const persistedState = readPersistedTabsState();
+        persistedState[current.meta.id] = {
+            openRequestIds: uniqueOpenRequestIds,
+            activeRequestId,
+        };
+        writePersistedTabsState(persistedState);
+    }, [current?.meta.id, openRequestIds, selectedRequestId]);
 
     useEffect(() => {
         if (!selectedRequestId) {
@@ -274,11 +417,14 @@ export default function App() {
                 setEnvironmentsModalOpen(false);
                 setEnvError("");
             }
+            if (!closeDraftBusy) {
+                setCloseDraftModal(null);
+            }
         }
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [renameBusy, envBusy]);
+    }, [renameBusy, envBusy, closeDraftBusy]);
 
     const updateDraft = useCallback(
         (patch: Partial<Request>) => {
@@ -307,34 +453,128 @@ export default function App() {
         [selectedRequestId]
     );
 
+    const saveDraftById = useCallback(
+        async (requestId: string): Promise<boolean> => {
+            if (!current) return false;
+
+            const draftToSave = draftsById[requestId];
+            if (!draftToSave) return true;
+
+            try {
+                await invoke("update_request", {
+                    collectionId: current.meta.id,
+                    request: draftToSave,
+                });
+
+                setCurrent((previous) => {
+                    if (!previous) return previous;
+                    return {
+                        ...previous,
+                        requests: previous.requests.map((request) =>
+                            request.id === requestId ? draftToSave : request
+                        ),
+                    };
+                });
+
+                setDraftsById((previous) => {
+                    const next = { ...previous };
+                    delete next[requestId];
+                    return next;
+                });
+
+                setStatus("✅ Draft saved");
+                return true;
+            } catch (e) {
+                setStatus(`❌ Save failed: ${String(e)}`);
+                return false;
+            }
+        },
+        [current, draftsById]
+    );
+
+    const discardDraftById = useCallback(
+        async (requestId: string): Promise<boolean> => {
+            if (!current) return false;
+            if (!draftsById[requestId]) return true;
+
+            try {
+                await invoke("clear_draft", {
+                    collectionId: current.meta.id,
+                    requestId,
+                });
+
+                setDraftsById((previous) => {
+                    const next = { ...previous };
+                    delete next[requestId];
+                    return next;
+                });
+
+                setStatus("✅ Draft discarded");
+                return true;
+            } catch (e) {
+                setStatus(`❌ Discard failed: ${String(e)}`);
+                return false;
+            }
+        },
+        [current, draftsById]
+    );
+
     const saveDraft = useCallback(async () => {
-        if (!current || !selectedRequestId || !draft) return;
+        if (!selectedRequestId) return;
+        await saveDraftById(selectedRequestId);
+    }, [selectedRequestId, saveDraftById]);
 
-        try {
-            await invoke("update_request", {
-                collectionId: current.meta.id,
-                request: draft,
-            });
+    const closeRequestTab = useCallback(
+        (requestId: string) => {
+            const index = openRequestIds.indexOf(requestId);
+            if (index === -1) return;
 
-            setDraftsById((prev) => {
-                const next = { ...prev };
-                delete next[selectedRequestId];
-                return next;
-            });
+            const remaining = openRequestIds.filter((id) => id !== requestId);
+            setOpenRequestIds(remaining);
 
-            await loadCollection(
-                current.meta.id,
-                draft.id,
-                setCurrent,
-                setSelectedRequestId,
-                setResp,
-                setStatus
-            );
-            setStatus("✅ Draft saved");
-        } catch (e) {
-            setStatus(`❌ Save failed: ${String(e)}`);
+            if (selectedRequestId === requestId) {
+                const nextSelection = remaining[Math.min(index, remaining.length - 1)] ?? null;
+                setSelectedRequestId(nextSelection);
+                setResp(null);
+            }
+        },
+        [openRequestIds, selectedRequestId]
+    );
+
+    function requestCloseTab(requestId: string) {
+        if (draftsById[requestId]) {
+            setCloseDraftModal({ requestId });
+            return;
         }
-    }, [current, selectedRequestId, draft]);
+
+        closeRequestTab(requestId);
+    }
+
+    async function confirmCloseWithSave() {
+        if (!closeDraftModal || closeDraftBusy) return;
+        setCloseDraftBusy(true);
+
+        const saved = await saveDraftById(closeDraftModal.requestId);
+        if (saved) {
+            closeRequestTab(closeDraftModal.requestId);
+            setCloseDraftModal(null);
+        }
+
+        setCloseDraftBusy(false);
+    }
+
+    async function confirmCloseWithDiscard() {
+        if (!closeDraftModal || closeDraftBusy) return;
+        setCloseDraftBusy(true);
+
+        const discarded = await discardDraftById(closeDraftModal.requestId);
+        if (discarded) {
+            closeRequestTab(closeDraftModal.requestId);
+            setCloseDraftModal(null);
+        }
+
+        setCloseDraftBusy(false);
+    }
 
     useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
@@ -411,6 +651,10 @@ export default function App() {
             delete next[requestId];
             return next;
         });
+        setOpenRequestIds((previous) => previous.filter((id) => id !== requestId));
+        setCloseDraftModal((previous) =>
+            previous?.requestId === requestId ? null : previous
+        );
 
         devDelete(
             current,
@@ -688,6 +932,7 @@ export default function App() {
                         <h3>Collections</h3>
 
                         <button
+                            style={{ ...buttonStyle(false), width: "100%", marginBottom: 8 }}
                             onClick={async () => {
                                 await initDefault(setStatus, setCollections);
                                 await reloadCollectionsAndRestoreActive();
@@ -696,6 +941,7 @@ export default function App() {
                             Init default
                         </button>
                         <button
+                            style={{ ...buttonStyle(false), width: "100%", marginBottom: 8 }}
                             onClick={async () => {
                                 await refreshCollections(setCollections, setStatus);
                                 await reloadCollectionsAndRestoreActive();
@@ -704,6 +950,7 @@ export default function App() {
                             Refresh
                         </button>
                         <button
+                            style={{ ...buttonStyle(false), width: "100%", marginBottom: 8 }}
                             onClick={async () => {
                                 await overwriteDefault(setStatus, setCollections);
                                 await reloadCollectionsAndRestoreActive();
@@ -711,7 +958,12 @@ export default function App() {
                         >
                             Overwrite default
                         </button>
-                        <button onClick={() => invoke("open_app_data_dir")}>Open data folder</button>
+                        <button
+                            style={{ ...buttonStyle(false), width: "100%" }}
+                            onClick={() => invoke("open_app_data_dir")}
+                        >
+                            Open data folder
+                        </button>
                     </div>
 
                     <div
@@ -723,7 +975,7 @@ export default function App() {
                             overflow: "hidden",
                         }}
                     >
-                        <h3 style={{ marginTop: 16, marginBottom: 8, flexShrink: 0 }}>Requests</h3>
+                        <h3 style={{ marginTop: 16, marginBottom: 8, flexShrink: 0 }}>Saved Requests</h3>
 
                         <div
                             style={{
@@ -754,14 +1006,16 @@ export default function App() {
                                                 });
                                             }}
                                             style={{
-                                                fontWeight: r.id === selectedRequestId ? "bold" : "normal",
+                                                ...requestListItemStyle(
+                                                    r.id === selectedRequestId,
+                                                    hasLocalDraft
+                                                ),
                                                 width: "100%",
-                                                padding: "8px",
                                                 textAlign: "left",
                                                 flexShrink: 0,
                                             }}
                                         >
-                                            {r.method} {r.name} {hasLocalDraft ? "●" : ""}
+                                            {r.method.toUpperCase()} {r.name} {hasLocalDraft ? "●" : ""}
                                         </button>
                                     );
                                 })}
@@ -785,6 +1039,46 @@ export default function App() {
                             <div
                                 style={{
                                     display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    overflowX: "auto",
+                                    paddingBottom: 4,
+                                }}
+                            >
+                                {openTabs.map((openTab) => {
+                                    const active = openTab.requestId === selectedRequestId;
+                                    return (
+                                        <div
+                                            key={openTab.requestId}
+                                            style={draftTabContainerStyle(active)}
+                                        >
+                                            <button
+                                                onClick={() => {
+                                                    setSelectedRequestId(openTab.requestId);
+                                                    setResp(null);
+                                                }}
+                                                style={draftTabButtonStyle(active)}
+                                            >
+                                                {openTab.method.toUpperCase()} {openTab.name}
+                                                {openTab.hasLocalDraft ? " ●" : ""}
+                                            </button>
+                                            <button
+                                                onClick={() =>
+                                                    requestCloseTab(openTab.requestId)
+                                                }
+                                                style={draftTabCloseButtonStyle()}
+                                                title="Close draft tab"
+                                            >
+                                                ×
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            <div
+                                style={{
+                                    display: "flex",
                                     justifyContent: "space-between",
                                     alignItems: "center",
                                     gap: 8,
@@ -804,6 +1098,7 @@ export default function App() {
                                     onChange={(e) =>
                                         updateDraft({ method: e.target.value as Request["method"] })
                                     }
+                                    style={selectStyle()}
                                 >
                                     <option value="get">GET</option>
                                     <option value="post">POST</option>
@@ -824,11 +1119,19 @@ export default function App() {
                                     containerStyle={{ flex: 1 }}
                                 />
 
-                                <button onClick={sendSelected} disabled={!selectedRequestId || pending}>
+                                <button
+                                    onClick={sendSelected}
+                                    disabled={!selectedRequestId || pending}
+                                    style={primaryButtonStyle(!selectedRequestId || pending)}
+                                >
                                     Send
                                 </button>
 
-                                <button onClick={cancel} disabled={!selectedRequestId || !pending}>
+                                <button
+                                    onClick={cancel}
+                                    disabled={!selectedRequestId || !pending}
+                                    style={buttonStyle(!selectedRequestId || !pending)}
+                                >
                                     Cancel
                                 </button>
                             </div>
@@ -836,19 +1139,19 @@ export default function App() {
                             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                                 <button
                                     onClick={() => setTab("headers")}
-                                    style={{ fontWeight: tab === "headers" ? "bold" : "normal" }}
+                                    style={editorTabStyle(tab === "headers")}
                                 >
                                     Headers
                                 </button>
                                 <button
                                     onClick={() => setTab("query")}
-                                    style={{ fontWeight: tab === "query" ? "bold" : "normal" }}
+                                    style={editorTabStyle(tab === "query")}
                                 >
                                     Query
                                 </button>
                                 <button
                                     onClick={() => setTab("body")}
-                                    style={{ fontWeight: tab === "body" ? "bold" : "normal" }}
+                                    style={editorTabStyle(tab === "body")}
                                 >
                                     Body
                                 </button>
@@ -960,6 +1263,21 @@ export default function App() {
                 </pre>
                             </div>
                         </>
+                    )}
+
+                    {current && !draft && (
+                        <div
+                            style={{
+                                marginTop: 16,
+                                padding: 16,
+                                borderRadius: 12,
+                                border: "1px solid #334155",
+                                background: "linear-gradient(180deg, #111827 0%, #0f172a 100%)",
+                                color: "#cbd5e1",
+                            }}
+                        >
+                            Select a saved request on the left panel to open it in the editor.
+                        </div>
                     )}
 
                     {!current && (
@@ -1092,6 +1410,67 @@ export default function App() {
                             </button>
                         </div>
                     </form>
+                </div>
+            )}
+
+            {closeDraftModal && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1350,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={() => {
+                        if (!closeDraftBusy) setCloseDraftModal(null);
+                    }}
+                >
+                    <div
+                        onMouseDown={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 480,
+                            border: "1px solid #334155",
+                            borderRadius: 12,
+                            background: "#111827",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 14,
+                        }}
+                    >
+                        <h3 style={{ margin: 0 }}>Unsaved draft</h3>
+                        <div style={{ fontSize: 13, color: "#cbd5e1", lineHeight: 1.5 }}>
+                            This tab contains unsaved changes. Save before closing, or discard this draft.
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <button
+                                onClick={() => setCloseDraftModal(null)}
+                                disabled={closeDraftBusy}
+                                style={buttonStyle(closeDraftBusy)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => void confirmCloseWithDiscard()}
+                                disabled={closeDraftBusy}
+                                style={dangerButtonStyle(closeDraftBusy)}
+                            >
+                                {closeDraftBusy ? "Discarding..." : "Discard"}
+                            </button>
+                            <button
+                                onClick={() => void confirmCloseWithSave()}
+                                disabled={closeDraftBusy}
+                                style={primaryButtonStyle(closeDraftBusy)}
+                            >
+                                {closeDraftBusy ? "Saving..." : "Save & Close"}
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -1243,26 +1622,125 @@ export default function App() {
 
 function buttonStyle(disabled: boolean): React.CSSProperties {
     return {
-        height: 32,
+        height: 34,
         padding: "0 12px",
-        borderRadius: 8,
-        border: "1px solid #3a3a3c",
-        background: disabled ? "#2a2a2a" : "#2c2c2e",
-        color: disabled ? "#6b7280" : "#f4f4f5",
+        borderRadius: 10,
+        border: "1px solid #334155",
+        background: disabled ? "#1f2937" : "linear-gradient(180deg, #1f2937 0%, #111827 100%)",
+        color: disabled ? "#6b7280" : "#f8fafc",
         cursor: disabled ? "not-allowed" : "pointer",
+        fontWeight: 600,
+        boxShadow: disabled ? "none" : "0 8px 20px rgba(2, 6, 23, 0.2)",
     };
 }
 
 function primaryButtonStyle(disabled: boolean): React.CSSProperties {
     return {
-        height: 32,
-        padding: "0 12px",
-        borderRadius: 8,
+        height: 34,
+        padding: "0 14px",
+        borderRadius: 10,
         border: "1px solid #2563eb",
-        background: disabled ? "#1f2937" : "#2563eb",
+        background: disabled ? "#1e3a8a" : "linear-gradient(180deg, #3b82f6 0%, #2563eb 100%)",
         color: "#ffffff",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
+        boxShadow: disabled ? "none" : "0 10px 24px rgba(37, 99, 235, 0.35)",
+    };
+}
+
+function dangerButtonStyle(disabled: boolean): React.CSSProperties {
+    return {
+        height: 34,
+        padding: "0 14px",
+        borderRadius: 10,
+        border: "1px solid #ef4444",
+        background: disabled ? "#7f1d1d" : "linear-gradient(180deg, #ef4444 0%, #dc2626 100%)",
+        color: "#ffffff",
+        cursor: disabled ? "not-allowed" : "pointer",
+        fontWeight: 600,
+        boxShadow: disabled ? "none" : "0 10px 24px rgba(220, 38, 38, 0.25)",
+    };
+}
+
+function selectStyle(): React.CSSProperties {
+    return {
+        height: 34,
+        borderRadius: 10,
+        border: "1px solid #334155",
+        background: "#0f172a",
+        color: "#f8fafc",
+        padding: "0 12px",
+    };
+}
+
+function requestListItemStyle(active: boolean, hasLocalDraft: boolean): React.CSSProperties {
+    return {
+        ...buttonStyle(false),
+        borderColor: active ? "#3b82f6" : hasLocalDraft ? "#22c55e" : "#334155",
+        background: active
+            ? "linear-gradient(180deg, #1d4ed8 0%, #1e40af 100%)"
+            : "linear-gradient(180deg, #1f2937 0%, #111827 100%)",
+        boxShadow: active ? "0 12px 24px rgba(37, 99, 235, 0.35)" : "none",
+        color: "#f8fafc",
+        fontWeight: active ? 700 : 500,
+    };
+}
+
+function editorTabStyle(active: boolean): React.CSSProperties {
+    return {
+        ...buttonStyle(false),
+        borderColor: active ? "#3b82f6" : "#334155",
+        background: active
+            ? "linear-gradient(180deg, #1d4ed8 0%, #1e40af 100%)"
+            : "linear-gradient(180deg, #1f2937 0%, #111827 100%)",
+    };
+}
+
+function draftTabContainerStyle(active: boolean): React.CSSProperties {
+    return {
+        display: "flex",
+        alignItems: "center",
+        borderRadius: 10,
+        overflow: "hidden",
+        border: active ? "1px solid #3b82f6" : "1px solid #334155",
+        background: active
+            ? "linear-gradient(180deg, #1d4ed8 0%, #1e40af 100%)"
+            : "linear-gradient(180deg, #1f2937 0%, #111827 100%)",
+        minWidth: 200,
+        boxShadow: active ? "0 12px 24px rgba(37, 99, 235, 0.35)" : "none",
+    };
+}
+
+function draftTabButtonStyle(active: boolean): React.CSSProperties {
+    return {
+        border: "none",
+        background: "transparent",
+        color: active ? "#ffffff" : "#e2e8f0",
+        padding: "8px 12px",
+        fontWeight: 600,
+        textAlign: "left",
+        flex: 1,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        boxShadow: "none",
+        borderRadius: 0,
+    };
+}
+
+function draftTabCloseButtonStyle(): React.CSSProperties {
+    return {
+        width: 34,
+        height: 34,
+        border: "none",
+        borderLeft: "1px solid rgba(148, 163, 184, 0.4)",
+        background: "transparent",
+        color: "#cbd5e1",
+        padding: 0,
+        borderRadius: 0,
+        boxShadow: "none",
+        lineHeight: 1,
+        fontSize: 16,
     };
 }
 
