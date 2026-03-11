@@ -26,6 +26,11 @@
   --pg-danger-dark: #7f1d1d;
   --pg-warning: #f59e0b;
   --pg-editor-deep: #0b1220;
+  --pg-scrollbar-size: 10px;
+  --pg-scrollbar-track: rgba(15, 23, 42, 0.72);
+  --pg-scrollbar-thumb: rgba(var(--pg-primary-rgb), 0.78);
+  --pg-scrollbar-thumb-hover: rgba(var(--pg-primary-rgb), 0.92);
+  --pg-scrollbar-thumb-active: var(--pg-primary);
 
   font-family: "IBM Plex Sans", "Inter", "Segoe UI", sans-serif;
   font-size: 16px;
@@ -44,6 +49,40 @@ body {
   margin: 0;
   min-height: 100vh;
   background: var(--pg-bg-main);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--pg-scrollbar-thumb) var(--pg-scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: var(--pg-scrollbar-size);
+  height: var(--pg-scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--pg-scrollbar-track);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--pg-primary-soft) 0%, var(--pg-primary) 100%);
+  border-radius: 999px;
+  border: 2px solid rgba(11, 18, 32, 0.85);
+  min-height: 26px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--pg-scrollbar-thumb-hover) 0%, var(--pg-primary) 100%);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg, var(--pg-primary) 0%, var(--pg-primary-strong) 100%);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 input,

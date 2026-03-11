@@ -193,6 +193,9 @@ export function useMonacoVariableSupport({
                 "editor.lineHighlightBackground": "#0f172a",
                 "editorIndentGuide.background1": "#1e293b",
                 "editorIndentGuide.activeBackground1": "#334155",
+                "scrollbarSlider.background": "#009DA655",
+                "scrollbarSlider.hoverBackground": "#009DA688",
+                "scrollbarSlider.activeBackground": "#009DA6CC",
             },
         });
 
