@@ -62,7 +62,7 @@ export default function TopBar({
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
-                paddingLeft: isMacOS ? 88 : 12, // espace pour les traffic lights macOS
+                paddingLeft: isMacOS ? 88 : 12, // space for macOS traffic lights
                 paddingRight: 12,
                 borderBottom: "1px solid #1f2937",
                 background: "linear-gradient(180deg, rgba(15,23,42,0.98) 0%, rgba(2,6,23,0.98) 100%)",

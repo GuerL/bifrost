@@ -1276,7 +1276,7 @@ export default function App() {
                                 color: "#cbd5e1",
                             }}
                         >
-                            Select a saved request on the left panel to open it in the editor.
+                            No request is open. Select a saved request from the left panel.
                         </div>
                     )}
 

@@ -28,7 +28,7 @@ export async function loadCollection(id: string,requestId:string|null ,  setCurr
         setStatus(`Loading ${id}...`);
         const col = await invoke<CollectionLoaded>("load_collection", { id });
         setCurrent(col);
-        setSelectedRequestId(requestId ?? col.requests[0]?.id ?? null);
+        setSelectedRequestId(requestId ?? null);
         setResp(null);
         setStatus(`✅ Loaded ${id}`);
     } catch (e) {

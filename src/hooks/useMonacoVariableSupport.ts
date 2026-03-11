@@ -280,8 +280,8 @@ export function useMonacoVariableSupport({
                     const endPos = model.getPositionAt(match.endOffset);
                     const value = variableValuesRef.current.get(match.name);
                     const description = value === undefined
-                        ? "Variable manquante dans l'environnement actif."
-                        : `Valeur actuelle: \`${truncateForHover(value)}\``;
+                        ? "Variable missing in the active environment."
+                        : `Current value: \`${truncateForHover(value)}\``;
 
                     return {
                         range: new monaco.Range(

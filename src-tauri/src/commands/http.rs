@@ -49,15 +49,15 @@ fn map_reqwest_error(e: reqwest::Error, duration_ms: Option<u128>) -> HttpErrorD
         );
     }
 
-    // TLS / certificat
-    // (reqwest ne donne pas un helper "is_tls", on garde un heuristique soft)
+    // TLS / certificate
+    // (reqwest does not provide an "is_tls" helper, keep a soft heuristic)
     let msg = e.to_string();
     if msg.to_lowercase().contains("tls") || msg.to_lowercase().contains("certificate") {
         return err("tls", "TLS / certificate error", Some(msg), duration_ms);
     }
 
-    // DNS (typo de domaine typiquement)
-    // (heuristique, mais marche bien)
+    // DNS (typically a domain typo)
+    // (heuristic, but works well)
     if msg.to_lowercase().contains("dns")
         || msg.to_lowercase().contains("failed to lookup address")
         || msg.to_lowercase().contains("name or service not known")
@@ -206,7 +206,7 @@ pub async fn do_send_request(req: Request) -> Result<HttpResponseDto, HttpErrorD
 
     // 2) client with timeout
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(59998)) // 1 minutes max (on gère le timeout côté JS, on veut juste éviter les timeouts automatiques de reqwest)
+        .timeout(std::time::Duration::from_millis(59998)) // max 1 minute (timeout is handled in JS; this just avoids reqwest automatic timeouts)
         .build()
         .map_err(|e| {
             err(

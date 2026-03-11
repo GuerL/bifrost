@@ -89,7 +89,7 @@ pub fn init_default_collection(app: AppHandle) -> Result<(), String> {
     let invalid_http_path = request_path(&app, "default", "invalid-http")?;
     let timeout_http_path = request_path(&app, "default", "timeout-http")?;
 
-    // N'écrase pas si déjà existant
+    // Do not overwrite if already present
     if !meta_path.exists() {
         write_json(&meta_path, &meta)?;
     }
