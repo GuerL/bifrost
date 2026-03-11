@@ -4,4 +4,3 @@
 fn main() {
     postguerl_lib::run()
 }
-

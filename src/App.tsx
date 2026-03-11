@@ -52,6 +52,17 @@ export type HttpResponseDto = {
     duration_ms: number;
 };
 
+export type EnvironmentVariable = {
+    key: string;
+    value: string;
+};
+
+export type Environment = {
+    id: string;
+    name: string;
+    variables: EnvironmentVariable[];
+};
+
 type RequestContextMenu = {
     x: number;
     y: number;
@@ -60,6 +71,8 @@ type RequestContextMenu = {
 
 export default function App() {
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
+    const [environments, setEnvironments] = useState<Environment[]>([]);
+    const [activeEnvironmentId, setActiveEnvironmentId] = useState<string | null>(null);
     const [current, setCurrent] = useState<CollectionLoaded | null>(null);
     const [status, setStatus] = useState<string>("");
     const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
@@ -73,6 +86,12 @@ export default function App() {
     const [renameNameInput, setRenameNameInput] = useState("");
     const [renameError, setRenameError] = useState("");
     const [renameBusy, setRenameBusy] = useState(false);
+    const [environmentsModalOpen, setEnvironmentsModalOpen] = useState(false);
+    const [envSelectedId, setEnvSelectedId] = useState<string | null>(null);
+    const [envDraftName, setEnvDraftName] = useState("");
+    const [envDraftVars, setEnvDraftVars] = useState<KeyValue[]>([]);
+    const [envBusy, setEnvBusy] = useState(false);
+    const [envError, setEnvError] = useState("");
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
 
     const beforeMountMonaco = useCallback<BeforeMount>((monaco) => {
@@ -140,8 +159,38 @@ export default function App() {
         return JSON.stringify(draft) !== JSON.stringify(selectedSavedRequest) || !!draftsById[selectedRequestId];
     }, [selectedRequestId, selectedSavedRequest, draft]);
 
+    async function reloadEnvironments(preferredEnvironmentId?: string | null) {
+        try {
+            await invoke("init_default_environment");
+            const list = await invoke<Environment[]>("list_environments");
+            let active = await invoke<string | null>("get_active_environment");
+
+            if (!active && list.length > 0) {
+                active = list[0].id;
+                await invoke("set_active_environment", { environmentId: active });
+            }
+
+            setEnvironments(list);
+            setActiveEnvironmentId(active ?? null);
+
+            const selectedCandidate =
+                preferredEnvironmentId !== undefined ? preferredEnvironmentId : envSelectedId;
+            const selected = list.find((e) => e.id === selectedCandidate) ??
+                list.find((e) => e.id === (active ?? "")) ??
+                list[0] ??
+                null;
+
+            setEnvSelectedId(selected?.id ?? null);
+            setEnvDraftName(selected?.name ?? "");
+            setEnvDraftVars(selected?.variables ?? []);
+        } catch (e) {
+            setStatus(`❌ Environments failed: ${String(e)}`);
+        }
+    }
+
     useEffect(() => {
         initDefault(setStatus, setCollections);
+        void reloadEnvironments();
     }, []);
     useEffect(() => {
         if (!current) return;
@@ -216,11 +265,15 @@ export default function App() {
                 setRenameTargetId(null);
                 setRenameError("");
             }
+            if (!envBusy) {
+                setEnvironmentsModalOpen(false);
+                setEnvError("");
+            }
         }
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [renameBusy]);
+    }, [renameBusy, envBusy]);
 
     const updateDraft = useCallback(
         (patch: Partial<Request>) => {
@@ -311,6 +364,7 @@ export default function App() {
             const r = await invoke<HttpResponseDto>("send_request", {
                 requestId: selectedRequestId,
                 req,
+                environmentId: activeEnvironmentId,
             });
             setResp(r);
             setStatus(`✅ ${r.status} in ${r.duration_ms}ms`);
@@ -339,39 +393,9 @@ export default function App() {
         }
     }
 
-    function formatJson() {
-        try {
-            const obj = JSON.parse(editorText);
-            const formatted = JSON.stringify(obj, null, 2);
-            setEditorText(formatted);
-            if (rawJsonEditorRef.current) {
-                rawJsonEditorRef.current.setValue(formatted);
-            }
-            setStatus("✅ Formatted");
-        } catch (e) {
-            setStatus(`❌ JSON invalid: ${String(e)}`);
-        }
-    }
-
     function setSelection(r: Request) {
         setSelectedRequestId(r.id);
         setResp(null);
-    }
-
-    function applyEditorToDraft() {
-        if (!draft) return;
-
-        try {
-            const parsed = JSON.parse(editorText) as Request;
-            if (parsed.id !== draft.id) {
-                setStatus("❌ ID cannot be changed.");
-                return;
-            }
-            setFullDraft(parsed);
-            setStatus("✅ JSON applied to draft");
-        } catch (e) {
-            setStatus(`❌ JSON invalid: ${String(e)}`);
-        }
     }
 
     function onDeleteRequest(requestId: string) {
@@ -484,14 +508,127 @@ export default function App() {
         );
     }
 
+    async function onSelectEnvironment(environmentId: string | null) {
+        try {
+            await invoke("set_active_environment", { environmentId });
+            setActiveEnvironmentId(environmentId);
+            setStatus(environmentId ? "✅ Environment selected" : "✅ Environment cleared");
+        } catch (e) {
+            setStatus(`❌ Environment select failed: ${String(e)}`);
+        }
+    }
+
+    function openEnvironmentsModal() {
+        const selected = environments.find((e) => e.id === activeEnvironmentId) ?? environments[0] ?? null;
+        setEnvSelectedId(selected?.id ?? null);
+        setEnvDraftName(selected?.name ?? "");
+        setEnvDraftVars(selected?.variables ?? []);
+        setEnvError("");
+        setEnvironmentsModalOpen(true);
+    }
+
+    function closeEnvironmentsModal() {
+        if (envBusy) return;
+        setEnvironmentsModalOpen(false);
+        setEnvError("");
+    }
+
+    function pickEnvironmentForEdit(environmentId: string) {
+        const env = environments.find((e) => e.id === environmentId);
+        if (!env) return;
+        setEnvSelectedId(env.id);
+        setEnvDraftName(env.name);
+        setEnvDraftVars(env.variables);
+        setEnvError("");
+    }
+
+    async function onCreateEnvironment() {
+        if (envBusy) return;
+        setEnvBusy(true);
+        setEnvError("");
+        try {
+            const created = await invoke<Environment>("create_environment", { name: "New Environment" });
+            await reloadEnvironments(created.id);
+            setStatus("✅ Environment created");
+        } catch (e) {
+            setEnvError(`Create failed: ${String(e)}`);
+        } finally {
+            setEnvBusy(false);
+        }
+    }
+
+    async function onDuplicateEnvironment() {
+        if (!envSelectedId || envBusy) return;
+        setEnvBusy(true);
+        setEnvError("");
+        try {
+            const duplicated = await invoke<Environment>("duplicate_environment", {
+                sourceEnvironmentId: envSelectedId,
+                newName: `${envDraftName || "Environment"} Copy`,
+            });
+            await reloadEnvironments(duplicated.id);
+            setStatus("✅ Environment duplicated");
+        } catch (e) {
+            setEnvError(`Duplicate failed: ${String(e)}`);
+        } finally {
+            setEnvBusy(false);
+        }
+    }
+
+    async function onDeleteEnvironment() {
+        if (!envSelectedId || envBusy) return;
+        setEnvBusy(true);
+        setEnvError("");
+        try {
+            await invoke("delete_environment", { environmentId: envSelectedId });
+            await reloadEnvironments();
+            setStatus("✅ Environment deleted");
+        } catch (e) {
+            setEnvError(`Delete failed: ${String(e)}`);
+        } finally {
+            setEnvBusy(false);
+        }
+    }
+
+    async function onSaveEnvironment() {
+        if (!envSelectedId || envBusy) return;
+        const name = envDraftName.trim();
+        if (!name) {
+            setEnvError("Environment name cannot be empty.");
+            return;
+        }
+
+        setEnvBusy(true);
+        setEnvError("");
+        try {
+            await invoke("save_environment", {
+                environment: {
+                    id: envSelectedId,
+                    name,
+                    variables: envDraftVars,
+                },
+            });
+            await reloadEnvironments(envSelectedId);
+            setStatus("✅ Environment saved");
+        } catch (e) {
+            setEnvError(`Save failed: ${String(e)}`);
+        } finally {
+            setEnvBusy(false);
+        }
+    }
+
     return (
         <>
             <TopBar
                 collections={collections}
                 currentCollectionId={current?.meta.id ?? null}
+                environments={environments}
+                currentEnvironmentId={activeEnvironmentId}
                 onSelectCollection={(collectionId) =>
                     loadCollection(collectionId,null, setCurrent, setSelectedRequestId, setResp, setStatus)
                 }
+                onSelectEnvironment={onSelectEnvironment}
+                onManageEnvironments={openEnvironmentsModal}
                 onSaveDraft={saveDraft}
                 onNewRequest={onNewRequest}
                 onOpenRawJson={() => setTab("json")}
@@ -806,17 +943,11 @@ export default function App() {
                                                     editor.setValue(editorText);
                                                 }
                                             }}
-                                            onChange={(value) => setEditorText(value ?? "")}
-                                            options={editorOptions}
+                                            options={{ ...editorOptions, readOnly: true, domReadOnly: true }}
                                         />
                                     </div>
-                                    <div style={{ display: "flex", gap: 8 }}>
-                                        <button onClick={applyEditorToDraft} disabled={!draft}>
-                                            Apply JSON
-                                        </button>
-                                        <button onClick={formatJson} disabled={!current}>
-                                            Format JSON
-                                        </button>
+                                    <div style={{ fontSize: 13, color: "#9ca3af" }}>
+                                        Dev view: request object (read-only)
                                     </div>
                                 </>
                             )}
@@ -993,6 +1124,149 @@ export default function App() {
                             </button>
                         </div>
                     </form>
+                </div>
+            )}
+
+            {environmentsModalOpen && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1400,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={closeEnvironmentsModal}
+                >
+                    <div
+                        onMouseDown={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 900,
+                            height: "78vh",
+                            maxHeight: 700,
+                            border: "1px solid #3a3a3c",
+                            borderRadius: 12,
+                            background: "#1f1f22",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <h3 style={{ margin: 0 }}>Environments</h3>
+                            <button onClick={closeEnvironmentsModal} style={buttonStyle(envBusy)}>
+                                Close
+                            </button>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 12, minHeight: 0, flex: 1 }}>
+                            <div
+                                style={{
+                                    width: 260,
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    minHeight: 0,
+                                    gap: 8,
+                                }}
+                            >
+                                <div style={{ display: "flex", gap: 8 }}>
+                                    <button onClick={onCreateEnvironment} style={buttonStyle(envBusy)}>+ New</button>
+                                    <button
+                                        onClick={onDuplicateEnvironment}
+                                        disabled={!envSelectedId || envBusy}
+                                        style={buttonStyle(!envSelectedId || envBusy)}
+                                    >
+                                        Duplicate
+                                    </button>
+                                </div>
+                                <button
+                                    onClick={onDeleteEnvironment}
+                                    disabled={!envSelectedId || envBusy}
+                                    style={buttonStyle(!envSelectedId || envBusy)}
+                                >
+                                    Delete
+                                </button>
+
+                                <div style={{ overflowY: "auto", minHeight: 0, flex: 1, paddingRight: 4 }}>
+                                    {environments.map((env) => (
+                                        <button
+                                            key={env.id}
+                                            onClick={() => pickEnvironmentForEdit(env.id)}
+                                            style={{
+                                                ...buttonStyle(false),
+                                                width: "100%",
+                                                marginBottom: 6,
+                                                textAlign: "left",
+                                                borderColor: env.id === envSelectedId ? "#2563eb" : "#3a3a3c",
+                                            }}
+                                        >
+                                            {env.name}
+                                            {env.id === activeEnvironmentId ? " (active)" : ""}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div
+                                style={{
+                                    flex: 1,
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    minHeight: 0,
+                                    gap: 12,
+                                }}
+                            >
+                                {!envSelectedId && (
+                                    <div style={{ color: "#9ca3af" }}>No environment selected.</div>
+                                )}
+
+                                {envSelectedId && (
+                                    <>
+                                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                            <span style={{ fontSize: 13, color: "#a1a1aa" }}>Name</span>
+                                            <input
+                                                value={envDraftName}
+                                                onChange={(e) => setEnvDraftName(e.target.value)}
+                                                disabled={envBusy}
+                                            />
+                                        </label>
+
+                                        <div style={{ fontSize: 13, color: "#9ca3af" }}>
+                                            Use variables in requests with <code>{"{{variable_name}}"}</code>.
+                                        </div>
+
+                                        <div style={{ minHeight: 0, overflowY: "auto", flex: 1, paddingRight: 4 }}>
+                                            <KeyValueTable rows={envDraftVars} onChange={setEnvDraftVars} />
+                                        </div>
+
+                                        {envError && <div style={{ color: "#fca5a5", fontSize: 13 }}>{envError}</div>}
+
+                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                            <button
+                                                onClick={() => void onSelectEnvironment(envSelectedId)}
+                                                disabled={envBusy}
+                                                style={buttonStyle(envBusy)}
+                                            >
+                                                Set Active
+                                            </button>
+                                            <button
+                                                onClick={onSaveEnvironment}
+                                                disabled={envBusy}
+                                                style={primaryButtonStyle(envBusy)}
+                                            >
+                                                Save Environment
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
         </>
