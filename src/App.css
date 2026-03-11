@@ -91,6 +91,16 @@ button {
   outline: none;
 }
 
+.variable-input-field::placeholder {
+  color: #93a4bd;
+  opacity: 0.7;
+}
+
+.variable-input-field:disabled::placeholder {
+  color: #64748b;
+  opacity: 0.7;
+}
+
 #greet-input {
   margin-right: 5px;
 }

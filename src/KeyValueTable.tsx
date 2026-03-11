@@ -1,33 +1,49 @@
+import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
 
-
-export default function KeyValueTable({
-                           rows,
-                           onChange,
-                       }: {
+type KeyValueTableProps = {
     rows: { key: string; value: string }[];
     onChange: (next: { key: string; value: string }[]) => void;
-}) {
+    resolveVariableStatus?: (name: string) => VariableStatus;
+    resolveVariableValue?: (name: string) => string | undefined;
+    variableSuggestions?: string[];
+};
+
+export default function KeyValueTable({
+    rows,
+    onChange,
+    resolveVariableStatus,
+    resolveVariableValue,
+    variableSuggestions,
+}: KeyValueTableProps) {
     return (
         <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
             {rows.map((kv, i) => (
                 <div key={i} style={{ display: "flex", gap: 8 }}>
-                    <input
+                    <VariableInput
                         placeholder="key"
                         value={kv.key}
-                        onChange={(e) => {
+                        onChange={(nextKey) => {
                             const next = rows.slice();
-                            next[i] = { ...kv, key: e.target.value };
+                            next[i] = { ...kv, key: nextKey };
                             onChange(next);
                         }}
+                        resolveVariableStatus={resolveVariableStatus}
+                        resolveVariableValue={resolveVariableValue}
+                        variableSuggestions={variableSuggestions}
+                        containerStyle={{ flex: 1 }}
                     />
-                    <input
+                    <VariableInput
                         placeholder="value"
                         value={kv.value}
-                        onChange={(e) => {
+                        onChange={(nextValue) => {
                             const next = rows.slice();
-                            next[i] = { ...kv, value: e.target.value };
+                            next[i] = { ...kv, value: nextValue };
                             onChange(next);
                         }}
+                        resolveVariableStatus={resolveVariableStatus}
+                        resolveVariableValue={resolveVariableValue}
+                        variableSuggestions={variableSuggestions}
+                        containerStyle={{ flex: 1 }}
                     />
                     <button
                         onClick={() => {

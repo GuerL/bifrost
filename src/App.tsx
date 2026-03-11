@@ -14,6 +14,7 @@ import {
 } from "./helpers/CollectionsHelper.ts";
 import KeyValueTable from "./KeyValueTable.tsx";
 import TopBar from "./TopBar.tsx";
+import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
 
 export type CollectionMeta = {
     version: number;
@@ -194,6 +195,44 @@ export default function App() {
         if (!selectedRequestId) return null;
         return draftsById[selectedRequestId] ?? selectedSavedRequest;
     }, [draftsById, selectedRequestId, selectedSavedRequest]);
+
+    const activeEnvironment = useMemo(
+        () => environments.find((env) => env.id === activeEnvironmentId) ?? null,
+        [environments, activeEnvironmentId]
+    );
+
+    const activeEnvironmentValues = useMemo(() => {
+        const values = new Map<string, string>();
+        for (const item of activeEnvironment?.variables ?? []) {
+            const key = item.key.trim();
+            if (!key) continue;
+            values.set(key, item.value);
+        }
+        return values;
+    }, [activeEnvironment]);
+
+    const variableSuggestions = useMemo(
+        () => Array.from(activeEnvironmentValues.keys()).sort((a, b) => a.localeCompare(b)),
+        [activeEnvironmentValues]
+    );
+
+    const resolveVariableStatus = useCallback(
+        (name: string): VariableStatus => {
+            const key = name.trim();
+            if (!key) return "missing";
+            return activeEnvironmentValues.has(key) ? "ok" : "missing";
+        },
+        [activeEnvironmentValues]
+    );
+
+    const resolveVariableValue = useCallback(
+        (name: string): string | undefined => {
+            const key = name.trim();
+            if (!key) return undefined;
+            return activeEnvironmentValues.get(key);
+        },
+        [activeEnvironmentValues]
+    );
 
     const isDirty = useMemo(() => {
         if (!selectedRequestId || !selectedSavedRequest || !draft) return false;
@@ -853,11 +892,14 @@ export default function App() {
                                     <option value="options">OPTIONS</option>
                                 </select>
 
-                                <input
+                                <VariableInput
                                     placeholder="URL"
                                     value={draft.url}
-                                    onChange={(e) => updateDraft({ url: e.target.value })}
-                                    style={{ flex: 1 }}
+                                    onChange={(nextUrl) => updateDraft({ url: nextUrl })}
+                                    resolveVariableStatus={resolveVariableStatus}
+                                    resolveVariableValue={resolveVariableValue}
+                                    variableSuggestions={variableSuggestions}
+                                    containerStyle={{ flex: 1 }}
                                 />
 
                                 <button onClick={sendSelected} disabled={!selectedRequestId || pending}>
@@ -894,6 +936,9 @@ export default function App() {
                                 <KeyValueTable
                                     rows={draft.headers}
                                     onChange={(next) => updateDraft({ headers: next })}
+                                    resolveVariableStatus={resolveVariableStatus}
+                                    resolveVariableValue={resolveVariableValue}
+                                    variableSuggestions={variableSuggestions}
                                 />
                             )}
 
@@ -901,6 +946,9 @@ export default function App() {
                                 <KeyValueTable
                                     rows={draft.query}
                                     onChange={(next) => updateDraft({ query: next })}
+                                    resolveVariableStatus={resolveVariableStatus}
+                                    resolveVariableValue={resolveVariableValue}
+                                    variableSuggestions={variableSuggestions}
                                 />
                             )}
 
@@ -957,19 +1005,22 @@ export default function App() {
                                 const rawBody = draft.body;
                                 return (
                                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                        <input
+                                        <VariableInput
                                             placeholder="Content-Type"
                                             value={rawBody.content_type}
-                                            onChange={(e) =>
+                                            onChange={(nextContentType) =>
                                                 setFullDraft({
                                                     ...draft,
                                                     body: {
                                                         type: "raw",
-                                                        content_type: e.target.value,
+                                                        content_type: nextContentType,
                                                         text: rawBody.text,
                                                     },
                                                 })
                                             }
+                                            resolveVariableStatus={resolveVariableStatus}
+                                            resolveVariableValue={resolveVariableValue}
+                                            variableSuggestions={variableSuggestions}
                                         />
                                         <div style={editorPanelStyle("34vh", 280)}>
                                             <Editor
@@ -1005,6 +1056,9 @@ export default function App() {
                                             body: { type: "form", fields: next },
                                         })
                                     }
+                                    resolveVariableStatus={resolveVariableStatus}
+                                    resolveVariableValue={resolveVariableValue}
+                                    variableSuggestions={variableSuggestions}
                                 />
                             )}
 
