@@ -1,8 +1,12 @@
 import { CollectionMeta, Environment } from "./types.ts";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const isMacOS =
     typeof navigator !== "undefined" &&
     /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
+const isWindows =
+    typeof navigator !== "undefined" &&
+    /Windows/i.test(navigator.userAgent);
 
 type TopBarProps = {
     collections: CollectionMeta[];
@@ -33,9 +37,20 @@ export default function TopBar({
                                    canSaveDraft,
                                    hasDraft,
                                }: TopBarProps) {
+    async function minimizeWindow() {
+        await getCurrentWindow().minimize();
+    }
+
+    async function toggleMaximizeWindow() {
+        await getCurrentWindow().toggleMaximize();
+    }
+
+    async function closeWindow() {
+        await getCurrentWindow().close();
+    }
+
     return (
         <div
-            data-tauri-drag-region
             style={{
                 height: 52,
                 display: "flex",
@@ -137,6 +152,22 @@ export default function TopBar({
                 >
                     Save draft
                 </button>
+                {isWindows && (
+                    <>
+                        <button onClick={() => void minimizeWindow()} style={windowButtonStyle()}>
+                            —
+                        </button>
+                        <button onClick={() => void toggleMaximizeWindow()} style={windowButtonStyle()}>
+                            □
+                        </button>
+                        <button
+                            onClick={() => void closeWindow()}
+                            style={windowButtonStyle("#fca5a5", "#7f1d1d")}
+                        >
+                            ✕
+                        </button>
+                    </>
+                )}
             </div>
         </div>
     );
@@ -164,5 +195,23 @@ function primaryButtonStyle(disabled: boolean): React.CSSProperties {
         color: "#ffffff",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
+    };
+}
+
+function windowButtonStyle(
+    color = "#f4f4f5",
+    borderColor = "#3a3a3c"
+): React.CSSProperties {
+    return {
+        width: 32,
+        height: 28,
+        borderRadius: 6,
+        border: `1px solid ${borderColor}`,
+        background: "#2c2c2e",
+        color,
+        cursor: "pointer",
+        lineHeight: 1,
+        padding: 0,
+        boxShadow: "none",
     };
 }
