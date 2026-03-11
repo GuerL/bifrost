@@ -94,6 +94,47 @@ export default function App() {
     const [envError, setEnvError] = useState("");
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
 
+    async function clearCurrentCollectionView() {
+        setCurrent(null);
+        setSelectedRequestId(null);
+        setResp(null);
+        setDraftsById({});
+    }
+
+    async function reloadCollectionsAndRestoreActive(preferredCollectionId?: string | null) {
+        try {
+            const list = await invoke<CollectionMeta[]>("list_collections");
+            setCollections(list);
+
+            let activeCollectionId =
+                preferredCollectionId !== undefined
+                    ? preferredCollectionId
+                    : await invoke<string | null>("get_active_collection");
+
+            if (activeCollectionId && !list.some((c) => c.id === activeCollectionId)) {
+                await invoke("set_active_collection", { collectionId: null });
+                activeCollectionId = null;
+            }
+
+            if (!activeCollectionId) {
+                await clearCurrentCollectionView();
+                setStatus("✅ No active collection");
+                return;
+            }
+
+            await loadCollection(
+                activeCollectionId,
+                null,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                setStatus
+            );
+        } catch (e) {
+            setStatus(`❌ Collections failed: ${String(e)}`);
+        }
+    }
+
     const beforeMountMonaco = useCallback<BeforeMount>((monaco) => {
         monaco.editor.defineTheme("postguerl-midnight", {
             base: "vs-dark",
@@ -189,8 +230,11 @@ export default function App() {
     }
 
     useEffect(() => {
-        initDefault(setStatus, setCollections);
-        void reloadEnvironments();
+        (async () => {
+            await initDefault(setStatus, setCollections);
+            await reloadCollectionsAndRestoreActive();
+            await reloadEnvironments();
+        })();
     }, []);
     useEffect(() => {
         if (!current) return;
@@ -518,6 +562,29 @@ export default function App() {
         }
     }
 
+    async function onSelectCollection(collectionId: string | null) {
+        try {
+            await invoke("set_active_collection", { collectionId });
+
+            if (!collectionId) {
+                await clearCurrentCollectionView();
+                setStatus("✅ Collection cleared");
+                return;
+            }
+
+            await loadCollection(
+                collectionId,
+                null,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                setStatus
+            );
+        } catch (e) {
+            setStatus(`❌ Collection select failed: ${String(e)}`);
+        }
+    }
+
     function openEnvironmentsModal() {
         const selected = environments.find((e) => e.id === activeEnvironmentId) ?? environments[0] ?? null;
         setEnvSelectedId(selected?.id ?? null);
@@ -624,9 +691,7 @@ export default function App() {
                 currentCollectionId={current?.meta.id ?? null}
                 environments={environments}
                 currentEnvironmentId={activeEnvironmentId}
-                onSelectCollection={(collectionId) =>
-                    loadCollection(collectionId,null, setCurrent, setSelectedRequestId, setResp, setStatus)
-                }
+                onSelectCollection={(collectionId) => void onSelectCollection(collectionId || null)}
                 onSelectEnvironment={onSelectEnvironment}
                 onManageEnvironments={openEnvironmentsModal}
                 onSaveDraft={saveDraft}
@@ -661,9 +726,28 @@ export default function App() {
                     <div>
                         <h3>Collections</h3>
 
-                        <button onClick={() => initDefault(setStatus, setCollections)}>Init default</button>
-                        <button onClick={() => refreshCollections(setCollections, setStatus)}>Refresh</button>
-                        <button onClick={() => overwriteDefault(setStatus, setCollections)}>
+                        <button
+                            onClick={async () => {
+                                await initDefault(setStatus, setCollections);
+                                await reloadCollectionsAndRestoreActive();
+                            }}
+                        >
+                            Init default
+                        </button>
+                        <button
+                            onClick={async () => {
+                                await refreshCollections(setCollections, setStatus);
+                                await reloadCollectionsAndRestoreActive();
+                            }}
+                        >
+                            Refresh
+                        </button>
+                        <button
+                            onClick={async () => {
+                                await overwriteDefault(setStatus, setCollections);
+                                await reloadCollectionsAndRestoreActive();
+                            }}
+                        >
                             Overwrite default
                         </button>
                         <button onClick={() => invoke("open_app_data_dir")}>Open data folder</button>

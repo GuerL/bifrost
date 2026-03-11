@@ -1,9 +1,31 @@
 use std::fs;
+use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::model::collection::*;
 use crate::storage::paths::*;
 use crate::storage::paths::{delete_dir, read_json, write_json};
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct CollectionsIndex {
+    #[serde(default)]
+    active_collection_id: Option<String>,
+}
+
+fn load_or_init_collections_index(app: &AppHandle) -> Result<CollectionsIndex, String> {
+    let path = collections_index_path(app)?;
+    if path.exists() {
+        return read_json(&path);
+    }
+    let idx = CollectionsIndex::default();
+    write_json(&path, &idx)?;
+    Ok(idx)
+}
+
+fn save_collections_index(app: &AppHandle, idx: &CollectionsIndex) -> Result<(), String> {
+    let path = collections_index_path(app)?;
+    write_json(&path, idx)
+}
 
 #[tauri::command]
 pub fn init_default_collection(app: AppHandle) -> Result<(), String> {
@@ -379,4 +401,40 @@ pub fn duplicate_request(
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_active_collection(app: AppHandle) -> Result<Option<String>, String> {
+    let mut idx = load_or_init_collections_index(&app)?;
+
+    if let Some(id) = idx.active_collection_id.clone() {
+        let meta_path = collection_meta_path(&app, &id)?;
+        if !meta_path.exists() {
+            idx.active_collection_id = None;
+            save_collections_index(&app, &idx)?;
+            return Ok(None);
+        }
+    }
+
+    Ok(idx.active_collection_id)
+}
+
+#[tauri::command]
+pub fn set_active_collection(
+    app: AppHandle,
+    collection_id: Option<String>,
+) -> Result<(), String> {
+    let mut idx = load_or_init_collections_index(&app)?;
+
+    if let Some(id) = collection_id {
+        let meta_path = collection_meta_path(&app, &id)?;
+        if !meta_path.exists() {
+            return Err(format!("Collection not found: {}", id));
+        }
+        idx.active_collection_id = Some(id);
+    } else {
+        idx.active_collection_id = None;
+    }
+
+    save_collections_index(&app, &idx)
 }

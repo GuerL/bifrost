@@ -69,7 +69,7 @@ export default function TopBar({
                         outline: "none",
                     }}
                 >
-                    {!currentCollectionId && <option value="">No collection</option>}
+                    <option value="">No collection</option>
                     {collections.map((collection) => (
                         <option key={collection.id} value={collection.id}>
                             {collection.name}
