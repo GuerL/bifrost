@@ -17,6 +17,12 @@ import RequestBodyEditor from "./components/RequestBodyEditor.tsx";
 import CollectionsModal from "./components/CollectionsModal.tsx";
 import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
+import {
+    buttonStyle,
+    dangerButtonStyle,
+    primaryButtonStyle,
+    selectStyle,
+} from "./helpers/UiStyles.ts";
 import type {
     CollectionLoaded,
     CollectionMeta,
@@ -1699,59 +1705,6 @@ export default function App() {
             />
         </>
     );
-}
-
-function buttonStyle(disabled: boolean): React.CSSProperties {
-    return {
-        height: 34,
-        padding: "0 12px",
-        borderRadius: 10,
-        border: "1px solid var(--pg-border)",
-        background: disabled ? "var(--pg-surface-2)" : "var(--pg-surface-gradient)",
-        color: disabled ? "var(--pg-disabled)" : "var(--pg-text)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        fontWeight: 600,
-        boxShadow: disabled ? "none" : "0 8px 20px rgba(2, 6, 23, 0.2)",
-    };
-}
-
-function primaryButtonStyle(disabled: boolean): React.CSSProperties {
-    return {
-        height: 34,
-        padding: "0 14px",
-        borderRadius: 10,
-        border: "1px solid var(--pg-primary-strong)",
-        background: disabled ? "rgba(var(--pg-primary-rgb), 0.45)" : "var(--pg-primary)",
-        color: "var(--pg-primary-ink)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        fontWeight: 700,
-        boxShadow: disabled ? "none" : "0 10px 24px rgba(var(--pg-primary-rgb), 0.35)",
-    };
-}
-
-function dangerButtonStyle(disabled: boolean): React.CSSProperties {
-    return {
-        height: 34,
-        padding: "0 14px",
-        borderRadius: 10,
-        border: "1px solid var(--pg-danger)",
-        background: disabled ? "var(--pg-danger-dark)" : "var(--pg-danger)",
-        color: "var(--pg-text)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        fontWeight: 600,
-        boxShadow: disabled ? "none" : "0 10px 24px rgba(220, 38, 38, 0.25)",
-    };
-}
-
-function selectStyle(): React.CSSProperties {
-    return {
-        height: 34,
-        borderRadius: 10,
-        border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-0)",
-        color: "var(--pg-text)",
-        padding: "0 12px",
-    };
 }
 
 function requestListItemStyle(active: boolean, hasLocalDraft: boolean): React.CSSProperties {

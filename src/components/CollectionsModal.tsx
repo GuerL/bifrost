@@ -1,4 +1,10 @@
 import type { CollectionMeta } from "../types.ts";
+import {
+    buttonStyle,
+    dangerButtonStyle,
+    modalInputStyle,
+    primaryButtonStyle,
+} from "../helpers/UiStyles.ts";
 
 type DeleteCollectionTarget = {
     id: string;
@@ -252,58 +258,4 @@ export default function CollectionsModal({
             )}
         </>
     );
-}
-
-function buttonStyle(disabled: boolean): React.CSSProperties {
-    return {
-        height: 34,
-        padding: "0 12px",
-        borderRadius: 10,
-        border: "1px solid var(--pg-border)",
-        background: disabled ? "var(--pg-surface-2)" : "var(--pg-surface-gradient)",
-        color: disabled ? "var(--pg-disabled)" : "var(--pg-text)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        fontWeight: 600,
-        boxShadow: disabled ? "none" : "0 8px 20px rgba(2, 6, 23, 0.2)",
-    };
-}
-
-function primaryButtonStyle(disabled: boolean): React.CSSProperties {
-    return {
-        height: 34,
-        padding: "0 14px",
-        borderRadius: 10,
-        border: "1px solid var(--pg-primary-strong)",
-        background: disabled ? "rgba(var(--pg-primary-rgb), 0.45)" : "var(--pg-primary)",
-        color: "var(--pg-primary-ink)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        fontWeight: 700,
-        boxShadow: disabled ? "none" : "0 10px 24px rgba(var(--pg-primary-rgb), 0.35)",
-    };
-}
-
-function dangerButtonStyle(disabled: boolean): React.CSSProperties {
-    return {
-        height: 34,
-        padding: "0 14px",
-        borderRadius: 10,
-        border: "1px solid var(--pg-danger)",
-        background: disabled ? "var(--pg-danger-dark)" : "var(--pg-danger)",
-        color: "var(--pg-text)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        fontWeight: 600,
-        boxShadow: disabled ? "none" : "0 10px 24px rgba(220, 38, 38, 0.25)",
-    };
-}
-
-function modalInputStyle(): React.CSSProperties {
-    return {
-        height: 36,
-        borderRadius: 10,
-        border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-0)",
-        color: "var(--pg-text)",
-        padding: "0 12px",
-        outline: "none",
-    };
 }

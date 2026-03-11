@@ -1,5 +1,11 @@
 import KeyValueTable from "../KeyValueTable.tsx";
 import type { Environment, KeyValue } from "../types.ts";
+import {
+    buttonStyle,
+    dangerButtonStyle,
+    modalInputStyle,
+    primaryButtonStyle,
+} from "../helpers/UiStyles.ts";
 
 type EnvironmentsModalProps = {
     open: boolean;
@@ -99,13 +105,6 @@ export default function EnvironmentsModal({
                                         Duplicate
                                     </button>
                                 </div>
-                                <button
-                                    onClick={onDelete}
-                                    disabled={!selectedEnvironmentId || busy}
-                                    style={buttonStyle(!selectedEnvironmentId || busy)}
-                                >
-                                    Delete
-                                </button>
 
                                 <div style={{ overflowY: "auto", minHeight: 0, flex: 1, paddingRight: 4 }}>
                                     {environments.map((env) => (
@@ -148,6 +147,7 @@ export default function EnvironmentsModal({
                                                 value={draftName}
                                                 onChange={(e) => onDraftNameChange(e.target.value)}
                                                 disabled={busy}
+                                                style={modalInputStyle()}
                                             />
                                         </label>
 
@@ -169,13 +169,22 @@ export default function EnvironmentsModal({
                                             >
                                                 Set Active
                                             </button>
-                                            <button
-                                                onClick={onSave}
-                                                disabled={busy}
-                                                style={primaryButtonStyle(busy)}
-                                            >
-                                                Save Environment
-                                            </button>
+                                            <div style={{ display: "flex", gap: 8 }}>
+                                                <button
+                                                    onClick={onDelete}
+                                                    disabled={busy}
+                                                    style={dangerButtonStyle(busy)}
+                                                >
+                                                    Delete
+                                                </button>
+                                                <button
+                                                    onClick={onSave}
+                                                    disabled={busy}
+                                                    style={primaryButtonStyle(busy)}
+                                                >
+                                                    Save Environment
+                                                </button>
+                                            </div>
                                         </div>
                                     </>
                                 )}
@@ -186,32 +195,4 @@ export default function EnvironmentsModal({
             )}
         </>
     );
-}
-
-function buttonStyle(disabled: boolean): React.CSSProperties {
-    return {
-        height: 34,
-        padding: "0 12px",
-        borderRadius: 10,
-        border: "1px solid var(--pg-border)",
-        background: disabled ? "var(--pg-surface-2)" : "var(--pg-surface-gradient)",
-        color: disabled ? "var(--pg-disabled)" : "var(--pg-text)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        fontWeight: 600,
-        boxShadow: disabled ? "none" : "0 8px 20px rgba(2, 6, 23, 0.2)",
-    };
-}
-
-function primaryButtonStyle(disabled: boolean): React.CSSProperties {
-    return {
-        height: 34,
-        padding: "0 14px",
-        borderRadius: 10,
-        border: "1px solid var(--pg-primary-strong)",
-        background: disabled ? "rgba(var(--pg-primary-rgb), 0.45)" : "var(--pg-primary)",
-        color: "var(--pg-primary-ink)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        fontWeight: 700,
-        boxShadow: disabled ? "none" : "0 10px 24px rgba(var(--pg-primary-rgb), 0.35)",
-    };
 }
