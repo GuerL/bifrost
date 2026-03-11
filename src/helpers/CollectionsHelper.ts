@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import {CollectionLoaded, CollectionMeta, HttpResponseDto, Request} from "../App.tsx";
+import { CollectionLoaded, CollectionMeta, HttpResponseDto, Request } from "../types.ts";
 
 
 

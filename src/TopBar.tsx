@@ -1,4 +1,4 @@
-import {CollectionMeta, Environment} from "./App.tsx";
+import { CollectionMeta, Environment } from "./types.ts";
 
 type TopBarProps = {
     collections: CollectionMeta[];

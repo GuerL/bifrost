@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isPending } from "./helpers/HttpHelper";
-import Editor, { type BeforeMount } from "@monaco-editor/react";
-import type * as MonacoApi from "monaco-editor";
+import Editor from "@monaco-editor/react";
 import {
     devCreate,
     devDelete,
@@ -16,139 +15,22 @@ import {
 import KeyValueTable from "./KeyValueTable.tsx";
 import TopBar from "./TopBar.tsx";
 import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
-
-export type CollectionMeta = {
-    version: number;
-    id: string;
-    name: string;
-    request_order: string[];
-};
-
-export type KeyValue = { key: string; value: string };
-
-export type Body =
-    | { type: "none" }
-    | { type: "raw"; content_type: string; text: string }
-    | { type: "json"; value: any }
-    | { type: "form"; fields: KeyValue[] };
-
-export type Request = {
-    id: string;
-    name: string;
-    method: "get" | "post" | "put" | "patch" | "delete" | "head" | "options";
-    url: string;
-    headers: KeyValue[];
-    query: KeyValue[];
-    body: Body;
-};
-
-export type CollectionLoaded = {
-    meta: CollectionMeta;
-    requests: Request[];
-};
-
-export type HttpResponseDto = {
-    status: number;
-    headers: { key: string; value: string }[];
-    body_text: string;
-    duration_ms: number;
-};
-
-export type EnvironmentVariable = {
-    key: string;
-    value: string;
-};
-
-export type Environment = {
-    id: string;
-    name: string;
-    variables: EnvironmentVariable[];
-};
+import RequestBodyEditor from "./components/RequestBodyEditor.tsx";
+import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
+import type {
+    CollectionLoaded,
+    CollectionMeta,
+    Environment,
+    HttpResponseDto,
+    KeyValue,
+    Request,
+} from "./types.ts";
 
 type RequestContextMenu = {
     x: number;
     y: number;
     requestId: string;
 };
-
-type TemplateVariableMatch = {
-    name: string;
-    startOffset: number;
-    endOffset: number;
-    raw: string;
-};
-
-type TemplateCompletionContext = {
-    openIndex: number;
-    replaceEnd: number;
-    query: string;
-};
-
-const TEMPLATE_VARIABLE_PATTERN = /{{\s*([^{}]+?)\s*}}/g;
-const BODY_MODEL_PATH_SEGMENT = "/postguerl-body/";
-
-function isBodyMonacoModel(model: MonacoApi.editor.ITextModel): boolean {
-    return model.uri.path.includes(BODY_MODEL_PATH_SEGMENT);
-}
-
-function collectTemplateVariableMatches(text: string): TemplateVariableMatch[] {
-    const matches: TemplateVariableMatch[] = [];
-    TEMPLATE_VARIABLE_PATTERN.lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = TEMPLATE_VARIABLE_PATTERN.exec(text)) !== null) {
-        const raw = match[0];
-        const name = (match[1] ?? "").trim();
-        const startOffset = match.index;
-        matches.push({
-            name,
-            raw,
-            startOffset,
-            endOffset: startOffset + raw.length,
-        });
-    }
-
-    return matches;
-}
-
-function findTemplateVariableAtOffset(
-    text: string,
-    offset: number
-): TemplateVariableMatch | null {
-    return (
-        collectTemplateVariableMatches(text).find(
-            (entry) => offset >= entry.startOffset && offset <= entry.endOffset
-        ) ?? null
-    );
-}
-
-function getTemplateCompletionContext(
-    text: string,
-    caretOffset: number
-): TemplateCompletionContext | null {
-    if (caretOffset < 0 || caretOffset > text.length) return null;
-
-    const openIndex = text.lastIndexOf("{{", caretOffset);
-    if (openIndex === -1 || caretOffset < openIndex + 2) return null;
-
-    const inside = text.slice(openIndex + 2, caretOffset);
-    if (inside.includes("{") || inside.includes("}")) return null;
-
-    const closeIndex = text.indexOf("}}", openIndex + 2);
-    if (closeIndex !== -1 && caretOffset > closeIndex + 2) return null;
-
-    return {
-        openIndex,
-        replaceEnd: closeIndex === -1 ? caretOffset : closeIndex + 2,
-        query: inside.trim().toLowerCase(),
-    };
-}
-
-function truncateForHover(value: string, maxLen = 180): string {
-    const normalized = value.replace(/\n/g, "\\n");
-    if (normalized.length <= maxLen) return normalized;
-    return `${normalized.slice(0, maxLen)}…`;
-}
 
 export default function App() {
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
@@ -174,16 +56,6 @@ export default function App() {
     const [envBusy, setEnvBusy] = useState(false);
     const [envError, setEnvError] = useState("");
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
-    const monacoProvidersRef = useRef<MonacoApi.IDisposable[]>([]);
-    const monacoFeaturesRegisteredRef = useRef(false);
-    const variableSuggestionsRef = useRef<string[]>([]);
-    const variableValuesRef = useRef<Map<string, string>>(new Map());
-    const bodyJsonEditorRef = useRef<MonacoApi.editor.IStandaloneCodeEditor | null>(null);
-    const bodyRawEditorRef = useRef<MonacoApi.editor.IStandaloneCodeEditor | null>(null);
-    const bodyJsonDecorationsRef = useRef<string[]>([]);
-    const bodyRawDecorationsRef = useRef<string[]>([]);
-    const bodyJsonContentListenerRef = useRef<MonacoApi.IDisposable | null>(null);
-    const bodyRawContentListenerRef = useRef<MonacoApi.IDisposable | null>(null);
 
     async function clearCurrentCollectionView() {
         setCurrent(null);
@@ -225,206 +97,6 @@ export default function App() {
             setStatus(`❌ Collections failed: ${String(e)}`);
         }
     }
-
-    const refreshEditorVariableDecorations = useCallback(
-        (
-            editor: MonacoApi.editor.IStandaloneCodeEditor | null,
-            decorationsRef: { current: string[] }
-        ) => {
-            if (!editor) return;
-
-            const model = editor.getModel();
-            if (!model || !isBodyMonacoModel(model)) {
-                decorationsRef.current = editor.deltaDecorations(decorationsRef.current, []);
-                return;
-            }
-
-            const text = model.getValue();
-            const nextDecorations = collectTemplateVariableMatches(text).map((entry) => {
-                const startPos = model.getPositionAt(entry.startOffset);
-                const endPos = model.getPositionAt(entry.endOffset);
-                const missing = !variableValuesRef.current.has(entry.name);
-
-                return {
-                    range: {
-                        startLineNumber: startPos.lineNumber,
-                        startColumn: startPos.column,
-                        endLineNumber: endPos.lineNumber,
-                        endColumn: endPos.column,
-                    },
-                    options: {
-                        inlineClassName: missing
-                            ? "pg-monaco-variable-missing"
-                            : "pg-monaco-variable-ok",
-                    },
-                };
-            });
-
-            decorationsRef.current = editor.deltaDecorations(
-                decorationsRef.current,
-                nextDecorations
-            );
-        },
-        []
-    );
-
-    const beforeMountMonaco = useCallback<BeforeMount>((monaco) => {
-        monaco.editor.defineTheme("postguerl-midnight", {
-            base: "vs-dark",
-            inherit: true,
-            rules: [
-                { token: "keyword", foreground: "7dd3fc" },
-                { token: "number", foreground: "f59e0b" },
-                { token: "string", foreground: "86efac" },
-            ],
-            colors: {
-                "editor.background": "#0b1220",
-                "editor.foreground": "#e2e8f0",
-                "editorLineNumber.foreground": "#475569",
-                "editorLineNumber.activeForeground": "#94a3b8",
-                "editorCursor.foreground": "#22d3ee",
-                "editor.selectionBackground": "#164e63AA",
-                "editor.lineHighlightBackground": "#0f172a",
-                "editorIndentGuide.background1": "#1e293b",
-                "editorIndentGuide.activeBackground1": "#334155",
-            },
-        });
-
-        if (monacoFeaturesRegisteredRef.current) return;
-        monacoFeaturesRegisteredRef.current = true;
-
-        const languagesWithTemplateSupport = [
-            "json",
-            "plaintext",
-            "xml",
-            "html",
-            "javascript",
-            "typescript",
-            "css",
-            "sql",
-        ];
-
-        for (const languageId of languagesWithTemplateSupport) {
-            const completionDisposable = monaco.languages.registerCompletionItemProvider(languageId, {
-                triggerCharacters: ["{"],
-                provideCompletionItems: (
-                    model: MonacoApi.editor.ITextModel,
-                    position: MonacoApi.Position
-                ) => {
-                    if (!isBodyMonacoModel(model)) return { suggestions: [] };
-
-                    const suggestions = variableSuggestionsRef.current;
-                    if (!suggestions.length) return { suggestions: [] };
-
-                    const text = model.getValue();
-                    const offset = model.getOffsetAt(position);
-                    const context = getTemplateCompletionContext(text, offset);
-                    if (!context) return { suggestions: [] };
-
-                    const filtered = context.query
-                        ? suggestions.filter((name) =>
-                            name.toLowerCase().includes(context.query)
-                        )
-                        : suggestions;
-
-                    if (filtered.length === 0) return { suggestions: [] };
-
-                    const startPos = model.getPositionAt(context.openIndex);
-                    const endPos = model.getPositionAt(context.replaceEnd);
-                    const replaceRange = new monaco.Range(
-                        startPos.lineNumber,
-                        startPos.column,
-                        endPos.lineNumber,
-                        endPos.column
-                    );
-
-                    return {
-                        suggestions: filtered.slice(0, 100).map((name) => {
-                            const resolved = variableValuesRef.current.get(name);
-                            const detail = resolved === undefined
-                                ? "Missing in active environment"
-                                : `Current: ${truncateForHover(resolved, 90)}`;
-
-                            return {
-                                label: `{{${name}}}`,
-                                insertText: `{{${name}}}`,
-                                kind: monaco.languages.CompletionItemKind.Variable,
-                                detail,
-                                sortText: `0_${name.toLowerCase()}`,
-                                range: replaceRange,
-                            };
-                        }),
-                    };
-                },
-            });
-
-            const hoverDisposable = monaco.languages.registerHoverProvider(languageId, {
-                provideHover: (
-                    model: MonacoApi.editor.ITextModel,
-                    position: MonacoApi.Position
-                ) => {
-                    if (!isBodyMonacoModel(model)) return null;
-
-                    const text = model.getValue();
-                    const offset = model.getOffsetAt(position);
-                    const match = findTemplateVariableAtOffset(text, offset);
-                    if (!match) return null;
-
-                    const startPos = model.getPositionAt(match.startOffset);
-                    const endPos = model.getPositionAt(match.endOffset);
-                    const value = variableValuesRef.current.get(match.name);
-                    const description = value === undefined
-                        ? "Variable manquante dans l'environnement actif."
-                        : `Valeur actuelle: \`${truncateForHover(value)}\``;
-
-                    return {
-                        range: new monaco.Range(
-                            startPos.lineNumber,
-                            startPos.column,
-                            endPos.lineNumber,
-                            endPos.column
-                        ),
-                        contents: [
-                            { value: `**${match.raw}**` },
-                            { value: description },
-                        ],
-                    };
-                },
-            });
-
-            monacoProvidersRef.current.push(completionDisposable, hoverDisposable);
-        }
-    }, []);
-
-    const editorOptions = useMemo(
-        () => ({
-            minimap: { enabled: false },
-            fontSize: 13,
-            lineHeight: 22,
-            fontLigatures: true,
-            smoothScrolling: true,
-            scrollBeyondLastLine: false,
-            automaticLayout: true,
-            tabSize: 2,
-            insertSpaces: true,
-            padding: { top: 12, bottom: 12 },
-            renderLineHighlight: "all" as const,
-            roundedSelection: true,
-            wordWrap: "on" as const,
-            scrollbar: {
-                vertical: "auto" as const,
-                horizontal: "auto" as const,
-                alwaysConsumeMouseWheel: true,
-                useShadows: false,
-            },
-            quickSuggestions: { other: true, comments: true, strings: true },
-            suggestOnTriggerCharacters: true,
-            wordBasedSuggestions: "off" as const,
-            mouseWheelScrollSensitivity: 1,
-            fastScrollSensitivity: 3,
-        }),
-        []
-    );
 
     const selectedSavedRequest = useMemo(() => {
         if (!current || !selectedRequestId) return null;
@@ -474,24 +146,15 @@ export default function App() {
         [activeEnvironmentValues]
     );
 
-    useEffect(() => {
-        variableSuggestionsRef.current = variableSuggestions;
-        variableValuesRef.current = activeEnvironmentValues;
-
-        refreshEditorVariableDecorations(bodyJsonEditorRef.current, bodyJsonDecorationsRef);
-        refreshEditorVariableDecorations(bodyRawEditorRef.current, bodyRawDecorationsRef);
-    }, [variableSuggestions, activeEnvironmentValues, refreshEditorVariableDecorations]);
-
-    useEffect(() => {
-        return () => {
-            for (const disposable of monacoProvidersRef.current) {
-                disposable.dispose();
-            }
-            monacoProvidersRef.current = [];
-            bodyJsonContentListenerRef.current?.dispose();
-            bodyRawContentListenerRef.current?.dispose();
-        };
-    }, []);
+    const {
+        beforeMountMonaco,
+        editorOptions,
+        bindBodyJsonEditor,
+        bindBodyRawEditor,
+    } = useMonacoVariableSupport({
+        variableSuggestions,
+        variableValues: activeEnvironmentValues,
+    });
 
     const isDirty = useMemo(() => {
         if (!selectedRequestId || !selectedSavedRequest || !draft) return false;
@@ -1212,136 +875,19 @@ export default function App() {
                             )}
 
                             {tab === "body" && (
-                                <select
-                                    value={draft.body.type}
-                                    onChange={(e) => {
-                                        const t = e.target.value as Body["type"];
-                                        const body: Body =
-                                            t === "none"
-                                                ? { type: "none" }
-                                                : t === "json"
-                                                    ? { type: "json", value: {} }
-                                                    : t === "raw"
-                                                        ? { type: "raw", content_type: "text/plain", text: "" }
-                                                        : { type: "form", fields: [] };
-
-                                        updateDraft({ body });
-                                    }}
-                                >
-                                    <option value="none">none</option>
-                                    <option value="json">json</option>
-                                    <option value="raw">raw</option>
-                                    <option value="form">form</option>
-                                </select>
-                            )}
-
-                            {tab === "body" && draft.body.type === "json" && (
-                                <div style={editorPanelStyle("34vh", 280)}>
-                                    <Editor
-                                        key={`body-json-${selectedRequestId ?? "none"}`}
-                                        height="100%"
-                                        language="json"
-                                        path={`/postguerl-body/${selectedRequestId ?? "none"}.json`}
-                                        theme="postguerl-midnight"
-                                        beforeMount={beforeMountMonaco}
-                                        onMount={(editor) => {
-                                            bodyJsonEditorRef.current = editor;
-                                            bodyJsonContentListenerRef.current?.dispose();
-                                            bodyJsonContentListenerRef.current = editor.onDidChangeModelContent(() => {
-                                                refreshEditorVariableDecorations(
-                                                    editor,
-                                                    bodyJsonDecorationsRef
-                                                );
-                                            });
-                                            refreshEditorVariableDecorations(editor, bodyJsonDecorationsRef);
-                                        }}
-                                        defaultValue={JSON.stringify(draft.body.value ?? {}, null, 2)}
-                                        onChange={(value) => {
-                                            try {
-                                                const parsed = JSON.parse(value ?? "{}");
-                                                setFullDraft({
-                                                    ...draft,
-                                                    body: { type: "json", value: parsed },
-                                                });
-                                            } catch {
-                                                // keep last valid value while user types invalid json
-                                            }
-                                        }}
-                                        options={editorOptions}
-                                    />
-                                </div>
-                            )}
-
-                            {tab === "body" && draft.body.type === "raw" && (() => {
-                                const rawBody = draft.body;
-                                return (
-                                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                        <VariableInput
-                                            placeholder="Content-Type"
-                                            value={rawBody.content_type}
-                                            onChange={(nextContentType) =>
-                                                setFullDraft({
-                                                    ...draft,
-                                                    body: {
-                                                        type: "raw",
-                                                        content_type: nextContentType,
-                                                        text: rawBody.text,
-                                                    },
-                                                })
-                                            }
-                                            resolveVariableStatus={resolveVariableStatus}
-                                            resolveVariableValue={resolveVariableValue}
-                                            variableSuggestions={variableSuggestions}
-                                        />
-                                        <div style={editorPanelStyle("34vh", 280)}>
-                                            <Editor
-                                                key={`body-raw-${selectedRequestId ?? "none"}`}
-                                                height="100%"
-                                                language={languageFromContentType(rawBody.content_type)}
-                                                path={`/postguerl-body/${selectedRequestId ?? "none"}.raw`}
-                                                theme="postguerl-midnight"
-                                                beforeMount={beforeMountMonaco}
-                                                onMount={(editor) => {
-                                                    bodyRawEditorRef.current = editor;
-                                                    bodyRawContentListenerRef.current?.dispose();
-                                                    bodyRawContentListenerRef.current = editor.onDidChangeModelContent(() => {
-                                                        refreshEditorVariableDecorations(
-                                                            editor,
-                                                            bodyRawDecorationsRef
-                                                        );
-                                                    });
-                                                    refreshEditorVariableDecorations(editor, bodyRawDecorationsRef);
-                                                }}
-                                                defaultValue={rawBody.text}
-                                                onChange={(value) =>
-                                                    setFullDraft({
-                                                        ...draft,
-                                                        body: {
-                                                            type: "raw",
-                                                            content_type: rawBody.content_type,
-                                                            text: value ?? "",
-                                                        },
-                                                    })
-                                                }
-                                                options={editorOptions}
-                                            />
-                                        </div>
-                                    </div>
-                                );
-                            })()}
-
-                            {tab === "body" && draft.body.type === "form" && (
-                                <KeyValueTable
-                                    rows={draft.body.fields}
-                                    onChange={(next) =>
-                                        setFullDraft({
-                                            ...draft,
-                                            body: { type: "form", fields: next },
-                                        })
-                                    }
+                                <RequestBodyEditor
+                                    draft={draft}
+                                    selectedRequestId={selectedRequestId}
+                                    beforeMountMonaco={beforeMountMonaco}
+                                    editorOptions={editorOptions}
+                                    onPatchDraft={updateDraft}
+                                    onSetFullDraft={setFullDraft}
+                                    onMountBodyJsonEditor={bindBodyJsonEditor}
+                                    onMountBodyRawEditor={bindBodyRawEditor}
                                     resolveVariableStatus={resolveVariableStatus}
                                     resolveVariableValue={resolveVariableValue}
                                     variableSuggestions={variableSuggestions}
+                                    editorPanelStyle={editorPanelStyle}
                                 />
                             )}
 
@@ -1731,16 +1277,4 @@ function editorPanelStyle(height: number | string, minHeight = 220): React.CSSPr
         background:
             "linear-gradient(180deg, rgba(15,23,42,0.96) 0%, rgba(11,18,32,0.98) 100%)",
     };
-}
-
-function languageFromContentType(contentType: string): string {
-    const lower = contentType.toLowerCase();
-    if (lower.includes("json")) return "json";
-    if (lower.includes("xml")) return "xml";
-    if (lower.includes("html")) return "html";
-    if (lower.includes("javascript")) return "javascript";
-    if (lower.includes("typescript")) return "typescript";
-    if (lower.includes("css")) return "css";
-    if (lower.includes("sql")) return "sql";
-    return "plaintext";
 }
