@@ -37,21 +37,25 @@ export default function TopBar({
                                    canSaveDraft,
                                    hasDraft,
                                }: TopBarProps) {
-    async function minimizeWindow() {
-        await getCurrentWindow().minimize();
-    }
-
-    async function toggleMaximizeWindow() {
-        await getCurrentWindow().toggleMaximize();
-    }
-
-    async function closeWindow() {
-        await getCurrentWindow().close();
+    async function runWindowAction(action: "minimize" | "toggleMaximize" | "close") {
+        try {
+            const win = getCurrentWindow();
+            if (action === "minimize") {
+                await win.minimize();
+                return;
+            }
+            if (action === "toggleMaximize") {
+                await win.toggleMaximize();
+                return;
+            }
+            await win.close();
+        } catch (error) {
+            console.error(`Window action failed: ${action}`, error);
+        }
     }
 
     return (
         <div
-            data-tauri-drag-region
             style={{
                 height: 52,
                 display: "flex",
@@ -163,14 +167,14 @@ export default function TopBar({
                 </button>
                 {isWindows && (
                     <>
-                        <button onClick={() => void minimizeWindow()} style={windowButtonStyle()}>
+                        <button onClick={() => void runWindowAction("minimize")} style={windowButtonStyle()}>
                             —
                         </button>
-                        <button onClick={() => void toggleMaximizeWindow()} style={windowButtonStyle()}>
+                        <button onClick={() => void runWindowAction("toggleMaximize")} style={windowButtonStyle()}>
                             □
                         </button>
                         <button
-                            onClick={() => void closeWindow()}
+                            onClick={() => void runWindowAction("close")}
                             style={windowButtonStyle("#fca5a5", "#7f1d1d")}
                         >
                             ✕
