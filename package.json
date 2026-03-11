@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev:windows": "tauri dev --config src-tauri/tauri.windows.conf.json",
+    "tauri:build:windows": "tauri build --config src-tauri/tauri.windows.conf.json"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
