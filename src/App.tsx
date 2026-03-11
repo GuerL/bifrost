@@ -928,43 +928,43 @@ export default function App() {
                         flexShrink: 0,
                     }}
                 >
-                    <div>
-                        <h3>Collections</h3>
+                    {/*<div>*/}
+                    {/*    <h3>Collections</h3>*/}
 
-                        <button
-                            style={{ ...buttonStyle(false), width: "100%", marginBottom: 8 }}
-                            onClick={async () => {
-                                await initDefault(setStatus, setCollections);
-                                await reloadCollectionsAndRestoreActive();
-                            }}
-                        >
-                            Init default
-                        </button>
-                        <button
-                            style={{ ...buttonStyle(false), width: "100%", marginBottom: 8 }}
-                            onClick={async () => {
-                                await refreshCollections(setCollections, setStatus);
-                                await reloadCollectionsAndRestoreActive();
-                            }}
-                        >
-                            Refresh
-                        </button>
-                        <button
-                            style={{ ...buttonStyle(false), width: "100%", marginBottom: 8 }}
-                            onClick={async () => {
-                                await overwriteDefault(setStatus, setCollections);
-                                await reloadCollectionsAndRestoreActive();
-                            }}
-                        >
-                            Overwrite default
-                        </button>
-                        <button
-                            style={{ ...buttonStyle(false), width: "100%" }}
-                            onClick={() => invoke("open_app_data_dir")}
-                        >
-                            Open data folder
-                        </button>
-                    </div>
+                    {/*    <button*/}
+                    {/*        style={{ ...buttonStyle(false), width: "100%", marginBottom: 8 }}*/}
+                    {/*        onClick={async () => {*/}
+                    {/*            await initDefault(setStatus, setCollections);*/}
+                    {/*            await reloadCollectionsAndRestoreActive();*/}
+                    {/*        }}*/}
+                    {/*    >*/}
+                    {/*        Init default*/}
+                    {/*    </button>*/}
+                    {/*    <button*/}
+                    {/*        style={{ ...buttonStyle(false), width: "100%", marginBottom: 8 }}*/}
+                    {/*        onClick={async () => {*/}
+                    {/*            await refreshCollections(setCollections, setStatus);*/}
+                    {/*            await reloadCollectionsAndRestoreActive();*/}
+                    {/*        }}*/}
+                    {/*    >*/}
+                    {/*        Refresh*/}
+                    {/*    </button>*/}
+                    {/*    <button*/}
+                    {/*        style={{ ...buttonStyle(false), width: "100%", marginBottom: 8 }}*/}
+                    {/*        onClick={async () => {*/}
+                    {/*            await overwriteDefault(setStatus, setCollections);*/}
+                    {/*            await reloadCollectionsAndRestoreActive();*/}
+                    {/*        }}*/}
+                    {/*    >*/}
+                    {/*        Overwrite default*/}
+                    {/*    </button>*/}
+                    {/*    <button*/}
+                    {/*        style={{ ...buttonStyle(false), width: "100%" }}*/}
+                    {/*        onClick={() => invoke("open_app_data_dir")}*/}
+                    {/*    >*/}
+                    {/*        Open data folder*/}
+                    {/*    </button>*/}
+                    {/*</div>*/}
 
                     <div
                         style={{
@@ -1087,7 +1087,7 @@ export default function App() {
                             >
                                 <h3>Editor</h3>
                                 <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                                    {isDirty && <span style={{ color: "#f59e0b" }}>● Unsaved</span>}
+                                    {isDirty && <span style={{ color: "var(--pg-warning)" }}>● Unsaved</span>}
                                     {selectedRequestId ? (pending ? "⏳ pending" : "✅ idle") : ""}
                                 </div>
                             </div>
@@ -1217,7 +1217,7 @@ export default function App() {
                                             options={{ ...editorOptions, readOnly: true, domReadOnly: true }}
                                         />
                                     </div>
-                                    <div style={{ fontSize: 13, color: "#9ca3af" }}>
+                                    <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
                                         Dev view: request object (read-only)
                                     </div>
                                 </>
@@ -1252,8 +1252,8 @@ export default function App() {
 
                                 <pre
                                     style={{
-                                        background: "#111",
-                                        color: "#eee",
+                                        background: "var(--pg-surface-1)",
+                                        color: "var(--pg-text-dim)",
                                         width: "100%",
                                         height: "40vh",
                                         overflow: "auto",
@@ -1271,9 +1271,9 @@ export default function App() {
                                 marginTop: 16,
                                 padding: 16,
                                 borderRadius: 12,
-                                border: "1px solid #334155",
-                                background: "linear-gradient(180deg, #111827 0%, #0f172a 100%)",
-                                color: "#cbd5e1",
+                                border: "1px solid var(--pg-border)",
+                                background: "var(--pg-surface-soft)",
+                                color: "var(--pg-text-dim)",
                             }}
                         >
                             No request is open. Select a saved request from the left panel.
@@ -1283,7 +1283,7 @@ export default function App() {
                     {!current && (
                         <>
                             <h3 style={{ marginTop: 16 }}>Loaded collection</h3>
-                            <pre style={{ background: "#111", color: "#eee", padding: 12 }}>None</pre>
+                            <pre style={{ background: "var(--pg-surface-1)", color: "var(--pg-text-dim)", padding: 12 }}>None</pre>
                         </>
                     )}
                 </div>
@@ -1306,8 +1306,8 @@ export default function App() {
                             minWidth: 180,
                             padding: 6,
                             borderRadius: 10,
-                            border: "1px solid #3a3a3c",
-                            background: "#1f1f22",
+                            border: "1px solid var(--pg-border)",
+                            background: "var(--pg-surface-1)",
                             boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
                             display: "flex",
                             flexDirection: "column",
@@ -1335,8 +1335,8 @@ export default function App() {
                                 ...buttonStyle(false),
                                 width: "100%",
                                 textAlign: "left",
-                                color: "#fca5a5",
-                                borderColor: "#7f1d1d",
+                                color: "var(--pg-danger)",
+                                borderColor: "var(--pg-danger-dark)",
                             }}
                             onClick={() => {
                                 setContextMenu(null);
@@ -1372,9 +1372,9 @@ export default function App() {
                         style={{
                             width: "100%",
                             maxWidth: 460,
-                            border: "1px solid #3a3a3c",
+                            border: "1px solid var(--pg-border)",
                             borderRadius: 12,
-                            background: "#1f1f22",
+                            background: "var(--pg-surface-1)",
                             padding: 16,
                             display: "flex",
                             flexDirection: "column",
@@ -1383,15 +1383,15 @@ export default function App() {
                     >
                         <h3 style={{ margin: 0 }}>Rename request</h3>
 
-                        <div style={{ fontSize: 13, color: "#a1a1aa" }}>
+                        <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
                             Request id:{" "}
-                            <code style={{ color: "#f4f4f5" }}>
+                            <code style={{ color: "var(--pg-text)" }}>
                                 {renameTargetId}
                             </code>
                         </div>
 
                         <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                            <span style={{ fontSize: 13, color: "#a1a1aa" }}>Request name</span>
+                            <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>Request name</span>
                             <input
                                 value={renameNameInput}
                                 onChange={(e) => setRenameNameInput(e.target.value)}
@@ -1399,7 +1399,7 @@ export default function App() {
                             />
                         </label>
 
-                        {renameError && <div style={{ color: "#fca5a5", fontSize: 13 }}>{renameError}</div>}
+                        {renameError && <div style={{ color: "var(--pg-danger)", fontSize: 13 }}>{renameError}</div>}
 
                         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
                             <button type="button" onClick={closeRenameModal} style={buttonStyle(renameBusy)}>
@@ -1434,9 +1434,9 @@ export default function App() {
                         style={{
                             width: "100%",
                             maxWidth: 480,
-                            border: "1px solid #334155",
+                            border: "1px solid var(--pg-border)",
                             borderRadius: 12,
-                            background: "#111827",
+                            background: "var(--pg-surface-1)",
                             padding: 16,
                             display: "flex",
                             flexDirection: "column",
@@ -1444,7 +1444,7 @@ export default function App() {
                         }}
                     >
                         <h3 style={{ margin: 0 }}>Unsaved draft</h3>
-                        <div style={{ fontSize: 13, color: "#cbd5e1", lineHeight: 1.5 }}>
+                        <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.5 }}>
                             This tab contains unsaved changes. Save before closing, or discard this draft.
                         </div>
                         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
@@ -1495,9 +1495,9 @@ export default function App() {
                             maxWidth: 900,
                             height: "78vh",
                             maxHeight: 700,
-                            border: "1px solid #3a3a3c",
+                            border: "1px solid var(--pg-border)",
                             borderRadius: 12,
-                            background: "#1f1f22",
+                            background: "var(--pg-surface-1)",
                             padding: 16,
                             display: "flex",
                             flexDirection: "column",
@@ -1549,7 +1549,7 @@ export default function App() {
                                                 width: "100%",
                                                 marginBottom: 6,
                                                 textAlign: "left",
-                                                borderColor: env.id === envSelectedId ? "#2563eb" : "#3a3a3c",
+                                                borderColor: env.id === envSelectedId ? "var(--pg-primary)" : "var(--pg-border)",
                                             }}
                                         >
                                             {env.name}
@@ -1569,13 +1569,13 @@ export default function App() {
                                 }}
                             >
                                 {!envSelectedId && (
-                                    <div style={{ color: "#9ca3af" }}>No environment selected.</div>
+                                    <div style={{ color: "var(--pg-text-muted)" }}>No environment selected.</div>
                                 )}
 
                                 {envSelectedId && (
                                     <>
                                         <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                            <span style={{ fontSize: 13, color: "#a1a1aa" }}>Name</span>
+                                            <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>Name</span>
                                             <input
                                                 value={envDraftName}
                                                 onChange={(e) => setEnvDraftName(e.target.value)}
@@ -1583,7 +1583,7 @@ export default function App() {
                                             />
                                         </label>
 
-                                        <div style={{ fontSize: 13, color: "#9ca3af" }}>
+                                        <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
                                             Use variables in requests with <code>{"{{variable_name}}"}</code>.
                                         </div>
 
@@ -1591,7 +1591,7 @@ export default function App() {
                                             <KeyValueTable rows={envDraftVars} onChange={setEnvDraftVars} />
                                         </div>
 
-                                        {envError && <div style={{ color: "#fca5a5", fontSize: 13 }}>{envError}</div>}
+                                        {envError && <div style={{ color: "var(--pg-danger)", fontSize: 13 }}>{envError}</div>}
 
                                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                                             <button
@@ -1625,9 +1625,9 @@ function buttonStyle(disabled: boolean): React.CSSProperties {
         height: 34,
         padding: "0 12px",
         borderRadius: 10,
-        border: "1px solid #334155",
-        background: disabled ? "#1f2937" : "linear-gradient(180deg, #1f2937 0%, #111827 100%)",
-        color: disabled ? "#6b7280" : "#f8fafc",
+        border: "1px solid var(--pg-border)",
+        background: disabled ? "var(--pg-surface-2)" : "var(--pg-surface-gradient)",
+        color: disabled ? "var(--pg-disabled)" : "var(--pg-text)",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
         boxShadow: disabled ? "none" : "0 8px 20px rgba(2, 6, 23, 0.2)",
@@ -1639,12 +1639,14 @@ function primaryButtonStyle(disabled: boolean): React.CSSProperties {
         height: 34,
         padding: "0 14px",
         borderRadius: 10,
-        border: "1px solid #2563eb",
-        background: disabled ? "#1e3a8a" : "linear-gradient(180deg, #3b82f6 0%, #2563eb 100%)",
-        color: "#ffffff",
+        border: "1px solid var(--pg-primary-strong)",
+        background: disabled
+            ? "linear-gradient(180deg, rgba(var(--pg-primary-rgb), 0.5) 0%, rgba(var(--pg-primary-rgb), 0.35) 100%)"
+            : "linear-gradient(180deg, var(--pg-primary-soft) 0%, var(--pg-primary) 100%)",
+        color: "var(--pg-primary-ink)",
         cursor: disabled ? "not-allowed" : "pointer",
-        fontWeight: 600,
-        boxShadow: disabled ? "none" : "0 10px 24px rgba(37, 99, 235, 0.35)",
+        fontWeight: 700,
+        boxShadow: disabled ? "none" : "0 10px 24px rgba(var(--pg-primary-rgb), 0.35)",
     };
 }
 
@@ -1653,9 +1655,11 @@ function dangerButtonStyle(disabled: boolean): React.CSSProperties {
         height: 34,
         padding: "0 14px",
         borderRadius: 10,
-        border: "1px solid #ef4444",
-        background: disabled ? "#7f1d1d" : "linear-gradient(180deg, #ef4444 0%, #dc2626 100%)",
-        color: "#ffffff",
+        border: "1px solid var(--pg-danger)",
+        background: disabled
+            ? "var(--pg-danger-dark)"
+            : "linear-gradient(180deg, var(--pg-danger) 0%, var(--pg-danger-strong) 100%)",
+        color: "var(--pg-text)",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
         boxShadow: disabled ? "none" : "0 10px 24px rgba(220, 38, 38, 0.25)",
@@ -1666,9 +1670,9 @@ function selectStyle(): React.CSSProperties {
     return {
         height: 34,
         borderRadius: 10,
-        border: "1px solid #334155",
-        background: "#0f172a",
-        color: "#f8fafc",
+        border: "1px solid var(--pg-border)",
+        background: "var(--pg-surface-0)",
+        color: "var(--pg-text)",
         padding: "0 12px",
     };
 }
@@ -1676,12 +1680,16 @@ function selectStyle(): React.CSSProperties {
 function requestListItemStyle(active: boolean, hasLocalDraft: boolean): React.CSSProperties {
     return {
         ...buttonStyle(false),
-        borderColor: active ? "#3b82f6" : hasLocalDraft ? "#22c55e" : "#334155",
+        borderColor: active
+            ? "var(--pg-primary)"
+            : hasLocalDraft
+                ? "var(--pg-primary-soft)"
+                : "var(--pg-border)",
         background: active
-            ? "linear-gradient(180deg, #1d4ed8 0%, #1e40af 100%)"
-            : "linear-gradient(180deg, #1f2937 0%, #111827 100%)",
-        boxShadow: active ? "0 12px 24px rgba(37, 99, 235, 0.35)" : "none",
-        color: "#f8fafc",
+            ? "linear-gradient(180deg, var(--pg-primary-soft) 0%, var(--pg-primary) 100%)"
+            : "var(--pg-surface-gradient)",
+        boxShadow: active ? "0 12px 24px rgba(var(--pg-primary-rgb), 0.35)" : "none",
+        color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
         fontWeight: active ? 700 : 500,
     };
 }
@@ -1689,10 +1697,11 @@ function requestListItemStyle(active: boolean, hasLocalDraft: boolean): React.CS
 function editorTabStyle(active: boolean): React.CSSProperties {
     return {
         ...buttonStyle(false),
-        borderColor: active ? "#3b82f6" : "#334155",
+        borderColor: active ? "var(--pg-primary)" : "var(--pg-border)",
         background: active
-            ? "linear-gradient(180deg, #1d4ed8 0%, #1e40af 100%)"
-            : "linear-gradient(180deg, #1f2937 0%, #111827 100%)",
+            ? "linear-gradient(180deg, var(--pg-primary-soft) 0%, var(--pg-primary) 100%)"
+            : "var(--pg-surface-gradient)",
+        color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
     };
 }
 
@@ -1702,12 +1711,12 @@ function draftTabContainerStyle(active: boolean): React.CSSProperties {
         alignItems: "center",
         borderRadius: 10,
         overflow: "hidden",
-        border: active ? "1px solid #3b82f6" : "1px solid #334155",
+        border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
         background: active
-            ? "linear-gradient(180deg, #1d4ed8 0%, #1e40af 100%)"
-            : "linear-gradient(180deg, #1f2937 0%, #111827 100%)",
+            ? "linear-gradient(180deg, var(--pg-primary-soft) 0%, var(--pg-primary) 100%)"
+            : "var(--pg-surface-gradient)",
         minWidth: 200,
-        boxShadow: active ? "0 12px 24px rgba(37, 99, 235, 0.35)" : "none",
+        boxShadow: active ? "0 12px 24px rgba(var(--pg-primary-rgb), 0.35)" : "none",
     };
 }
 
@@ -1715,7 +1724,7 @@ function draftTabButtonStyle(active: boolean): React.CSSProperties {
     return {
         border: "none",
         background: "transparent",
-        color: active ? "#ffffff" : "#e2e8f0",
+        color: active ? "var(--pg-primary-ink)" : "var(--pg-text-dim)",
         padding: "8px 12px",
         fontWeight: 600,
         textAlign: "left",
@@ -1733,9 +1742,9 @@ function draftTabCloseButtonStyle(): React.CSSProperties {
         width: 34,
         height: 34,
         border: "none",
-        borderLeft: "1px solid rgba(148, 163, 184, 0.4)",
+        borderLeft: "1px solid rgba(var(--pg-primary-rgb), 0.3)",
         background: "transparent",
-        color: "#cbd5e1",
+        color: "var(--pg-text-dim)",
         padding: 0,
         borderRadius: 0,
         boxShadow: "none",
@@ -1750,9 +1759,9 @@ function editorPanelStyle(height: number | string, minHeight = 220): React.CSSPr
         minHeight,
         borderRadius: 12,
         overflow: "hidden",
-        border: "1px solid #1e293b",
-        boxShadow: "inset 0 0 0 1px #0f172a, 0 14px 28px rgba(2, 6, 23, 0.35)",
+        border: "1px solid var(--pg-border)",
+        boxShadow: "inset 0 0 0 1px var(--pg-surface-0), 0 14px 28px rgba(2, 6, 23, 0.35)",
         background:
-            "linear-gradient(180deg, rgba(15,23,42,0.96) 0%, rgba(11,18,32,0.98) 100%)",
+            "linear-gradient(180deg, rgba(var(--pg-primary-rgb), 0.12) 0%, var(--pg-editor-deep) 100%)",
     };
 }

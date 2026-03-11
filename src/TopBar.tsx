@@ -64,8 +64,9 @@ export default function TopBar({
                 gap: 12,
                 paddingLeft: isMacOS ? 88 : 12, // space for macOS traffic lights
                 paddingRight: 12,
-                borderBottom: "1px solid #1f2937",
-                background: "linear-gradient(180deg, rgba(15,23,42,0.98) 0%, rgba(2,6,23,0.98) 100%)",
+                borderBottom: "1px solid var(--pg-border)",
+                background:
+                    "linear-gradient(180deg, rgba(var(--pg-primary-rgb), 0.16) 0%, rgba(2,6,23,0.98) 45%, rgba(2,6,23,0.98) 100%)",
                 userSelect: "none",
                 flexShrink: 0,
             }}
@@ -158,7 +159,7 @@ export default function TopBar({
                         </button>
                         <button
                             onClick={() => void runWindowAction("close")}
-                            style={windowButtonStyle("#fca5a5", "#7f1d1d")}
+                            style={windowButtonStyle("var(--pg-danger)", "var(--pg-danger-dark)")}
                         >
                             ✕
                         </button>
@@ -174,9 +175,9 @@ function buttonStyle(disabled: boolean): React.CSSProperties {
         height: 34,
         padding: "0 12px",
         borderRadius: 10,
-        border: "1px solid #334155",
-        background: disabled ? "#1f2937" : "linear-gradient(180deg, #1f2937 0%, #111827 100%)",
-        color: disabled ? "#6b7280" : "#f8fafc",
+        border: "1px solid var(--pg-border)",
+        background: disabled ? "var(--pg-surface-2)" : "var(--pg-surface-gradient)",
+        color: disabled ? "var(--pg-disabled)" : "var(--pg-text)",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
         boxShadow: disabled ? "none" : "0 8px 20px rgba(2, 6, 23, 0.2)",
@@ -188,25 +189,27 @@ function primaryButtonStyle(disabled: boolean): React.CSSProperties {
         height: 34,
         padding: "0 14px",
         borderRadius: 10,
-        border: "1px solid #2563eb",
-        background: disabled ? "#1e3a8a" : "linear-gradient(180deg, #3b82f6 0%, #2563eb 100%)",
-        color: "#ffffff",
+        border: "1px solid var(--pg-primary-strong)",
+        background: disabled
+            ? "linear-gradient(180deg, rgba(var(--pg-primary-rgb), 0.5) 0%, rgba(var(--pg-primary-rgb), 0.35) 100%)"
+            : "linear-gradient(180deg, var(--pg-primary-soft) 0%, var(--pg-primary) 100%)",
+        color: "var(--pg-primary-ink)",
         cursor: disabled ? "not-allowed" : "pointer",
-        fontWeight: 600,
-        boxShadow: disabled ? "none" : "0 10px 24px rgba(37, 99, 235, 0.35)",
+        fontWeight: 700,
+        boxShadow: disabled ? "none" : "0 10px 24px rgba(var(--pg-primary-rgb), 0.35)",
     };
 }
 
 function windowButtonStyle(
-    color = "#f4f4f5",
-    borderColor = "#3a3a3c"
+    color = "var(--pg-text)",
+    borderColor = "var(--pg-border)"
 ): React.CSSProperties {
     return {
         width: 32,
         height: 30,
         borderRadius: 8,
         border: `1px solid ${borderColor}`,
-        background: "linear-gradient(180deg, #1f2937 0%, #111827 100%)",
+        background: "var(--pg-surface-gradient)",
         color,
         cursor: "pointer",
         lineHeight: 1,
@@ -220,9 +223,9 @@ function topbarSelectStyle(): React.CSSProperties {
         height: 34,
         minWidth: 180,
         borderRadius: 10,
-        border: "1px solid #334155",
-        background: "#0f172a",
-        color: "#f8fafc",
+        border: "1px solid var(--pg-border)",
+        background: "var(--pg-surface-0)",
+        color: "var(--pg-text)",
         padding: "0 10px",
         outline: "none",
     };

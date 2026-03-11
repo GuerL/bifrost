@@ -335,10 +335,10 @@ export default function VariableInput({
                 display: "flex",
                 position: "relative",
                 borderRadius: 10,
-                border: isFocused ? "1px solid #38bdf8" : "1px solid #334155",
+                border: isFocused ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
                 background: disabled ? "rgba(15, 23, 42, 0.55)" : "rgba(15, 23, 42, 0.82)",
                 boxShadow: isFocused
-                    ? "0 0 0 3px rgba(56, 189, 248, 0.2), inset 0 1px 0 rgba(255,255,255,0.02)"
+                    ? "0 0 0 3px rgba(var(--pg-primary-rgb), 0.25), inset 0 1px 0 rgba(255,255,255,0.02)"
                     : "inset 0 1px 0 rgba(255,255,255,0.03)",
                 transition: "border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease",
                 ...containerStyle,
@@ -376,10 +376,10 @@ export default function VariableInput({
                                 style={{
                                     background: missing
                                         ? "rgba(239, 68, 68, 0.22)"
-                                        : "rgba(16, 185, 129, 0.22)",
+                                        : "rgba(var(--pg-primary-rgb), 0.22)",
                                     borderBottom: missing
                                         ? "1px solid rgba(248, 113, 113, 0.84)"
-                                        : "1px solid rgba(16, 185, 129, 0.82)",
+                                        : "1px solid rgba(var(--pg-primary-rgb), 0.82)",
                                     borderRadius: 4,
                                 }}
                             >
@@ -427,9 +427,9 @@ export default function VariableInput({
                     border: "none",
                     outline: "none",
                     boxShadow: "none",
-                    color: disabled ? "#94a3b8" : "#f8fafc",
-                    WebkitTextFillColor: disabled ? "#94a3b8" : "#f8fafc",
-                    caretColor: "#f8fafc",
+                    color: disabled ? "var(--pg-text-muted)" : "var(--pg-text)",
+                    WebkitTextFillColor: disabled ? "var(--pg-text-muted)" : "var(--pg-text)",
+                    caretColor: "var(--pg-primary)",
                     background: "transparent",
                     ...style,
                 }}
@@ -445,7 +445,7 @@ export default function VariableInput({
                         right: 0,
                         maxHeight: 220,
                         overflowY: "auto",
-                        border: "1px solid #334155",
+                        border: "1px solid var(--pg-border)",
                         borderRadius: 10,
                         background: "rgba(2, 6, 23, 0.96)",
                         boxShadow: "0 16px 24px rgba(2, 6, 23, 0.45)",
@@ -467,8 +467,8 @@ export default function VariableInput({
                                     border: "none",
                                     borderRadius: 0,
                                     padding: "8px 10px",
-                                    background: active ? "rgba(30, 41, 59, 0.9)" : "transparent",
-                                    color: active ? "#f8fafc" : "#dbeafe",
+                                    background: active ? "rgba(var(--pg-primary-rgb), 0.2)" : "transparent",
+                                    color: active ? "var(--pg-text)" : "var(--pg-text-dim)",
                                     boxShadow: "none",
                                     fontSize: 13,
                                 }}
@@ -492,9 +492,9 @@ export default function VariableInput({
                         maxWidth: 380,
                         padding: "8px 10px",
                         borderRadius: 8,
-                        border: "1px solid #334155",
+                        border: "1px solid var(--pg-border)",
                         background: "rgba(2, 6, 23, 0.96)",
-                        color: "#e2e8f0",
+                        color: "var(--pg-text-dim)",
                         fontSize: 12,
                         lineHeight: 1.45,
                         pointerEvents: "none",
