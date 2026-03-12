@@ -26,8 +26,11 @@ type TopBarProps = {
     onSaveDraft: () => void;
     onNewRequest: () => void;
     onOpenRawJson: () => void;
+    onOpenCollectionRunner: () => void;
     canSaveDraft: boolean;
     hasDraft: boolean;
+    canOpenCollectionRunner: boolean;
+    isCollectionRunning: boolean;
 };
 
 export default function TopBar({
@@ -38,12 +41,15 @@ export default function TopBar({
                                    onSelectCollection,
                                    onSelectEnvironment,
                                    onManageCollections,
-                                   onManageEnvironments,
-                                   onSaveDraft,
-                                   onNewRequest,
-                                   onOpenRawJson,
-                                   canSaveDraft,
-                                   hasDraft,
+    onManageEnvironments,
+    onSaveDraft,
+    onNewRequest,
+    onOpenRawJson,
+    onOpenCollectionRunner,
+    canSaveDraft,
+    hasDraft,
+    canOpenCollectionRunner,
+    isCollectionRunning,
                                }: TopBarProps) {
     async function runWindowAction(action: "minimize" | "toggleMaximize" | "close") {
         try {
@@ -138,6 +144,17 @@ export default function TopBar({
                     style={buttonStyle(!hasDraft)}
                 >
                     Raw JSON
+                </button>
+                <button
+                    onClick={onOpenCollectionRunner}
+                    disabled={!canOpenCollectionRunner}
+                    style={
+                        isCollectionRunning
+                            ? primaryButtonStyle(false)
+                            : buttonStyle(!canOpenCollectionRunner)
+                    }
+                >
+                    {isCollectionRunning ? "Runner • Running" : "Runner"}
                 </button>
                 <button
                     onClick={onManageCollections}

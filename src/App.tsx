@@ -17,6 +17,10 @@ import RequestBodyEditor from "./components/RequestBodyEditor.tsx";
 import CollectionsModal from "./components/CollectionsModal.tsx";
 import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
 import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.tsx";
+import CollectionRunnerModal, {
+    type CollectionRunEntry,
+    type CollectionRunSummary,
+} from "./components/CollectionRunnerModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
 import {
     buttonStyle,
@@ -68,9 +72,51 @@ type PersistedResponseEntry = {
 
 type PersistedResponsesCollection = Record<string, PersistedResponseEntry>;
 type PersistedResponsesState = Record<string, PersistedResponsesCollection>;
+type CollectionRunByRequestId = Record<string, CollectionRunEntry>;
 
 const OPEN_TABS_STORAGE_KEY = "postguerl:open-tabs:v1";
 const RESPONSES_STORAGE_KEY = "postguerl:last-responses:v1";
+
+function normalizedRequestOrder(collection: CollectionLoaded): string[] {
+    const existingIds = new Set(collection.requests.map((request) => request.id));
+    const normalized: string[] = [];
+    const used = new Set<string>();
+
+    for (const requestId of collection.meta.request_order) {
+        if (!existingIds.has(requestId) || used.has(requestId)) continue;
+        normalized.push(requestId);
+        used.add(requestId);
+    }
+
+    for (const request of collection.requests) {
+        if (used.has(request.id)) continue;
+        normalized.push(request.id);
+        used.add(request.id);
+    }
+
+    return normalized;
+}
+
+function requestsInOrder(collection: CollectionLoaded): Request[] {
+    const requestsById = new Map(collection.requests.map((request) => [request.id, request]));
+    return normalizedRequestOrder(collection)
+        .map((requestId) => requestsById.get(requestId))
+        .filter((request): request is Request => !!request);
+}
+
+function parseHttpError(error: unknown): { kind: string; message: string; durationMs?: number } {
+    const source = error as {
+        kind?: unknown;
+        message?: unknown;
+        duration_ms?: unknown;
+    };
+
+    return {
+        kind: typeof source?.kind === "string" ? source.kind : "unknown",
+        message: typeof source?.message === "string" ? source.message : String(error),
+        durationMs: typeof source?.duration_ms === "number" ? source.duration_ms : undefined,
+    };
+}
 
 function readPersistedTabsState(): PersistedTabsState {
     if (typeof window === "undefined") return {};
@@ -197,6 +243,10 @@ export default function App() {
     const [openRequestIds, setOpenRequestIds] = useState<string[]>([]);
     const [resp, setResp] = useState<HttpResponseDto | null>(null);
     const [responsesByRequestId, setResponsesByRequestId] = useState<PersistedResponsesCollection>({});
+    const [collectionRunByRequestId, setCollectionRunByRequestId] = useState<CollectionRunByRequestId>({});
+    const [collectionRunSummary, setCollectionRunSummary] = useState<CollectionRunSummary | null>(null);
+    const [collectionRunStopOnFailure, setCollectionRunStopOnFailure] = useState(true);
+    const [collectionRunPending, setCollectionRunPending] = useState(false);
     const [responseTab, setResponseTab] = useState<ResponseTabId>("body");
     const [draftsById, setDraftsById] = useState<Record<string, Request>>({});
     const [pending, setPending] = useState(false);
@@ -223,11 +273,14 @@ export default function App() {
     const [collectionCreateName, setCollectionCreateName] = useState("");
     const [collectionBusy, setCollectionBusy] = useState(false);
     const [collectionError, setCollectionError] = useState("");
+    const [runnerModalOpen, setRunnerModalOpen] = useState(false);
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
     const hydratedTabsCollectionIdRef = useRef<string | null>(null);
+    const collectionRunCancelRef = useRef(false);
+    const collectionRunActiveRequestIdRef = useRef<string | null>(null);
 
     async function clearCurrentCollectionView() {
         setCurrent(null);
@@ -239,6 +292,12 @@ export default function App() {
         setDraggedOpenTabRequestId(null);
         setOpenTabDropIndicator(null);
         setResponsesByRequestId({});
+        setCollectionRunByRequestId({});
+        setCollectionRunSummary(null);
+        setCollectionRunPending(false);
+        collectionRunCancelRef.current = false;
+        collectionRunActiveRequestIdRef.current = null;
+        setRunnerModalOpen(false);
         setDraftsById({});
         setCloseDraftModal(null);
         setCloseDraftBusy(false);
@@ -289,6 +348,11 @@ export default function App() {
         return draftsById[selectedRequestId] ?? selectedSavedRequest;
     }, [draftsById, selectedRequestId, selectedSavedRequest]);
 
+    const orderedRequests = useMemo(() => {
+        if (!current) return [];
+        return requestsInOrder(current);
+    }, [current]);
+
     const openTabs = useMemo(() => {
         if (!current) return [];
 
@@ -312,10 +376,14 @@ export default function App() {
 
     const selectedResponseStatusText = useMemo(() => {
         if (!selectedRequestId) return status || "Idle";
+        const runnerStatus = collectionRunByRequestId[selectedRequestId]?.statusText;
+        if (collectionRunPending && runnerStatus) {
+            return runnerStatus;
+        }
         if (pending) return "Sending...";
         const persistedStatus = responsesByRequestId[selectedRequestId]?.statusText;
-        return persistedStatus ?? (status || "No request sent yet.");
-    }, [selectedRequestId, pending, responsesByRequestId, status]);
+        return runnerStatus ?? persistedStatus ?? (status || "No request sent yet.");
+    }, [selectedRequestId, pending, responsesByRequestId, status, collectionRunByRequestId, collectionRunPending]);
 
     const activeEnvironment = useMemo(
         () => environments.find((env) => env.id === activeEnvironmentId) ?? null,
@@ -474,6 +542,21 @@ export default function App() {
 
     useEffect(() => {
         if (!current) return;
+        const validRequestIds = new Set(current.requests.map((request) => request.id));
+        setCollectionRunByRequestId((previous) => {
+            const next = Object.fromEntries(
+                Object.entries(previous).filter(([requestId]) => validRequestIds.has(requestId))
+            ) as CollectionRunByRequestId;
+
+            if (Object.keys(next).length === Object.keys(previous).length) {
+                return previous;
+            }
+            return next;
+        });
+    }, [current?.requests]);
+
+    useEffect(() => {
+        if (!current) return;
         const persisted = readPersistedResponsesState();
         persisted[current.meta.id] = responsesByRequestId;
         writePersistedResponsesState(persisted);
@@ -525,6 +608,14 @@ export default function App() {
         setDropIndicator(null);
         setDraggedOpenTabRequestId(null);
         setOpenTabDropIndicator(null);
+    }, [current?.meta.id]);
+
+    useEffect(() => {
+        collectionRunCancelRef.current = false;
+        collectionRunActiveRequestIdRef.current = null;
+        setCollectionRunPending(false);
+        setCollectionRunByRequestId({});
+        setCollectionRunSummary(null);
     }, [current?.meta.id]);
 
     useEffect(() => {
@@ -637,6 +728,7 @@ export default function App() {
                 setCollectionError("");
                 setDeleteCollectionModal(null);
             }
+            setRunnerModalOpen(false);
             if (!closeDraftBusy) {
                 setCloseDraftModal(null);
             }
@@ -838,6 +930,7 @@ export default function App() {
     }, [isDirty, saveDraft]);
 
     async function sendSelected() {
+        if (collectionRunPending) return;
         if (!selectedRequestId) return;
 
         const req =
@@ -869,10 +962,8 @@ export default function App() {
                 },
             }));
         } catch (e: any) {
-            const kind = e?.kind ?? "unknown";
-            const msg = e?.message ?? String(e);
-            const d = e?.duration_ms;
-            const statusText = `❌ ${kind}: ${msg}${d != null ? ` (${d}ms)` : ""}`;
+            const { kind, message, durationMs } = parseHttpError(e);
+            const statusText = `❌ ${kind}: ${message}${durationMs != null ? ` (${durationMs}ms)` : ""}`;
             setStatus(statusText);
             setResponsesByRequestId((previous) => ({
                 ...previous,
@@ -889,6 +980,7 @@ export default function App() {
     }
 
     async function cancel() {
+        if (collectionRunPending) return;
         if (!selectedRequestId) return;
 
         try {
@@ -911,6 +1003,214 @@ export default function App() {
         }
     }
 
+    async function runCollection() {
+        if (!current || collectionRunPending) return;
+
+        const ordered = requestsInOrder(current);
+        if (ordered.length === 0) {
+            setStatus("No request to run in this collection.");
+            return;
+        }
+
+        const startedAt = new Date().toISOString();
+        const runEntries = Object.fromEntries(
+            ordered.map((request) => [
+                request.id,
+                {
+                    state: "queued",
+                    statusText: "Queued",
+                } satisfies CollectionRunEntry,
+            ])
+        ) as CollectionRunByRequestId;
+
+        let success = 0;
+        let failed = 0;
+        let cancelled = 0;
+        let skipped = 0;
+        let cancelledByUser = false;
+
+        const applySummary = (endedAt: string | null) => {
+            setCollectionRunSummary({
+                startedAt,
+                endedAt,
+                total: ordered.length,
+                success,
+                failed,
+                cancelled,
+                skipped,
+                stopOnFailure: collectionRunStopOnFailure,
+                cancelledByUser,
+            });
+        };
+
+        setCollectionRunPending(true);
+        setPending(false);
+        setCollectionRunByRequestId(runEntries);
+        applySummary(null);
+        setStatus(`Running collection (${ordered.length} requests)...`);
+        collectionRunCancelRef.current = false;
+        collectionRunActiveRequestIdRef.current = null;
+
+        for (let index = 0; index < ordered.length; index += 1) {
+            const request = ordered[index];
+            const requestId = request.id;
+            const requestToSend = draftsById[requestId] ?? request;
+
+            if (collectionRunCancelRef.current) {
+                cancelledByUser = true;
+                const remaining = ordered.slice(index);
+                skipped += remaining.length;
+                setCollectionRunByRequestId((previous) => {
+                    const next = { ...previous };
+                    for (const remainingRequest of remaining) {
+                        next[remainingRequest.id] = {
+                            state: "skipped",
+                            statusText: "Skipped (run cancelled)",
+                        };
+                    }
+                    return next;
+                });
+                applySummary(null);
+                break;
+            }
+
+            setCollectionRunByRequestId((previous) => ({
+                ...previous,
+                [requestId]: {
+                    state: "running",
+                    statusText: "Running...",
+                },
+            }));
+            collectionRunActiveRequestIdRef.current = requestId;
+
+            try {
+                const response = await invoke<HttpResponseDto>("send_request", {
+                    requestId,
+                    req: requestToSend,
+                    environmentId: activeEnvironmentId,
+                });
+
+                const statusText = `✅ ${response.status} in ${response.duration_ms}ms`;
+                success += 1;
+                setCollectionRunByRequestId((previous) => ({
+                    ...previous,
+                    [requestId]: {
+                        state: "success",
+                        statusText,
+                        durationMs: response.duration_ms,
+                        statusCode: response.status,
+                    },
+                }));
+                setResponsesByRequestId((previous) => ({
+                    ...previous,
+                    [requestId]: {
+                        response,
+                        statusText,
+                        updatedAt: new Date().toISOString(),
+                    },
+                }));
+            } catch (error) {
+                const { kind, message, durationMs } = parseHttpError(error);
+                const failedStatusText =
+                    kind === "cancelled"
+                        ? `⛔ ${message}${durationMs != null ? ` (${durationMs}ms)` : ""}`
+                        : `❌ ${kind}: ${message}${durationMs != null ? ` (${durationMs}ms)` : ""}`;
+
+                const requestState =
+                    kind === "cancelled" || collectionRunCancelRef.current ? "cancelled" : "failed";
+
+                if (requestState === "cancelled") {
+                    cancelled += 1;
+                    cancelledByUser = true;
+                } else {
+                    failed += 1;
+                }
+
+                setCollectionRunByRequestId((previous) => ({
+                    ...previous,
+                    [requestId]: {
+                        state: requestState,
+                        statusText: failedStatusText,
+                        durationMs,
+                    },
+                }));
+                setResponsesByRequestId((previous) => ({
+                    ...previous,
+                    [requestId]: {
+                        response: previous[requestId]?.response ?? null,
+                        statusText: failedStatusText,
+                        updatedAt: new Date().toISOString(),
+                    },
+                }));
+
+                const shouldStop = requestState === "cancelled" || collectionRunStopOnFailure;
+                if (shouldStop) {
+                    const remaining = ordered.slice(index + 1);
+                    if (remaining.length > 0) {
+                        skipped += remaining.length;
+                        setCollectionRunByRequestId((previous) => {
+                            const next = { ...previous };
+                            for (const remainingRequest of remaining) {
+                                next[remainingRequest.id] = {
+                                    state: "skipped",
+                                    statusText:
+                                        requestState === "cancelled"
+                                            ? "Skipped (run cancelled)"
+                                            : "Skipped (stopped on failure)",
+                                };
+                            }
+                            return next;
+                        });
+                    }
+                    applySummary(null);
+                    break;
+                }
+            } finally {
+                collectionRunActiveRequestIdRef.current = null;
+            }
+
+            applySummary(null);
+        }
+
+        const endedAt = new Date().toISOString();
+        applySummary(endedAt);
+        collectionRunActiveRequestIdRef.current = null;
+        collectionRunCancelRef.current = false;
+        setCollectionRunPending(false);
+
+        if (cancelledByUser) {
+            setStatus(
+                `⛔ Run cancelled: ${success} success, ${failed} failed, ${cancelled} cancelled, ${skipped} skipped`
+            );
+            return;
+        }
+
+        if (failed > 0) {
+            setStatus(`❌ Run complete: ${success} success, ${failed} failed, ${skipped} skipped`);
+            return;
+        }
+
+        setStatus(`✅ Run complete: ${success}/${ordered.length} success`);
+    }
+
+    async function cancelCollectionRun() {
+        if (!collectionRunPending) return;
+        collectionRunCancelRef.current = true;
+
+        const activeRequestId = collectionRunActiveRequestIdRef.current;
+        if (!activeRequestId) {
+            setStatus("⛔ Cancelling collection run...");
+            return;
+        }
+
+        try {
+            await invoke("cancel_request", { requestId: activeRequestId });
+            setStatus("⛔ Cancelling collection run...");
+        } catch (error) {
+            setStatus(`❌ Collection cancel failed: ${String(error)}`);
+        }
+    }
+
     function setSelection(r: Request) {
         setSelectedRequestId(r.id);
     }
@@ -923,7 +1223,7 @@ export default function App() {
         if (!current) return;
         if (targetRequestId === sourceRequestId) return;
 
-        const currentOrder = current.requests.map((request) => request.id);
+        const currentOrder = normalizedRequestOrder(current);
         if (!currentOrder.includes(targetRequestId) || !currentOrder.includes(sourceRequestId)) {
             return;
         }
@@ -1432,8 +1732,11 @@ export default function App() {
                 onSaveDraft={saveDraft}
                 onNewRequest={onNewRequest}
                 onOpenRawJson={() => setTab("json")}
+                onOpenCollectionRunner={() => setRunnerModalOpen(true)}
                 canSaveDraft={!!current && !!draft && isDirty}
                 hasDraft={!!draft}
+                canOpenCollectionRunner={!!current}
+                isCollectionRunning={collectionRunPending}
             />
 
             <div
@@ -1519,7 +1822,7 @@ export default function App() {
                             }}
                         >
                             {current &&
-                                current.requests.map((r) => {
+                                orderedRequests.map((r) => {
                                     const hasLocalDraft = !!draftsById[r.id];
                                     const showDropBefore =
                                         dropIndicator?.requestId === r.id &&
@@ -1736,16 +2039,16 @@ export default function App() {
 
                                 <button
                                     onClick={sendSelected}
-                                    disabled={!selectedRequestId || pending}
-                                    style={primaryButtonStyle(!selectedRequestId || pending)}
+                                    disabled={!selectedRequestId || pending || collectionRunPending}
+                                    style={primaryButtonStyle(!selectedRequestId || pending || collectionRunPending)}
                                 >
                                     Send
                                 </button>
 
                                 <button
                                     onClick={cancel}
-                                    disabled={!selectedRequestId || !pending}
-                                    style={buttonStyle(!selectedRequestId || !pending)}
+                                    disabled={!selectedRequestId || !pending || collectionRunPending}
+                                    style={buttonStyle(!selectedRequestId || !pending || collectionRunPending)}
                                 >
                                     Cancel
                                 </button>
@@ -2055,6 +2358,20 @@ export default function App() {
                     </div>
                 </div>
             )}
+
+            <CollectionRunnerModal
+                open={runnerModalOpen}
+                onClose={() => setRunnerModalOpen(false)}
+                collectionName={current?.meta.name ?? null}
+                orderedRequests={orderedRequests}
+                runByRequestId={collectionRunByRequestId}
+                runSummary={collectionRunSummary}
+                isRunning={collectionRunPending}
+                stopOnFailure={collectionRunStopOnFailure}
+                onStopOnFailureChange={setCollectionRunStopOnFailure}
+                onRun={() => void runCollection()}
+                onCancel={() => void cancelCollectionRun()}
+            />
 
             <CollectionsModal
                 open={collectionsModalOpen}
