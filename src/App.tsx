@@ -209,6 +209,8 @@ export default function App() {
     const [renameBusy, setRenameBusy] = useState(false);
     const [draggedRequestId, setDraggedRequestId] = useState<string | null>(null);
     const [dropIndicator, setDropIndicator] = useState<RequestDropIndicator | null>(null);
+    const [draggedOpenTabRequestId, setDraggedOpenTabRequestId] = useState<string | null>(null);
+    const [openTabDropIndicator, setOpenTabDropIndicator] = useState<RequestDropIndicator | null>(null);
     const [environmentsModalOpen, setEnvironmentsModalOpen] = useState(false);
     const [envSelectedId, setEnvSelectedId] = useState<string | null>(null);
     const [envDraftName, setEnvDraftName] = useState("");
@@ -234,6 +236,8 @@ export default function App() {
         setResp(null);
         setDraggedRequestId(null);
         setDropIndicator(null);
+        setDraggedOpenTabRequestId(null);
+        setOpenTabDropIndicator(null);
         setResponsesByRequestId({});
         setDraftsById({});
         setCloseDraftModal(null);
@@ -519,6 +523,8 @@ export default function App() {
     useEffect(() => {
         setDraggedRequestId(null);
         setDropIndicator(null);
+        setDraggedOpenTabRequestId(null);
+        setOpenTabDropIndicator(null);
     }, [current?.meta.id]);
 
     useEffect(() => {
@@ -616,6 +622,8 @@ export default function App() {
             setContextMenu(null);
             setDraggedRequestId(null);
             setDropIndicator(null);
+            setDraggedOpenTabRequestId(null);
+            setOpenTabDropIndicator(null);
             if (!renameBusy) {
                 setRenameTargetId(null);
                 setRenameError("");
@@ -639,7 +647,7 @@ export default function App() {
     }, [renameBusy, envBusy, collectionBusy, closeDraftBusy]);
 
     useEffect(() => {
-        if (!draggedRequestId) return;
+        if (!draggedRequestId && !draggedOpenTabRequestId) return;
 
         const previousCursor = document.body.style.cursor;
         const previousUserSelect = document.body.style.userSelect;
@@ -649,6 +657,8 @@ export default function App() {
         function onMouseUp() {
             setDraggedRequestId(null);
             setDropIndicator(null);
+            setDraggedOpenTabRequestId(null);
+            setOpenTabDropIndicator(null);
         }
 
         window.addEventListener("mouseup", onMouseUp);
@@ -657,7 +667,7 @@ export default function App() {
             document.body.style.cursor = previousCursor;
             document.body.style.userSelect = previousUserSelect;
         };
-    }, [draggedRequestId]);
+    }, [draggedRequestId, draggedOpenTabRequestId]);
 
     const updateDraft = useCallback(
         (patch: Partial<Request>) => {
@@ -764,13 +774,17 @@ export default function App() {
 
             const remaining = openRequestIds.filter((id) => id !== requestId);
             setOpenRequestIds(remaining);
+            if (draggedOpenTabRequestId === requestId) {
+                setDraggedOpenTabRequestId(null);
+                setOpenTabDropIndicator(null);
+            }
 
             if (selectedRequestId === requestId) {
                 const nextSelection = remaining[Math.min(index, remaining.length - 1)] ?? null;
                 setSelectedRequestId(nextSelection);
             }
         },
-        [openRequestIds, selectedRequestId]
+        [openRequestIds, selectedRequestId, draggedOpenTabRequestId]
     );
 
     function requestCloseTab(requestId: string) {
@@ -974,12 +988,48 @@ export default function App() {
         setDropIndicator(null);
     }
 
+    function beginOpenTabDrag(
+        e: React.MouseEvent<HTMLElement>,
+        requestId: string
+    ) {
+        if (e.button !== 0) return;
+        setDraggedOpenTabRequestId(requestId);
+        setOpenTabDropIndicator(null);
+    }
+
+    function reorderOpenTabs(
+        sourceRequestId: string,
+        targetRequestId: string,
+        position: "before" | "after"
+    ) {
+        if (sourceRequestId === targetRequestId) return;
+
+        setOpenRequestIds((previous) => {
+            if (!previous.includes(sourceRequestId) || !previous.includes(targetRequestId)) {
+                return previous;
+            }
+
+            const withoutSource = previous.filter((id) => id !== sourceRequestId);
+            const targetIndex = withoutSource.indexOf(targetRequestId);
+            if (targetIndex === -1) return previous;
+
+            const insertIndex = position === "before" ? targetIndex : targetIndex + 1;
+            const next = [...withoutSource];
+            next.splice(insertIndex, 0, sourceRequestId);
+            return next;
+        });
+    }
+
     function onDeleteRequest(requestId: string) {
         if (!current) return;
 
         if (draggedRequestId === requestId) {
             setDraggedRequestId(null);
             setDropIndicator(null);
+        }
+        if (draggedOpenTabRequestId === requestId) {
+            setDraggedOpenTabRequestId(null);
+            setOpenTabDropIndicator(null);
         }
 
         setDraftsById((prev) => {
@@ -1629,18 +1679,87 @@ export default function App() {
                                 flexShrink: 0,
                             }}
                         >
+                            <div
+                                onMouseMove={() => {
+                                    const firstTabId = openTabs[0]?.requestId;
+                                    if (!firstTabId) return;
+                                    if (!draggedOpenTabRequestId || draggedOpenTabRequestId === firstTabId) return;
+                                    setOpenTabDropIndicator({ requestId: firstTabId, position: "before" });
+                                }}
+                                onMouseUp={() => {
+                                    const firstTabId = openTabs[0]?.requestId;
+                                    if (!firstTabId) return;
+                                    if (!draggedOpenTabRequestId || draggedOpenTabRequestId === firstTabId) return;
+                                    setOpenTabDropIndicator(null);
+                                    setDraggedOpenTabRequestId(null);
+                                    reorderOpenTabs(draggedOpenTabRequestId, firstTabId, "before");
+                                }}
+                                style={tabEdgeDropStyle(
+                                    !!openTabs[0] &&
+                                        openTabDropIndicator?.requestId === openTabs[0].requestId &&
+                                        openTabDropIndicator.position === "before"
+                                )}
+                            >
+                                {!!openTabs[0] &&
+                                    openTabDropIndicator?.requestId === openTabs[0].requestId &&
+                                    openTabDropIndicator.position === "before" && (
+                                        <span style={tabEdgeDropLabelStyle()}>Drop first</span>
+                                    )}
+                            </div>
+
                             {openTabs.map((openTab) => {
                                 const active = openTab.requestId === selectedRequestId;
+                                const showDropBefore =
+                                    openTabDropIndicator?.requestId === openTab.requestId &&
+                                    openTabDropIndicator.position === "before";
+                                const showDropAfter =
+                                    openTabDropIndicator?.requestId === openTab.requestId &&
+                                    openTabDropIndicator.position === "after";
                                 return (
                                     <div
                                         key={openTab.requestId}
-                                        style={draftTabContainerStyle(active)}
+                                        onMouseMove={(e) => {
+                                            if (!draggedOpenTabRequestId || draggedOpenTabRequestId === openTab.requestId) {
+                                                return;
+                                            }
+                                            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                                            const position =
+                                                e.clientX < rect.left + rect.width / 2 ? "before" : "after";
+                                            setOpenTabDropIndicator((previous) =>
+                                                previous?.requestId === openTab.requestId &&
+                                                previous.position === position
+                                                    ? previous
+                                                    : { requestId: openTab.requestId, position }
+                                            );
+                                        }}
+                                        onMouseUp={(e) => {
+                                            if (!draggedOpenTabRequestId || draggedOpenTabRequestId === openTab.requestId) {
+                                                return;
+                                            }
+                                            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                                            const position =
+                                                e.clientX < rect.left + rect.width / 2 ? "before" : "after";
+                                            setOpenTabDropIndicator(null);
+                                            setDraggedOpenTabRequestId(null);
+                                            reorderOpenTabs(draggedOpenTabRequestId, openTab.requestId, position);
+                                        }}
+                                        style={openTabDropWrapStyle(showDropBefore, showDropAfter)}
                                     >
+                                        {showDropBefore && <div style={openTabDropMarkerStyle("before")} />}
+                                        <div style={draftTabContainerStyle(active)}>
                                         <button
+                                            onMouseDown={(e) => beginOpenTabDrag(e, openTab.requestId)}
                                             onClick={() => {
                                                 setSelectedRequestId(openTab.requestId);
                                             }}
-                                            style={draftTabButtonStyle(active)}
+                                            style={{
+                                                ...draftTabButtonStyle(active),
+                                                cursor:
+                                                    draggedOpenTabRequestId === openTab.requestId
+                                                        ? "grabbing"
+                                                        : "grab",
+                                                userSelect: "none",
+                                            }}
                                         >
                                             {openTab.method.toUpperCase()} {openTab.name}
                                             {openTab.hasLocalDraft ? " ●" : ""}
@@ -1654,9 +1773,39 @@ export default function App() {
                                         >
                                             ×
                                         </button>
+                                        </div>
+                                        {showDropAfter && <div style={openTabDropMarkerStyle("after")} />}
                                     </div>
                                 );
                             })}
+
+                            <div
+                                onMouseMove={() => {
+                                    const lastTabId = openTabs[openTabs.length - 1]?.requestId;
+                                    if (!lastTabId) return;
+                                    if (!draggedOpenTabRequestId || draggedOpenTabRequestId === lastTabId) return;
+                                    setOpenTabDropIndicator({ requestId: lastTabId, position: "after" });
+                                }}
+                                onMouseUp={() => {
+                                    const lastTabId = openTabs[openTabs.length - 1]?.requestId;
+                                    if (!lastTabId) return;
+                                    if (!draggedOpenTabRequestId || draggedOpenTabRequestId === lastTabId) return;
+                                    setOpenTabDropIndicator(null);
+                                    setDraggedOpenTabRequestId(null);
+                                    reorderOpenTabs(draggedOpenTabRequestId, lastTabId, "after");
+                                }}
+                                style={tabEdgeDropStyle(
+                                    !!openTabs[openTabs.length - 1] &&
+                                        openTabDropIndicator?.requestId === openTabs[openTabs.length - 1].requestId &&
+                                        openTabDropIndicator.position === "after"
+                                )}
+                            >
+                                {!!openTabs[openTabs.length - 1] &&
+                                    openTabDropIndicator?.requestId === openTabs[openTabs.length - 1].requestId &&
+                                    openTabDropIndicator.position === "after" && (
+                                        <span style={tabEdgeDropLabelStyle()}>Drop last</span>
+                                    )}
+                            </div>
                         </div>
                     )}
 
@@ -2202,6 +2351,63 @@ function draftTabCloseButtonStyle(): React.CSSProperties {
         boxShadow: "none",
         lineHeight: 1,
         fontSize: 16,
+    };
+}
+
+function openTabDropWrapStyle(dropBefore: boolean, dropAfter: boolean): React.CSSProperties {
+    return {
+        position: "relative",
+        display: "flex",
+        alignItems: "stretch",
+        borderRadius: 10,
+        paddingLeft: 2,
+        paddingRight: 2,
+        background: dropBefore || dropAfter ? "rgba(var(--pg-primary-rgb), 0.08)" : "transparent",
+        flexShrink: 0,
+    };
+}
+
+function openTabDropMarkerStyle(position: "before" | "after"): React.CSSProperties {
+    return {
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        left: position === "before" ? -3 : undefined,
+        right: position === "after" ? -3 : undefined,
+        width: 3,
+        borderRadius: 999,
+        background: "var(--pg-primary)",
+        pointerEvents: "none",
+        boxShadow: "0 0 0 1px rgba(var(--pg-primary-rgb), 0.35)",
+    };
+}
+
+function tabEdgeDropStyle(active: boolean): React.CSSProperties {
+    return {
+        width: active ? 88 : 16,
+        height: 34,
+        borderRadius: 10,
+        border: active ? "1px dashed var(--pg-primary)" : "1px dashed transparent",
+        color: "var(--pg-primary-ink)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 12,
+        fontWeight: 700,
+        flexShrink: 0,
+        transition: "all 120ms ease-out",
+        background: active ? "rgba(var(--pg-primary-rgb), 0.08)" : "transparent",
+    };
+}
+
+function tabEdgeDropLabelStyle(): React.CSSProperties {
+    return {
+        background: "var(--pg-primary)",
+        color: "var(--pg-primary-ink)",
+        borderRadius: 999,
+        padding: "4px 10px",
+        lineHeight: 1.2,
+        whiteSpace: "nowrap",
     };
 }
 
