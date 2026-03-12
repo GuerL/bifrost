@@ -521,6 +521,15 @@ export default function App() {
     }, [selectedRequestId]);
 
     useEffect(() => {
+        if (!current || selectedRequestId) return;
+        const validIds = new Set(current.requests.map((request) => request.id));
+        const firstOpen = openRequestIds.find((requestId) => validIds.has(requestId)) ?? null;
+        if (firstOpen) {
+            setSelectedRequestId(firstOpen);
+        }
+    }, [current?.meta.id, current?.requests, selectedRequestId, openRequestIds]);
+
+    useEffect(() => {
         if (!collectionsModalOpen) return;
         if (collectionSelectedId && collections.some((entry) => entry.id === collectionSelectedId)) {
             return;
@@ -1391,48 +1400,50 @@ export default function App() {
                         overflow: "hidden",
                     }}
                 >
+                    {current && openTabs.length > 0 && (
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                overflowX: "auto",
+                                paddingBottom: 4,
+                                flexShrink: 0,
+                            }}
+                        >
+                            {openTabs.map((openTab) => {
+                                const active = openTab.requestId === selectedRequestId;
+                                return (
+                                    <div
+                                        key={openTab.requestId}
+                                        style={draftTabContainerStyle(active)}
+                                    >
+                                        <button
+                                            onClick={() => {
+                                                setSelectedRequestId(openTab.requestId);
+                                            }}
+                                            style={draftTabButtonStyle(active)}
+                                        >
+                                            {openTab.method.toUpperCase()} {openTab.name}
+                                            {openTab.hasLocalDraft ? " ●" : ""}
+                                        </button>
+                                        <button
+                                            onClick={() =>
+                                                requestCloseTab(openTab.requestId)
+                                            }
+                                            style={draftTabCloseButtonStyle()}
+                                            title="Close draft tab"
+                                        >
+                                            ×
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+
                     {current && draft && (
                         <>
-                            <div
-                                style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                    overflowX: "auto",
-                                    paddingBottom: 4,
-                                    flexShrink: 0,
-                                }}
-                            >
-                                {openTabs.map((openTab) => {
-                                    const active = openTab.requestId === selectedRequestId;
-                                    return (
-                                        <div
-                                            key={openTab.requestId}
-                                            style={draftTabContainerStyle(active)}
-                                        >
-                                            <button
-                                                onClick={() => {
-                                                    setSelectedRequestId(openTab.requestId);
-                                                }}
-                                                style={draftTabButtonStyle(active)}
-                                            >
-                                                {openTab.method.toUpperCase()} {openTab.name}
-                                                {openTab.hasLocalDraft ? " ●" : ""}
-                                            </button>
-                                            <button
-                                                onClick={() =>
-                                                    requestCloseTab(openTab.requestId)
-                                                }
-                                                style={draftTabCloseButtonStyle()}
-                                                title="Close draft tab"
-                                            >
-                                                ×
-                                            </button>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-
                             {/*<div*/}
                             {/*    style={{*/}
                             {/*        display: "flex",*/}
