@@ -1518,40 +1518,6 @@ export default function App() {
                                 paddingRight: 4,
                             }}
                         >
-                            {current && current.requests.length > 0 && (
-                                <div
-                                    onMouseMove={() => {
-                                        const firstRequestId = current.requests[0].id;
-                                        if (!draggedRequestId || draggedRequestId === firstRequestId) return;
-                                        setDropIndicator({
-                                            requestId: firstRequestId,
-                                            position: "before",
-                                        });
-                                    }}
-                                    onMouseUp={() => {
-                                        const firstRequestId = current.requests[0].id;
-                                        if (!draggedRequestId || draggedRequestId === firstRequestId) return;
-                                        setDropIndicator(null);
-                                        setDraggedRequestId(null);
-                                        void reorderRequestsInCollection(
-                                            draggedRequestId,
-                                            firstRequestId,
-                                            "before"
-                                        );
-                                    }}
-                                    style={listEdgeDropStyle(
-                                        !!current.requests[0] &&
-                                            dropIndicator?.requestId === current.requests[0].id &&
-                                            dropIndicator.position === "before"
-                                    )}
-                                >
-                                    {dropIndicator?.requestId === current.requests[0].id &&
-                                        dropIndicator.position === "before" && (
-                                            <span style={edgeDropLabelStyle()}>Drop at top</span>
-                                        )}
-                                </div>
-                            )}
-
                             {current &&
                                 current.requests.map((r) => {
                                     const hasLocalDraft = !!draftsById[r.id];
@@ -1620,38 +1586,6 @@ export default function App() {
                                     );
                                 })}
 
-                            {current && current.requests.length > 0 && (
-                                <div
-                                    onMouseMove={() => {
-                                        const lastRequestId = current.requests[current.requests.length - 1].id;
-                                        if (!draggedRequestId || draggedRequestId === lastRequestId) return;
-                                        setDropIndicator({
-                                            requestId: lastRequestId,
-                                            position: "after",
-                                        });
-                                    }}
-                                    onMouseUp={() => {
-                                        const lastRequestId = current.requests[current.requests.length - 1].id;
-                                        if (!draggedRequestId || draggedRequestId === lastRequestId) return;
-                                        setDropIndicator(null);
-                                        setDraggedRequestId(null);
-                                        void reorderRequestsInCollection(
-                                            draggedRequestId,
-                                            lastRequestId,
-                                            "after"
-                                        );
-                                    }}
-                                    style={listEdgeDropStyle(
-                                        dropIndicator?.requestId === current.requests[current.requests.length - 1].id &&
-                                            dropIndicator.position === "after"
-                                    )}
-                                >
-                                    {dropIndicator?.requestId === current.requests[current.requests.length - 1].id &&
-                                        dropIndicator.position === "after" && (
-                                            <span style={edgeDropLabelStyle()}>Drop at bottom</span>
-                                        )}
-                                </div>
-                            )}
                         </div>
                     </div>
                 </div>
@@ -1679,34 +1613,6 @@ export default function App() {
                                 flexShrink: 0,
                             }}
                         >
-                            <div
-                                onMouseMove={() => {
-                                    const firstTabId = openTabs[0]?.requestId;
-                                    if (!firstTabId) return;
-                                    if (!draggedOpenTabRequestId || draggedOpenTabRequestId === firstTabId) return;
-                                    setOpenTabDropIndicator({ requestId: firstTabId, position: "before" });
-                                }}
-                                onMouseUp={() => {
-                                    const firstTabId = openTabs[0]?.requestId;
-                                    if (!firstTabId) return;
-                                    if (!draggedOpenTabRequestId || draggedOpenTabRequestId === firstTabId) return;
-                                    setOpenTabDropIndicator(null);
-                                    setDraggedOpenTabRequestId(null);
-                                    reorderOpenTabs(draggedOpenTabRequestId, firstTabId, "before");
-                                }}
-                                style={tabEdgeDropStyle(
-                                    !!openTabs[0] &&
-                                        openTabDropIndicator?.requestId === openTabs[0].requestId &&
-                                        openTabDropIndicator.position === "before"
-                                )}
-                            >
-                                {!!openTabs[0] &&
-                                    openTabDropIndicator?.requestId === openTabs[0].requestId &&
-                                    openTabDropIndicator.position === "before" && (
-                                        <span style={tabEdgeDropLabelStyle()}>Drop first</span>
-                                    )}
-                            </div>
-
                             {openTabs.map((openTab) => {
                                 const active = openTab.requestId === selectedRequestId;
                                 const showDropBefore =
@@ -1779,33 +1685,6 @@ export default function App() {
                                 );
                             })}
 
-                            <div
-                                onMouseMove={() => {
-                                    const lastTabId = openTabs[openTabs.length - 1]?.requestId;
-                                    if (!lastTabId) return;
-                                    if (!draggedOpenTabRequestId || draggedOpenTabRequestId === lastTabId) return;
-                                    setOpenTabDropIndicator({ requestId: lastTabId, position: "after" });
-                                }}
-                                onMouseUp={() => {
-                                    const lastTabId = openTabs[openTabs.length - 1]?.requestId;
-                                    if (!lastTabId) return;
-                                    if (!draggedOpenTabRequestId || draggedOpenTabRequestId === lastTabId) return;
-                                    setOpenTabDropIndicator(null);
-                                    setDraggedOpenTabRequestId(null);
-                                    reorderOpenTabs(draggedOpenTabRequestId, lastTabId, "after");
-                                }}
-                                style={tabEdgeDropStyle(
-                                    !!openTabs[openTabs.length - 1] &&
-                                        openTabDropIndicator?.requestId === openTabs[openTabs.length - 1].requestId &&
-                                        openTabDropIndicator.position === "after"
-                                )}
-                            >
-                                {!!openTabs[openTabs.length - 1] &&
-                                    openTabDropIndicator?.requestId === openTabs[openTabs.length - 1].requestId &&
-                                    openTabDropIndicator.position === "after" && (
-                                        <span style={tabEdgeDropLabelStyle()}>Drop last</span>
-                                    )}
-                            </div>
                         </div>
                     )}
 
@@ -2257,45 +2136,19 @@ function requestDropRowStyle(
     };
 }
 
-function listEdgeDropStyle(active: boolean): React.CSSProperties {
-    return {
-        height: active ? 34 : 12,
-        borderRadius: 10,
-        border: active ? "1px dashed var(--pg-primary)" : "1px dashed transparent",
-        color: "var(--pg-primary-ink)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize: 12,
-        fontWeight: 700,
-        marginBottom: 2,
-        marginTop: 2,
-        transition: "all 120ms ease-out",
-    };
-}
-
-function edgeDropLabelStyle(): React.CSSProperties {
-    return {
-        background: "var(--pg-primary)",
-        color: "var(--pg-primary-ink)",
-        borderRadius: 999,
-        padding: "4px 10px",
-        lineHeight: 1.4,
-    };
-}
-
 function dropMarkerStyle(position: "before" | "after"): React.CSSProperties {
     return {
         position: "absolute",
         left: 0,
         right: 0,
-        top: position === "before" ? -3 : undefined,
-        bottom: position === "after" ? -3 : undefined,
-        height: 3,
+        top: position === "before" ? 1 : undefined,
+        bottom: position === "after" ? 1 : undefined,
+        height: 4,
         borderRadius: 999,
         background: "var(--pg-primary)",
         pointerEvents: "none",
-        boxShadow: "0 0 0 1px rgba(var(--pg-primary-rgb), 0.35)",
+        zIndex: 2,
+        boxShadow: "0 0 0 1px rgba(var(--pg-primary-rgb), 0.45), 0 0 10px rgba(var(--pg-primary-rgb), 0.5)",
     };
 }
 
@@ -2372,42 +2225,14 @@ function openTabDropMarkerStyle(position: "before" | "after"): React.CSSProperti
         position: "absolute",
         top: 0,
         bottom: 0,
-        left: position === "before" ? -3 : undefined,
-        right: position === "after" ? -3 : undefined,
-        width: 3,
+        left: position === "before" ? 1 : undefined,
+        right: position === "after" ? 1 : undefined,
+        width: 4,
         borderRadius: 999,
         background: "var(--pg-primary)",
         pointerEvents: "none",
-        boxShadow: "0 0 0 1px rgba(var(--pg-primary-rgb), 0.35)",
-    };
-}
-
-function tabEdgeDropStyle(active: boolean): React.CSSProperties {
-    return {
-        width: active ? 88 : 16,
-        height: 34,
-        borderRadius: 10,
-        border: active ? "1px dashed var(--pg-primary)" : "1px dashed transparent",
-        color: "var(--pg-primary-ink)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize: 12,
-        fontWeight: 700,
-        flexShrink: 0,
-        transition: "all 120ms ease-out",
-        background: active ? "rgba(var(--pg-primary-rgb), 0.08)" : "transparent",
-    };
-}
-
-function tabEdgeDropLabelStyle(): React.CSSProperties {
-    return {
-        background: "var(--pg-primary)",
-        color: "var(--pg-primary-ink)",
-        borderRadius: 999,
-        padding: "4px 10px",
-        lineHeight: 1.2,
-        whiteSpace: "nowrap",
+        zIndex: 2,
+        boxShadow: "0 0 0 1px rgba(var(--pg-primary-rgb), 0.45), 0 0 10px rgba(var(--pg-primary-rgb), 0.5)",
     };
 }
 
