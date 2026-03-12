@@ -175,7 +175,7 @@ export default function EnvironmentsModal({
                                                     disabled={busy}
                                                     style={dangerButtonStyle(busy)}
                                                 >
-                                                    Delete
+                                                    Delete Environment
                                                 </button>
                                                 <button
                                                     onClick={onSave}
