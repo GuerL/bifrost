@@ -1070,6 +1070,7 @@ export default function App() {
                     : ({
                         state: "skipped",
                         statusText: "Not selected",
+                        finishedAt: startedAt,
                     } satisfies CollectionRunEntry),
             ])
         ) as CollectionRunByRequestId;
@@ -1111,12 +1112,14 @@ export default function App() {
                 cancelledByUser = true;
                 const remaining = ordered.slice(index);
                 skipped += remaining.length;
+                const cancelledAt = new Date().toISOString();
                 setCollectionRunByRequestId((previous) => {
                     const next = { ...previous };
                     for (const remainingRequest of remaining) {
                         next[remainingRequest.id] = {
                             state: "skipped",
                             statusText: "Skipped (run cancelled)",
+                            finishedAt: cancelledAt,
                         };
                     }
                     return next;
@@ -1130,6 +1133,10 @@ export default function App() {
                 [requestId]: {
                     state: "running",
                     statusText: "Running...",
+                    startedAt: new Date().toISOString(),
+                    finishedAt: undefined,
+                    errorKind: undefined,
+                    errorMessage: undefined,
                 },
             }));
             collectionRunActiveRequestIdRef.current = requestId;
@@ -1150,6 +1157,10 @@ export default function App() {
                         statusText,
                         durationMs: response.duration_ms,
                         statusCode: response.status,
+                        startedAt: previous[requestId]?.startedAt,
+                        finishedAt: new Date().toISOString(),
+                        errorKind: undefined,
+                        errorMessage: undefined,
                     },
                 }));
                 setResponsesByRequestId((previous) => ({
@@ -1183,6 +1194,10 @@ export default function App() {
                         state: requestState,
                         statusText: failedStatusText,
                         durationMs,
+                        startedAt: previous[requestId]?.startedAt,
+                        finishedAt: new Date().toISOString(),
+                        errorKind: kind,
+                        errorMessage: message,
                     },
                 }));
                 setResponsesByRequestId((previous) => ({
@@ -1199,6 +1214,7 @@ export default function App() {
                     const remaining = ordered.slice(index + 1);
                     if (remaining.length > 0) {
                         skipped += remaining.length;
+                        const stoppedAt = new Date().toISOString();
                         setCollectionRunByRequestId((previous) => {
                             const next = { ...previous };
                             for (const remainingRequest of remaining) {
@@ -1208,6 +1224,7 @@ export default function App() {
                                         requestState === "cancelled"
                                             ? "Skipped (run cancelled)"
                                             : "Skipped (stopped on failure)",
+                                    finishedAt: stoppedAt,
                                 };
                             }
                             return next;

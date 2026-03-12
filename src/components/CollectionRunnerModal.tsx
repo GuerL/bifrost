@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import { buttonStyle, dangerButtonStyle, primaryButtonStyle } from "../helpers/UiStyles.ts";
 import type { Request } from "../types.ts";
 
@@ -15,6 +16,10 @@ export type CollectionRunEntry = {
     statusText: string;
     statusCode?: number;
     durationMs?: number;
+    errorKind?: string;
+    errorMessage?: string;
+    startedAt?: string;
+    finishedAt?: string;
 };
 
 export type CollectionRunSummary = {
@@ -47,6 +52,8 @@ type CollectionRunnerModalProps = {
     onCancel: () => void;
 };
 
+type RunResultFilter = "all" | "failed" | "success";
+
 export default function CollectionRunnerModal({
     open,
     onClose,
@@ -64,12 +71,33 @@ export default function CollectionRunnerModal({
     onRun,
     onCancel,
 }: CollectionRunnerModalProps) {
-    if (!open) return null;
+    const [filter, setFilter] = useState<RunResultFilter>("all");
+    const [expandedByRequestId, setExpandedByRequestId] = useState<Record<string, boolean>>({});
+
+    useEffect(() => {
+        if (!open) return;
+        setFilter("all");
+        setExpandedByRequestId({});
+    }, [open, runSummary?.startedAt]);
 
     const hasRequests = orderedRequests.length > 0;
     const selectedSet = new Set(selectedRequestIds);
     const selectedCount = orderedRequests.filter((request) => selectedSet.has(request.id)).length;
     const canRunSelection = hasRequests && selectedCount > 0;
+    const visibleRequests = useMemo(
+        () =>
+            orderedRequests.filter((request) => {
+                const runEntry = runByRequestId[request.id] ?? { state: "idle", statusText: "Idle" };
+                if (filter === "failed") {
+                    return runEntry.state === "failed" || runEntry.state === "cancelled";
+                }
+                if (filter === "success") {
+                    return runEntry.state === "success";
+                }
+                return true;
+            }),
+        [orderedRequests, runByRequestId, filter]
+    );
     const modeText = runSummary
         ? runSummary.stopOnFailure
             ? "Mode: stop on first failure"
@@ -77,6 +105,15 @@ export default function CollectionRunnerModal({
         : stopOnFailure
             ? "Mode: stop on first failure"
             : "Mode: continue after failures";
+
+    if (!open) return null;
+
+    function toggleExpanded(requestId: string) {
+        setExpandedByRequestId((previous) => ({
+            ...previous,
+            [requestId]: !previous[requestId],
+        }));
+    }
 
     return (
         <div
@@ -203,77 +240,171 @@ export default function CollectionRunnerModal({
 
                     {hasRequests && (
                         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                            {orderedRequests.map((request, index) => {
+                            <div style={{ display: "flex", gap: 8 }}>
+                                <button onClick={() => setFilter("all")} style={filterTabStyle(filter === "all")}>
+                                    All
+                                </button>
+                                <button onClick={() => setFilter("failed")} style={filterTabStyle(filter === "failed")}>
+                                    Failed
+                                </button>
+                                <button onClick={() => setFilter("success")} style={filterTabStyle(filter === "success")}>
+                                    Success
+                                </button>
+                            </div>
+
+                            {visibleRequests.map((request, index) => {
                                 const runEntry = runByRequestId[request.id] ?? {
                                     state: "idle",
                                     statusText: "Idle",
                                 };
                                 const selected = selectedSet.has(request.id);
+                                const expanded = !!expandedByRequestId[request.id];
+                                const stepNumber =
+                                    orderedRequests.findIndex((entry) => entry.id === request.id) + 1;
                                 return (
                                     <div
                                         key={request.id}
                                         style={{
-                                            display: "grid",
-                                            gridTemplateColumns: "30px 56px minmax(0, 1fr) auto",
-                                            alignItems: "center",
-                                            gap: 10,
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            gap: 8,
                                             borderRadius: 10,
-                                            border: "1px solid var(--pg-border)",
+                                            border: rowBorderStyle(runEntry.state),
                                             background: selected ? "var(--pg-surface-1)" : "var(--pg-surface-0)",
                                             padding: "8px 10px",
                                             opacity: selected ? 1 : 0.72,
                                         }}
                                     >
-                                        <input
-                                            type="checkbox"
-                                            checked={selected}
-                                            disabled={isRunning}
-                                            onChange={(event) =>
-                                                onToggleRequestSelection(request.id, event.target.checked)
-                                            }
+                                        <div
                                             style={{
-                                                width: 14,
-                                                height: 14,
-                                                accentColor: "var(--pg-primary)",
-                                                cursor: isRunning ? "not-allowed" : "pointer",
+                                                display: "grid",
+                                                gridTemplateColumns: "30px 56px minmax(0, 1fr) auto",
+                                                alignItems: "center",
+                                                gap: 10,
                                             }}
-                                        />
-                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
-                                            #{index + 1}
-                                        </div>
-                                        <div style={{ minWidth: 0 }}>
-                                            <div
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={selected}
+                                                disabled={isRunning}
+                                                onChange={(event) =>
+                                                    onToggleRequestSelection(request.id, event.target.checked)
+                                                }
                                                 style={{
-                                                    color: "var(--pg-text)",
-                                                    fontSize: 13,
-                                                    fontWeight: 600,
-                                                    whiteSpace: "nowrap",
-                                                    overflow: "hidden",
-                                                    textOverflow: "ellipsis",
+                                                    width: 14,
+                                                    height: 14,
+                                                    accentColor: "var(--pg-primary)",
+                                                    cursor: isRunning ? "not-allowed" : "pointer",
                                                 }}
-                                            >
-                                                {request.method.toUpperCase()} {request.name}
+                                            />
+                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
+                                                #{stepNumber > 0 ? stepNumber : index + 1}
                                             </div>
+                                            <div style={{ minWidth: 0 }}>
+                                                <div
+                                                    style={{
+                                                        color: "var(--pg-text)",
+                                                        fontSize: 13,
+                                                        fontWeight: 600,
+                                                        whiteSpace: "nowrap",
+                                                        overflow: "hidden",
+                                                        textOverflow: "ellipsis",
+                                                    }}
+                                                >
+                                                    {request.method.toUpperCase()} {request.name}
+                                                </div>
+                                                <div
+                                                    style={{
+                                                        fontSize: 12,
+                                                        color: "var(--pg-text-muted)",
+                                                        whiteSpace: "nowrap",
+                                                        overflow: "hidden",
+                                                        textOverflow: "ellipsis",
+                                                        marginTop: 2,
+                                                    }}
+                                                    title={runEntry.statusText}
+                                                >
+                                                    {runEntry.statusText}
+                                                    {runEntry.startedAt
+                                                        ? ` • ${formatTime(runEntry.startedAt)}`
+                                                        : ""}
+                                                </div>
+                                            </div>
+                                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                                <span style={runStatusBadgeStyle(runEntry.state)}>
+                                                    {runStateLabel(runEntry.state)}
+                                                </span>
+                                                {typeof runEntry.statusCode === "number" && (
+                                                    <span style={statusCodeBadgeStyle(runEntry.statusCode)}>
+                                                        {runEntry.statusCode}
+                                                    </span>
+                                                )}
+                                                {typeof runEntry.durationMs === "number" && (
+                                                    <span style={durationBadgeStyle()}>{runEntry.durationMs}ms</span>
+                                                )}
+                                                <button
+                                                    onClick={() => toggleExpanded(request.id)}
+                                                    style={expandButtonStyle()}
+                                                    title={expanded ? "Hide details" : "Show details"}
+                                                >
+                                                    {expanded ? "−" : "+"}
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {expanded && (
                                             <div
                                                 style={{
+                                                    borderTop: "1px dashed var(--pg-border)",
+                                                    paddingTop: 8,
+                                                    display: "grid",
+                                                    gridTemplateColumns: "140px minmax(0, 1fr)",
+                                                    gap: "6px 10px",
                                                     fontSize: 12,
-                                                    color: "var(--pg-text-muted)",
-                                                    whiteSpace: "nowrap",
-                                                    overflow: "hidden",
-                                                    textOverflow: "ellipsis",
-                                                    marginTop: 2,
                                                 }}
-                                                title={runEntry.statusText}
                                             >
-                                                {runEntry.statusText}
+                                                <span style={detailLabelStyle()}>Request id</span>
+                                                <span style={detailValueStyle()}>{request.id}</span>
+
+                                                <span style={detailLabelStyle()}>State</span>
+                                                <span style={detailValueStyle()}>{runStateLabel(runEntry.state)}</span>
+
+                                                <span style={detailLabelStyle()}>Status</span>
+                                                <span style={detailValueStyle()}>{runEntry.statusText}</span>
+
+                                                <span style={detailLabelStyle()}>Started</span>
+                                                <span style={detailValueStyle()}>
+                                                    {runEntry.startedAt ? formatDateTime(runEntry.startedAt) : "—"}
+                                                </span>
+
+                                                <span style={detailLabelStyle()}>Finished</span>
+                                                <span style={detailValueStyle()}>
+                                                    {runEntry.finishedAt ? formatDateTime(runEntry.finishedAt) : "—"}
+                                                </span>
+
+                                                <span style={detailLabelStyle()}>Duration</span>
+                                                <span style={detailValueStyle()}>
+                                                    {typeof runEntry.durationMs === "number"
+                                                        ? `${runEntry.durationMs} ms`
+                                                        : "—"}
+                                                </span>
+
+                                                <span style={detailLabelStyle()}>Error</span>
+                                                <span style={detailValueStyle()}>
+                                                    {runEntry.errorMessage
+                                                        ? `${runEntry.errorKind ?? "error"}: ${runEntry.errorMessage}`
+                                                        : "—"}
+                                                </span>
                                             </div>
-                                        </div>
-                                        <span style={runStatusBadgeStyle(runEntry.state)}>
-                                            {runStateLabel(runEntry.state)}
-                                        </span>
+                                        )}
                                     </div>
                                 );
                             })}
+                            {visibleRequests.length === 0 && (
+                                <div style={{ color: "var(--pg-text-muted)", fontSize: 13 }}>
+                                    No result for this filter.
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -291,10 +422,17 @@ export default function CollectionRunnerModal({
                         flexShrink: 0,
                     }}
                 >
-                    <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
-                        {runSummary
-                            ? `Total ${runSummary.total} • OK ${runSummary.success} • Failed ${runSummary.failed} • Cancelled ${runSummary.cancelled} • Skipped ${runSummary.skipped}`
-                            : "No run yet."}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                            {runSummary
+                                ? `Total ${runSummary.total} • OK ${runSummary.success} • Failed ${runSummary.failed} • Cancelled ${runSummary.cancelled} • Skipped ${runSummary.skipped}`
+                                : "No run yet."}
+                        </div>
+                        {runSummary?.cancelledByUser && (
+                            <div style={{ fontSize: 12, color: "#fbbf24", fontWeight: 700 }}>
+                                Run was cancelled by user.
+                            </div>
+                        )}
                     </div>
                     <div style={{ display: "flex", gap: 8 }}>
                         {isRunning ? (
@@ -325,6 +463,39 @@ function runStateLabel(state: CollectionRunState): string {
     if (state === "cancelled") return "Cancelled";
     if (state === "skipped") return "Skipped";
     return "Idle";
+}
+
+function formatDateTime(value: string): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+}
+
+function formatTime(value: string): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleTimeString();
+}
+
+function filterTabStyle(active: boolean): React.CSSProperties {
+    return {
+        ...buttonStyle(false),
+        height: 30,
+        padding: "0 10px",
+        borderColor: active ? "var(--pg-primary)" : "var(--pg-border)",
+        background: active ? "rgba(var(--pg-primary-rgb), 0.2)" : "var(--pg-surface-1)",
+        color: active ? "var(--pg-primary)" : "var(--pg-text-dim)",
+        fontWeight: 700,
+        boxShadow: "none",
+    };
+}
+
+function rowBorderStyle(state: CollectionRunState): string {
+    if (state === "failed") return "1px solid var(--pg-danger)";
+    if (state === "cancelled") return "1px solid #f59e0b";
+    if (state === "success") return "1px solid rgba(16, 185, 129, 0.5)";
+    if (state === "running") return "1px solid var(--pg-primary)";
+    return "1px solid var(--pg-border)";
 }
 
 function runStatusBadgeStyle(state: CollectionRunState): React.CSSProperties {
@@ -359,5 +530,86 @@ function runStatusBadgeStyle(state: CollectionRunState): React.CSSProperties {
         background: tone,
         border: "1px solid rgba(255,255,255,0.08)",
         flexShrink: 0,
+    };
+}
+
+function statusCodeBadgeStyle(statusCode: number): React.CSSProperties {
+    const success = statusCode >= 200 && statusCode < 300;
+    const redirect = statusCode >= 300 && statusCode < 400;
+    const clientError = statusCode >= 400 && statusCode < 500;
+    const serverError = statusCode >= 500;
+
+    const color = success
+        ? "#34d399"
+        : redirect
+            ? "#93c5fd"
+            : clientError
+                ? "#fbbf24"
+                : serverError
+                    ? "#fda4af"
+                    : "var(--pg-text-muted)";
+
+    const bg = success
+        ? "rgba(16, 185, 129, 0.22)"
+        : redirect
+            ? "rgba(59, 130, 246, 0.2)"
+            : clientError
+                ? "rgba(245, 158, 11, 0.2)"
+                : serverError
+                    ? "rgba(239, 68, 68, 0.2)"
+                    : "rgba(148, 163, 184, 0.2)";
+
+    return {
+        fontSize: 11,
+        fontWeight: 700,
+        borderRadius: 999,
+        padding: "3px 8px",
+        color,
+        background: bg,
+        border: "1px solid rgba(255,255,255,0.08)",
+        flexShrink: 0,
+    };
+}
+
+function durationBadgeStyle(): React.CSSProperties {
+    return {
+        fontSize: 11,
+        fontWeight: 700,
+        borderRadius: 999,
+        padding: "3px 8px",
+        color: "var(--pg-text-dim)",
+        background: "rgba(148, 163, 184, 0.2)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        flexShrink: 0,
+    };
+}
+
+function expandButtonStyle(): React.CSSProperties {
+    return {
+        width: 24,
+        height: 24,
+        borderRadius: 8,
+        border: "1px solid var(--pg-border)",
+        background: "var(--pg-surface-0)",
+        color: "var(--pg-text-dim)",
+        fontWeight: 700,
+        lineHeight: 1,
+        padding: 0,
+        boxShadow: "none",
+        cursor: "pointer",
+    };
+}
+
+function detailLabelStyle(): React.CSSProperties {
+    return {
+        color: "var(--pg-text-muted)",
+        fontWeight: 600,
+    };
+}
+
+function detailValueStyle(): React.CSSProperties {
+    return {
+        color: "var(--pg-text-dim)",
+        wordBreak: "break-word",
     };
 }
