@@ -34,11 +34,15 @@ type CollectionRunnerModalProps = {
     onClose: () => void;
     collectionName: string | null;
     orderedRequests: Request[];
+    selectedRequestIds: string[];
     runByRequestId: Record<string, CollectionRunEntry>;
     runSummary: CollectionRunSummary | null;
     isRunning: boolean;
     stopOnFailure: boolean;
     onStopOnFailureChange: (next: boolean) => void;
+    onToggleRequestSelection: (requestId: string, selected: boolean) => void;
+    onSelectAll: () => void;
+    onClearSelection: () => void;
     onRun: () => void;
     onCancel: () => void;
 };
@@ -48,17 +52,24 @@ export default function CollectionRunnerModal({
     onClose,
     collectionName,
     orderedRequests,
+    selectedRequestIds,
     runByRequestId,
     runSummary,
     isRunning,
     stopOnFailure,
     onStopOnFailureChange,
+    onToggleRequestSelection,
+    onSelectAll,
+    onClearSelection,
     onRun,
     onCancel,
 }: CollectionRunnerModalProps) {
     if (!open) return null;
 
     const hasRequests = orderedRequests.length > 0;
+    const selectedSet = new Set(selectedRequestIds);
+    const selectedCount = orderedRequests.filter((request) => selectedSet.has(request.id)).length;
+    const canRunSelection = hasRequests && selectedCount > 0;
     const modeText = runSummary
         ? runSummary.stopOnFailure
             ? "Mode: stop on first failure"
@@ -156,6 +167,36 @@ export default function CollectionRunnerModal({
                         overflowY: "auto",
                     }}
                 >
+                    <div
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 8,
+                            marginBottom: 10,
+                        }}
+                    >
+                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                            Selected {selectedCount} / {orderedRequests.length}
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                            <button
+                                onClick={onSelectAll}
+                                disabled={isRunning || !hasRequests}
+                                style={buttonStyle(isRunning || !hasRequests)}
+                            >
+                                Select all
+                            </button>
+                            <button
+                                onClick={onClearSelection}
+                                disabled={isRunning || selectedCount === 0}
+                                style={buttonStyle(isRunning || selectedCount === 0)}
+                            >
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+
                     {!hasRequests && (
                         <div style={{ color: "var(--pg-text-muted)" }}>No request in this collection.</div>
                     )}
@@ -167,20 +208,36 @@ export default function CollectionRunnerModal({
                                     state: "idle",
                                     statusText: "Idle",
                                 };
+                                const selected = selectedSet.has(request.id);
                                 return (
                                     <div
                                         key={request.id}
                                         style={{
                                             display: "grid",
-                                            gridTemplateColumns: "56px minmax(0, 1fr) auto",
+                                            gridTemplateColumns: "30px 56px minmax(0, 1fr) auto",
                                             alignItems: "center",
                                             gap: 10,
                                             borderRadius: 10,
                                             border: "1px solid var(--pg-border)",
-                                            background: "var(--pg-surface-1)",
+                                            background: selected ? "var(--pg-surface-1)" : "var(--pg-surface-0)",
                                             padding: "8px 10px",
+                                            opacity: selected ? 1 : 0.72,
                                         }}
                                     >
+                                        <input
+                                            type="checkbox"
+                                            checked={selected}
+                                            disabled={isRunning}
+                                            onChange={(event) =>
+                                                onToggleRequestSelection(request.id, event.target.checked)
+                                            }
+                                            style={{
+                                                width: 14,
+                                                height: 14,
+                                                accentColor: "var(--pg-primary)",
+                                                cursor: isRunning ? "not-allowed" : "pointer",
+                                            }}
+                                        />
                                         <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
                                             #{index + 1}
                                         </div>
@@ -247,10 +304,10 @@ export default function CollectionRunnerModal({
                         ) : (
                             <button
                                 onClick={onRun}
-                                disabled={!hasRequests}
-                                style={primaryButtonStyle(!hasRequests)}
+                                disabled={!canRunSelection}
+                                style={primaryButtonStyle(!canRunSelection)}
                             >
-                                Run Collection
+                                Run Selection
                             </button>
                         )}
                     </div>

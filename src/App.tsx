@@ -274,6 +274,7 @@ export default function App() {
     const [collectionBusy, setCollectionBusy] = useState(false);
     const [collectionError, setCollectionError] = useState("");
     const [runnerModalOpen, setRunnerModalOpen] = useState(false);
+    const [runnerSelectedRequestIds, setRunnerSelectedRequestIds] = useState<string[]>([]);
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
@@ -298,6 +299,7 @@ export default function App() {
         collectionRunCancelRef.current = false;
         collectionRunActiveRequestIdRef.current = null;
         setRunnerModalOpen(false);
+        setRunnerSelectedRequestIds([]);
         setDraftsById({});
         setCloseDraftModal(null);
         setCloseDraftBusy(false);
@@ -616,7 +618,18 @@ export default function App() {
         setCollectionRunPending(false);
         setCollectionRunByRequestId({});
         setCollectionRunSummary(null);
+        setRunnerSelectedRequestIds(orderedRequests.map((request) => request.id));
     }, [current?.meta.id]);
+
+    useEffect(() => {
+        if (!current) {
+            setRunnerSelectedRequestIds([]);
+            return;
+        }
+
+        const validIds = new Set(orderedRequests.map((request) => request.id));
+        setRunnerSelectedRequestIds((previous) => previous.filter((requestId) => validIds.has(requestId)));
+    }, [current?.requests, orderedRequests]);
 
     useEffect(() => {
         if (!current) return;
@@ -1003,23 +1016,61 @@ export default function App() {
         }
     }
 
-    async function runCollection() {
+    function toggleRunnerRequestSelection(requestId: string, selected: boolean) {
+        if (collectionRunPending) return;
+        setRunnerSelectedRequestIds((previous) => {
+            const nextSet = new Set(previous);
+            if (selected) {
+                nextSet.add(requestId);
+            } else {
+                nextSet.delete(requestId);
+            }
+            return orderedRequests
+                .map((request) => request.id)
+                .filter((id) => nextSet.has(id));
+        });
+    }
+
+    function selectAllRunnerRequests() {
+        if (collectionRunPending) return;
+        setRunnerSelectedRequestIds(orderedRequests.map((request) => request.id));
+    }
+
+    function clearRunnerRequestSelection() {
+        if (collectionRunPending) return;
+        setRunnerSelectedRequestIds([]);
+    }
+
+    async function runCollection(requestIdsToRun?: string[]) {
         if (!current || collectionRunPending) return;
 
-        const ordered = requestsInOrder(current);
+        const allOrdered = requestsInOrder(current);
+        const selectedSet = new Set(requestIdsToRun ?? runnerSelectedRequestIds);
+        const ordered = allOrdered.filter((request) => selectedSet.has(request.id));
+
+        if (allOrdered.length === 0) {
+            setStatus("No request in this collection.");
+            return;
+        }
+
         if (ordered.length === 0) {
-            setStatus("No request to run in this collection.");
+            setStatus("No request selected for this run.");
             return;
         }
 
         const startedAt = new Date().toISOString();
         const runEntries = Object.fromEntries(
-            ordered.map((request) => [
+            allOrdered.map((request) => [
                 request.id,
-                {
-                    state: "queued",
-                    statusText: "Queued",
-                } satisfies CollectionRunEntry,
+                selectedSet.has(request.id)
+                    ? ({
+                        state: "queued",
+                        statusText: "Queued",
+                    } satisfies CollectionRunEntry)
+                    : ({
+                        state: "skipped",
+                        statusText: "Not selected",
+                    } satisfies CollectionRunEntry),
             ])
         ) as CollectionRunByRequestId;
 
@@ -1047,7 +1098,7 @@ export default function App() {
         setPending(false);
         setCollectionRunByRequestId(runEntries);
         applySummary(null);
-        setStatus(`Running collection (${ordered.length} requests)...`);
+        setStatus(`Running selection (${ordered.length} requests)...`);
         collectionRunCancelRef.current = false;
         collectionRunActiveRequestIdRef.current = null;
 
@@ -2364,12 +2415,16 @@ export default function App() {
                 onClose={() => setRunnerModalOpen(false)}
                 collectionName={current?.meta.name ?? null}
                 orderedRequests={orderedRequests}
+                selectedRequestIds={runnerSelectedRequestIds}
                 runByRequestId={collectionRunByRequestId}
                 runSummary={collectionRunSummary}
                 isRunning={collectionRunPending}
                 stopOnFailure={collectionRunStopOnFailure}
                 onStopOnFailureChange={setCollectionRunStopOnFailure}
-                onRun={() => void runCollection()}
+                onToggleRequestSelection={toggleRunnerRequestSelection}
+                onSelectAll={selectAllRunnerRequests}
+                onClearSelection={clearRunnerRequestSelection}
+                onRun={() => void runCollection(runnerSelectedRequestIds)}
                 onCancel={() => void cancelCollectionRun()}
             />
 
