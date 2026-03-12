@@ -17,10 +17,7 @@ import RequestBodyEditor from "./components/RequestBodyEditor.tsx";
 import CollectionsModal from "./components/CollectionsModal.tsx";
 import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
 import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.tsx";
-import CollectionRunnerModal, {
-    type CollectionRunEntry,
-    type CollectionRunSummary,
-} from "./components/CollectionRunnerModal.tsx";
+import CollectionRunnerModal from "./components/CollectionRunnerModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
 import {
     buttonStyle,
@@ -28,6 +25,19 @@ import {
     primaryButtonStyle,
     selectStyle,
 } from "./helpers/UiStyles.ts";
+import { buildRunnerExecutionPlan } from "./runner/plan.ts";
+import {
+    createQueuedExecutionResult,
+    parseRunnerHttpError,
+    toResponseSnapshot,
+} from "./runner/mappers.ts";
+import { summarizeRunnerExecutions } from "./runner/stats.ts";
+import { readRunnerRunForCollection, writeRunnerRunForCollection } from "./runner/storage.ts";
+import type {
+    RunnerExecutionResult,
+    RunnerIterationMode,
+    RunnerRun,
+} from "./runner/types.ts";
 import type {
     CollectionLoaded,
     CollectionMeta,
@@ -72,7 +82,6 @@ type PersistedResponseEntry = {
 
 type PersistedResponsesCollection = Record<string, PersistedResponseEntry>;
 type PersistedResponsesState = Record<string, PersistedResponsesCollection>;
-type CollectionRunByRequestId = Record<string, CollectionRunEntry>;
 
 const OPEN_TABS_STORAGE_KEY = "postguerl:open-tabs:v1";
 const RESPONSES_STORAGE_KEY = "postguerl:last-responses:v1";
@@ -243,10 +252,11 @@ export default function App() {
     const [openRequestIds, setOpenRequestIds] = useState<string[]>([]);
     const [resp, setResp] = useState<HttpResponseDto | null>(null);
     const [responsesByRequestId, setResponsesByRequestId] = useState<PersistedResponsesCollection>({});
-    const [collectionRunByRequestId, setCollectionRunByRequestId] = useState<CollectionRunByRequestId>({});
-    const [collectionRunSummary, setCollectionRunSummary] = useState<CollectionRunSummary | null>(null);
+    const [runnerRun, setRunnerRun] = useState<RunnerRun | null>(null);
+    const [runnerIterationMode, setRunnerIterationMode] =
+        useState<RunnerIterationMode>("collection_iteration");
+    const [runnerIterations, setRunnerIterations] = useState(1);
     const [collectionRunStopOnFailure, setCollectionRunStopOnFailure] = useState(true);
-    const [collectionRunPending, setCollectionRunPending] = useState(false);
     const [responseTab, setResponseTab] = useState<ResponseTabId>("body");
     const [draftsById, setDraftsById] = useState<Record<string, Request>>({});
     const [pending, setPending] = useState(false);
@@ -280,8 +290,10 @@ export default function App() {
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
     const hydratedTabsCollectionIdRef = useRef<string | null>(null);
+    const hydratedRunnerCollectionIdRef = useRef<string | null>(null);
     const collectionRunCancelRef = useRef(false);
     const collectionRunActiveRequestIdRef = useRef<string | null>(null);
+    const collectionRunPending = runnerRun?.status === "running";
 
     async function clearCurrentCollectionView() {
         setCurrent(null);
@@ -293,9 +305,7 @@ export default function App() {
         setDraggedOpenTabRequestId(null);
         setOpenTabDropIndicator(null);
         setResponsesByRequestId({});
-        setCollectionRunByRequestId({});
-        setCollectionRunSummary(null);
-        setCollectionRunPending(false);
+        setRunnerRun(null);
         collectionRunCancelRef.current = false;
         collectionRunActiveRequestIdRef.current = null;
         setRunnerModalOpen(false);
@@ -304,6 +314,7 @@ export default function App() {
         setCloseDraftModal(null);
         setCloseDraftBusy(false);
         hydratedTabsCollectionIdRef.current = null;
+        hydratedRunnerCollectionIdRef.current = null;
     }
 
     async function reloadCollectionsAndRestoreActive(preferredCollectionId?: string | null) {
@@ -376,16 +387,24 @@ export default function App() {
             .filter((value): value is { requestId: string; method: Request["method"]; name: string; hasLocalDraft: boolean } => value !== null);
     }, [current, openRequestIds, draftsById]);
 
+    const latestRunnerExecutionByRequestId = useMemo(() => {
+        const map = new Map<string, RunnerExecutionResult>();
+        for (const execution of runnerRun?.executions ?? []) {
+            map.set(execution.requestId, execution);
+        }
+        return map;
+    }, [runnerRun?.executions]);
+
     const selectedResponseStatusText = useMemo(() => {
         if (!selectedRequestId) return status || "Idle";
-        const runnerStatus = collectionRunByRequestId[selectedRequestId]?.statusText;
+        const runnerStatus = latestRunnerExecutionByRequestId.get(selectedRequestId)?.statusText;
         if (collectionRunPending && runnerStatus) {
             return runnerStatus;
         }
         if (pending) return "Sending...";
         const persistedStatus = responsesByRequestId[selectedRequestId]?.statusText;
         return runnerStatus ?? persistedStatus ?? (status || "No request sent yet.");
-    }, [selectedRequestId, pending, responsesByRequestId, status, collectionRunByRequestId, collectionRunPending]);
+    }, [selectedRequestId, pending, responsesByRequestId, status, latestRunnerExecutionByRequestId, collectionRunPending]);
 
     const activeEnvironment = useMemo(
         () => environments.find((env) => env.id === activeEnvironmentId) ?? null,
@@ -544,25 +563,34 @@ export default function App() {
 
     useEffect(() => {
         if (!current) return;
-        const validRequestIds = new Set(current.requests.map((request) => request.id));
-        setCollectionRunByRequestId((previous) => {
-            const next = Object.fromEntries(
-                Object.entries(previous).filter(([requestId]) => validRequestIds.has(requestId))
-            ) as CollectionRunByRequestId;
-
-            if (Object.keys(next).length === Object.keys(previous).length) {
-                return previous;
-            }
-            return next;
-        });
-    }, [current?.requests]);
-
-    useEffect(() => {
-        if (!current) return;
         const persisted = readPersistedResponsesState();
         persisted[current.meta.id] = responsesByRequestId;
         writePersistedResponsesState(persisted);
     }, [current?.meta.id, responsesByRequestId]);
+
+    useEffect(() => {
+        if (!current) {
+            setRunnerRun(null);
+            hydratedRunnerCollectionIdRef.current = null;
+            return;
+        }
+
+        setRunnerRun(readRunnerRunForCollection(current.meta.id));
+        hydratedRunnerCollectionIdRef.current = current.meta.id;
+    }, [current?.meta.id]);
+
+    useEffect(() => {
+        if (!runnerRun) return;
+        setRunnerIterationMode(runnerRun.mode);
+        setRunnerIterations(Math.max(1, runnerRun.iterations));
+    }, [runnerRun?.runId]);
+
+    useEffect(() => {
+        if (!current) return;
+        if (hydratedRunnerCollectionIdRef.current !== current.meta.id) return;
+        if (runnerRun && runnerRun.collectionId !== current.meta.id) return;
+        writeRunnerRunForCollection(current.meta.id, runnerRun);
+    }, [current?.meta.id, runnerRun]);
 
     useEffect(() => {
         if (!selectedRequestId) {
@@ -615,9 +643,6 @@ export default function App() {
     useEffect(() => {
         collectionRunCancelRef.current = false;
         collectionRunActiveRequestIdRef.current = null;
-        setCollectionRunPending(false);
-        setCollectionRunByRequestId({});
-        setCollectionRunSummary(null);
         setRunnerSelectedRequestIds(orderedRequests.map((request) => request.id));
     }, [current?.meta.id]);
 
@@ -1044,221 +1069,255 @@ export default function App() {
     async function runCollection(requestIdsToRun?: string[]) {
         if (!current || collectionRunPending) return;
 
-        const allOrdered = requestsInOrder(current);
-        const selectedSet = new Set(requestIdsToRun ?? runnerSelectedRequestIds);
-        const ordered = allOrdered.filter((request) => selectedSet.has(request.id));
-
-        if (allOrdered.length === 0) {
+        const ordered = requestsInOrder(current);
+        if (ordered.length === 0) {
             setStatus("No request in this collection.");
             return;
         }
 
-        if (ordered.length === 0) {
+        const selectedSet = new Set(requestIdsToRun ?? runnerSelectedRequestIds);
+        const selected = ordered.filter((request) => selectedSet.has(request.id));
+        if (selected.length === 0) {
             setStatus("No request selected for this run.");
             return;
         }
 
+        const safeIterations = Number.isFinite(runnerIterations)
+            ? Math.max(1, Math.floor(runnerIterations))
+            : 1;
+        const plan = buildRunnerExecutionPlan({
+            orderedRequests: ordered,
+            selectedRequestIds: selected.map((request) => request.id),
+            mode: runnerIterationMode,
+            iterations: safeIterations,
+        });
+
+        if (plan.length === 0) {
+            setStatus("No execution planned.");
+            return;
+        }
+
+        const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
         const startedAt = new Date().toISOString();
-        const runEntries = Object.fromEntries(
-            allOrdered.map((request) => [
-                request.id,
-                selectedSet.has(request.id)
-                    ? ({
-                        state: "queued",
-                        statusText: "Queued",
-                    } satisfies CollectionRunEntry)
-                    : ({
-                        state: "skipped",
-                        statusText: "Not selected",
-                        finishedAt: startedAt,
-                    } satisfies CollectionRunEntry),
-            ])
-        ) as CollectionRunByRequestId;
-
-        let success = 0;
-        let failed = 0;
-        let cancelled = 0;
-        let skipped = 0;
         let cancelledByUser = false;
+        let currentExecutions = plan.map((item) => createQueuedExecutionResult(runId, item));
 
-        const applySummary = (endedAt: string | null) => {
-            setCollectionRunSummary({
-                startedAt,
-                endedAt,
-                total: ordered.length,
-                success,
-                failed,
-                cancelled,
-                skipped,
-                stopOnFailure: collectionRunStopOnFailure,
-                cancelledByUser,
-            });
+        const initialRun: RunnerRun = {
+            runId,
+            collectionId: current.meta.id,
+            collectionName: current.meta.name,
+            mode: runnerIterationMode,
+            iterations: safeIterations,
+            stopOnFirstFailure: collectionRunStopOnFailure,
+            selectedRequestIds: selected.map((request) => request.id),
+            startedAt,
+            finishedAt: null,
+            status: "running",
+            plan,
+            executions: currentExecutions,
+            summary: summarizeRunnerExecutions(currentExecutions, false),
         };
 
-        setCollectionRunPending(true);
+        const requestById = new Map(ordered.map((request) => [request.id, draftsById[request.id] ?? request]));
+
+        function commitRun(
+            nextExecutions: RunnerExecutionResult[],
+            statusOverride: RunnerRun["status"] | null = null,
+            finishedAtOverride: string | null = null
+        ) {
+            currentExecutions = nextExecutions;
+            setRunnerRun((previous) => {
+                if (!previous || previous.runId !== runId) return previous;
+                const nextStatus = statusOverride ?? previous.status;
+                const nextFinishedAt = statusOverride ? finishedAtOverride : previous.finishedAt;
+                return {
+                    ...previous,
+                    status: nextStatus,
+                    finishedAt: nextFinishedAt,
+                    executions: nextExecutions,
+                    summary: summarizeRunnerExecutions(nextExecutions, cancelledByUser),
+                };
+            });
+        }
+
+        function updateExecutionAt(
+            planIndex: number,
+            patch: Partial<RunnerExecutionResult>
+        ): RunnerExecutionResult[] {
+            return currentExecutions.map((execution) =>
+                execution.planIndex === planIndex
+                    ? {
+                        ...execution,
+                        ...patch,
+                    }
+                    : execution
+            );
+        }
+
+        function skipRemainingFrom(planStartIndex: number, reason: string): RunnerExecutionResult[] {
+            const now = new Date().toISOString();
+            return currentExecutions.map((execution) => {
+                if (execution.planIndex <= planStartIndex) return execution;
+                if (execution.status !== "queued") return execution;
+                return {
+                    ...execution,
+                    status: "skipped",
+                    statusText: reason,
+                    finishedAt: now,
+                };
+            });
+        }
+
         setPending(false);
-        setCollectionRunByRequestId(runEntries);
-        applySummary(null);
-        setStatus(`Running selection (${ordered.length} requests)...`);
+        setRunnerRun(initialRun);
+        setStatus(`Running selection (${plan.length} executions)...`);
         collectionRunCancelRef.current = false;
         collectionRunActiveRequestIdRef.current = null;
 
-        for (let index = 0; index < ordered.length; index += 1) {
-            const request = ordered[index];
-            const requestId = request.id;
-            const requestToSend = draftsById[requestId] ?? request;
+        for (let index = 0; index < plan.length; index += 1) {
+            const planItem = plan[index];
 
             if (collectionRunCancelRef.current) {
                 cancelledByUser = true;
-                const remaining = ordered.slice(index);
-                skipped += remaining.length;
-                const cancelledAt = new Date().toISOString();
-                setCollectionRunByRequestId((previous) => {
-                    const next = { ...previous };
-                    for (const remainingRequest of remaining) {
-                        next[remainingRequest.id] = {
-                            state: "skipped",
-                            statusText: "Skipped (run cancelled)",
-                            finishedAt: cancelledAt,
-                        };
-                    }
-                    return next;
-                });
-                applySummary(null);
+                commitRun(skipRemainingFrom(planItem.planIndex - 1, "Skipped (run cancelled)"));
                 break;
             }
 
-            setCollectionRunByRequestId((previous) => ({
-                ...previous,
-                [requestId]: {
-                    state: "running",
+            commitRun(
+                updateExecutionAt(planItem.planIndex, {
+                    status: "running",
                     statusText: "Running...",
                     startedAt: new Date().toISOString(),
-                    finishedAt: undefined,
-                    errorKind: undefined,
-                    errorMessage: undefined,
-                },
-            }));
-            collectionRunActiveRequestIdRef.current = requestId;
+                    finishedAt: null,
+                    errorCode: null,
+                    errorMessage: null,
+                })
+            );
+
+            collectionRunActiveRequestIdRef.current = planItem.requestId;
+
+            const requestToSend = requestById.get(planItem.requestId);
+            if (!requestToSend) {
+                const nextExecutions = updateExecutionAt(planItem.planIndex, {
+                    status: "failed",
+                    statusText: "❌ missing_request: Request not found in collection",
+                    wasSent: false,
+                    finishedAt: new Date().toISOString(),
+                    errorCode: "missing_request",
+                    errorMessage: "Request not found in collection",
+                });
+                commitRun(nextExecutions);
+                if (collectionRunStopOnFailure) {
+                    commitRun(
+                        skipRemainingFrom(planItem.planIndex, "Skipped (stopped on failure)")
+                    );
+                    break;
+                }
+                continue;
+            }
 
             try {
                 const response = await invoke<HttpResponseDto>("send_request", {
-                    requestId,
+                    requestId: planItem.requestId,
                     req: requestToSend,
                     environmentId: activeEnvironmentId,
                 });
 
                 const statusText = `✅ ${response.status} in ${response.duration_ms}ms`;
-                success += 1;
-                setCollectionRunByRequestId((previous) => ({
-                    ...previous,
-                    [requestId]: {
-                        state: "success",
+                commitRun(
+                    updateExecutionAt(planItem.planIndex, {
+                        status: "success",
                         statusText,
-                        durationMs: response.duration_ms,
-                        statusCode: response.status,
-                        startedAt: previous[requestId]?.startedAt,
+                        wasSent: true,
                         finishedAt: new Date().toISOString(),
-                        errorKind: undefined,
-                        errorMessage: undefined,
-                    },
-                }));
+                        durationMs: response.duration_ms,
+                        httpStatus: response.status,
+                        errorCode: null,
+                        errorMessage: null,
+                        response: toResponseSnapshot(response),
+                    })
+                );
                 setResponsesByRequestId((previous) => ({
                     ...previous,
-                    [requestId]: {
+                    [planItem.requestId]: {
                         response,
                         statusText,
                         updatedAt: new Date().toISOString(),
                     },
                 }));
             } catch (error) {
-                const { kind, message, durationMs } = parseHttpError(error);
-                const failedStatusText =
-                    kind === "cancelled"
-                        ? `⛔ ${message}${durationMs != null ? ` (${durationMs}ms)` : ""}`
-                        : `❌ ${kind}: ${message}${durationMs != null ? ` (${durationMs}ms)` : ""}`;
+                const parsed = parseRunnerHttpError(error);
+                const requestWasCancelled = parsed.code === "cancelled" || collectionRunCancelRef.current;
+                const statusText = requestWasCancelled
+                    ? `⛔ ${parsed.message}${parsed.durationMs != null ? ` (${parsed.durationMs}ms)` : ""}`
+                    : `❌ ${parsed.code}: ${parsed.message}${parsed.durationMs != null ? ` (${parsed.durationMs}ms)` : ""}`;
 
-                const requestState =
-                    kind === "cancelled" || collectionRunCancelRef.current ? "cancelled" : "failed";
-
-                if (requestState === "cancelled") {
-                    cancelled += 1;
+                if (requestWasCancelled) {
                     cancelledByUser = true;
-                } else {
-                    failed += 1;
                 }
 
-                setCollectionRunByRequestId((previous) => ({
-                    ...previous,
-                    [requestId]: {
-                        state: requestState,
-                        statusText: failedStatusText,
-                        durationMs,
-                        startedAt: previous[requestId]?.startedAt,
+                commitRun(
+                    updateExecutionAt(planItem.planIndex, {
+                        status: requestWasCancelled ? "cancelled" : "failed",
+                        statusText,
+                        wasSent: parsed.durationMs != null,
                         finishedAt: new Date().toISOString(),
-                        errorKind: kind,
-                        errorMessage: message,
-                    },
-                }));
+                        durationMs: parsed.durationMs,
+                        httpStatus: null,
+                        errorCode: parsed.code,
+                        errorMessage: parsed.message,
+                        response: null,
+                    })
+                );
                 setResponsesByRequestId((previous) => ({
                     ...previous,
-                    [requestId]: {
-                        response: previous[requestId]?.response ?? null,
-                        statusText: failedStatusText,
+                    [planItem.requestId]: {
+                        response: previous[planItem.requestId]?.response ?? null,
+                        statusText,
                         updatedAt: new Date().toISOString(),
                     },
                 }));
 
-                const shouldStop = requestState === "cancelled" || collectionRunStopOnFailure;
-                if (shouldStop) {
-                    const remaining = ordered.slice(index + 1);
-                    if (remaining.length > 0) {
-                        skipped += remaining.length;
-                        const stoppedAt = new Date().toISOString();
-                        setCollectionRunByRequestId((previous) => {
-                            const next = { ...previous };
-                            for (const remainingRequest of remaining) {
-                                next[remainingRequest.id] = {
-                                    state: "skipped",
-                                    statusText:
-                                        requestState === "cancelled"
-                                            ? "Skipped (run cancelled)"
-                                            : "Skipped (stopped on failure)",
-                                    finishedAt: stoppedAt,
-                                };
-                            }
-                            return next;
-                        });
-                    }
-                    applySummary(null);
+                if (requestWasCancelled || collectionRunStopOnFailure) {
+                    const reason = requestWasCancelled
+                        ? "Skipped (run cancelled)"
+                        : "Skipped (stopped on failure)";
+                    commitRun(skipRemainingFrom(planItem.planIndex, reason));
                     break;
                 }
             } finally {
                 collectionRunActiveRequestIdRef.current = null;
             }
-
-            applySummary(null);
         }
 
-        const endedAt = new Date().toISOString();
-        applySummary(endedAt);
+        const finishedAt = new Date().toISOString();
+        const finalSummary = summarizeRunnerExecutions(currentExecutions, cancelledByUser);
+        const finalStatus: RunnerRun["status"] =
+            cancelledByUser
+                ? "cancelled"
+                : finalSummary.failed > 0
+                    ? "failed"
+                    : "completed";
+        commitRun(currentExecutions, finalStatus, finishedAt);
+
         collectionRunActiveRequestIdRef.current = null;
         collectionRunCancelRef.current = false;
-        setCollectionRunPending(false);
 
-        if (cancelledByUser) {
+        if (finalSummary.wasCancelledByUser) {
             setStatus(
-                `⛔ Run cancelled: ${success} success, ${failed} failed, ${cancelled} cancelled, ${skipped} skipped`
+                `⛔ Run cancelled: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.cancelled} cancelled, ${finalSummary.skipped} skipped`
             );
             return;
         }
 
-        if (failed > 0) {
-            setStatus(`❌ Run complete: ${success} success, ${failed} failed, ${skipped} skipped`);
+        if (finalSummary.failed > 0) {
+            setStatus(
+                `❌ Run complete: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.skipped} skipped`
+            );
             return;
         }
 
-        setStatus(`✅ Run complete: ${success}/${ordered.length} success`);
+        setStatus(`✅ Run complete: ${finalSummary.success}/${finalSummary.total} success`);
     }
 
     async function cancelCollectionRun() {
@@ -2433,10 +2492,13 @@ export default function App() {
                 collectionName={current?.meta.name ?? null}
                 orderedRequests={orderedRequests}
                 selectedRequestIds={runnerSelectedRequestIds}
-                runByRequestId={collectionRunByRequestId}
-                runSummary={collectionRunSummary}
+                runMode={runnerIterationMode}
+                iterations={runnerIterations}
+                run={runnerRun}
                 isRunning={collectionRunPending}
                 stopOnFailure={collectionRunStopOnFailure}
+                onRunModeChange={setRunnerIterationMode}
+                onIterationsChange={setRunnerIterations}
                 onStopOnFailureChange={setCollectionRunStopOnFailure}
                 onToggleRequestSelection={toggleRunnerRequestSelection}
                 onSelectAll={selectAllRunnerRequests}
