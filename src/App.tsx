@@ -1539,14 +1539,6 @@ export default function App() {
                                             style={requestDropRowStyle(showDropBefore, showDropAfter)}
                                         >
                                             {showDropBefore && <div style={dropMarkerStyle("before")} />}
-                                            <div
-                                                onMouseDown={(e) => beginRequestDrag(e, r.id)}
-                                                title="Drag to reorder"
-                                                style={dragHandleStyle(draggedRequestId === r.id)}
-                                            >
-                                                ⋮⋮
-                                            </div>
-
                                             <button
                                                 onMouseDown={(e) => beginRequestDrag(e, r.id)}
                                                 onClick={() => setSelection(r)}
@@ -1567,6 +1559,8 @@ export default function App() {
                                                     width: "100%",
                                                     textAlign: "left",
                                                     flexShrink: 0,
+                                                    cursor: draggedRequestId === r.id ? "grabbing" : "grab",
+                                                    userSelect: "none",
                                                 }}
                                             >
                                                 {r.method.toUpperCase()} {r.name} {hasLocalDraft ? "●" : ""}
@@ -2105,8 +2099,7 @@ function requestDropRowStyle(
     return {
         position: "relative",
         display: "flex",
-        alignItems: "center",
-        gap: 6,
+        alignItems: "stretch",
         borderRadius: 10,
         paddingTop: 1,
         paddingBottom: 1,
@@ -2117,38 +2110,18 @@ function requestDropRowStyle(
 
 function listEdgeDropStyle(active: boolean): React.CSSProperties {
     return {
-        height: active ? 20 : 10,
-        borderRadius: 8,
+        height: active ? 34 : 12,
+        borderRadius: 10,
         border: active ? "1px dashed var(--pg-primary)" : "1px dashed transparent",
         color: "var(--pg-primary-ink)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: 11,
+        fontSize: 12,
         fontWeight: 700,
         marginBottom: 2,
         marginTop: 2,
         transition: "all 120ms ease-out",
-    };
-}
-
-function dragHandleStyle(active: boolean): React.CSSProperties {
-    return {
-        width: 28,
-        height: 34,
-        borderRadius: 10,
-        border: "1px solid var(--pg-border)",
-        background: active ? "var(--pg-primary)" : "var(--pg-surface-2)",
-        color: active ? "var(--pg-primary-ink)" : "var(--pg-text-muted)",
-        cursor: active ? "grabbing" : "grab",
-        padding: 0,
-        lineHeight: 1,
-        boxShadow: "none",
-        flexShrink: 0,
-        userSelect: "none",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
     };
 }
 
@@ -2157,7 +2130,7 @@ function edgeDropLabelStyle(): React.CSSProperties {
         background: "var(--pg-primary)",
         color: "var(--pg-primary-ink)",
         borderRadius: 999,
-        padding: "1px 8px",
+        padding: "4px 10px",
         lineHeight: 1.4,
     };
 }
