@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { buttonStyle, dangerButtonStyle, primaryButtonStyle, selectStyle } from "../helpers/UiStyles.ts";
 import type { Request } from "../types.ts";
+import { groupRunnerExecutionsForDisplay } from "../runner/grouping.ts";
 import { calculateRunnerAverages } from "../runner/stats.ts";
 import type {
     RunnerExecutionResult,
@@ -55,12 +56,14 @@ export default function CollectionRunnerModal({
 }: CollectionRunnerModalProps) {
     const [resultTab, setResultTab] = useState<RunnerPanelTab>("executions");
     const [executionFilter, setExecutionFilter] = useState<RunResultFilter>("all");
+    const [expandedByGroupId, setExpandedByGroupId] = useState<Record<string, boolean>>({});
     const [expandedByExecutionId, setExpandedByExecutionId] = useState<Record<string, boolean>>({});
 
     useEffect(() => {
         if (!open) return;
         setExecutionFilter("all");
         setResultTab("executions");
+        setExpandedByGroupId({});
         setExpandedByExecutionId({});
     }, [open, run?.runId]);
 
@@ -84,8 +87,19 @@ export default function CollectionRunnerModal({
             }),
         [executions, executionFilter]
     );
+    const groupedExecutions = useMemo(
+        () => groupRunnerExecutionsForDisplay(visibleExecutions, run?.mode ?? runMode),
+        [visibleExecutions, run?.mode, runMode]
+    );
 
     if (!open) return null;
+
+    function toggleGroupExpanded(groupId: string) {
+        setExpandedByGroupId((previous) => ({
+            ...previous,
+            [groupId]: !(previous[groupId] ?? true),
+        }));
+    }
 
     function toggleExpanded(executionId: string) {
         setExpandedByExecutionId((previous) => ({
@@ -395,90 +409,81 @@ export default function CollectionRunnerModal({
 
                                 {run && visibleExecutions.length > 0 && (
                                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                        {visibleExecutions.map((execution) => {
-                                            const expanded = !!expandedByExecutionId[execution.executionId];
+                                        {groupedExecutions.map((group) => {
+                                            const groupExpanded = expandedByGroupId[group.id] ?? true;
                                             return (
                                                 <div
-                                                    key={execution.executionId}
+                                                    key={group.id}
                                                     style={{
                                                         display: "flex",
                                                         flexDirection: "column",
                                                         gap: 8,
                                                         borderRadius: 10,
-                                                        border: rowBorderStyle(execution.status),
-                                                        background: "var(--pg-surface-1)",
-                                                        padding: "8px 10px",
+                                                        border: "1px solid var(--pg-border)",
+                                                        background: "var(--pg-surface-0)",
+                                                        overflow: "hidden",
                                                     }}
                                                 >
-                                                    <div
+                                                    <button
+                                                        onClick={() => toggleGroupExpanded(group.id)}
                                                         style={{
-                                                            display: "grid",
-                                                            gridTemplateColumns: "70px minmax(0, 1fr) auto",
+                                                            border: "none",
+                                                            borderRadius: 0,
+                                                            background: "var(--pg-surface-1)",
+                                                            color: "var(--pg-text)",
+                                                            display: "flex",
                                                             alignItems: "center",
-                                                            gap: 10,
+                                                            justifyContent: "space-between",
+                                                            gap: 12,
+                                                            width: "100%",
+                                                            cursor: "pointer",
+                                                            padding: "10px 12px",
+                                                            boxShadow: "none",
                                                         }}
                                                     >
-                                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
-                                                            #{execution.planIndex}
-                                                        </div>
-                                                        <div style={{ minWidth: 0 }}>
-                                                            <div
+                                                        <div
+                                                            style={{
+                                                                display: "flex",
+                                                                alignItems: "center",
+                                                                gap: 8,
+                                                                minWidth: 0,
+                                                            }}
+                                                        >
+                                                            <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                                                {groupExpanded ? "▼" : "▶"}
+                                                            </span>
+                                                            <span
                                                                 style={{
-                                                                    color: "var(--pg-text)",
                                                                     fontSize: 13,
                                                                     fontWeight: 700,
+                                                                    color: "var(--pg-text)",
                                                                     whiteSpace: "nowrap",
                                                                     overflow: "hidden",
                                                                     textOverflow: "ellipsis",
                                                                 }}
                                                             >
-                                                                {execution.requestMethod.toUpperCase()} {execution.requestName}
-                                                            </div>
-                                                            <div
-                                                                style={{
-                                                                    fontSize: 12,
-                                                                    color: "var(--pg-text-muted)",
-                                                                    marginTop: 2,
-                                                                    display: "flex",
-                                                                    gap: 8,
-                                                                    flexWrap: "wrap",
-                                                                }}
-                                                            >
-                                                                <span>Req iteration #{execution.requestIterationIndex}</span>
-                                                                {typeof execution.collectionIterationIndex === "number" && (
-                                                                    <span>
-                                                                        Collection iteration #{execution.collectionIterationIndex}
-                                                                    </span>
-                                                                )}
-                                                                {execution.startedAt && (
-                                                                    <span>Started {formatTime(execution.startedAt)}</span>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                                            <span style={runStatusBadgeStyle(execution.status)}>
-                                                                {runStateLabel(execution.status)}
+                                                                {group.label}
                                                             </span>
-                                                            {typeof execution.httpStatus === "number" && (
-                                                                <span style={statusCodeBadgeStyle(execution.httpStatus)}>
-                                                                    {execution.httpStatus}
-                                                                </span>
-                                                            )}
-                                                            {typeof execution.durationMs === "number" && (
-                                                                <span style={durationBadgeStyle()}>{execution.durationMs}ms</span>
-                                                            )}
-                                                            <button
-                                                                onClick={() => toggleExpanded(execution.executionId)}
-                                                                style={expandButtonStyle()}
-                                                                title={expanded ? "Hide details" : "Show details"}
-                                                            >
-                                                                {expanded ? "−" : "+"}
-                                                            </button>
                                                         </div>
-                                                    </div>
+                                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
+                                                            {group.executions.length} item{group.executions.length > 1 ? "s" : ""}
+                                                        </div>
+                                                    </button>
 
-                                                    {expanded && (
-                                                        <ExecutionDetails execution={execution} />
+                                                    {groupExpanded && (
+                                                        <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
+                                                            {group.executions.map((execution) => {
+                                                                const expanded = !!expandedByExecutionId[execution.executionId];
+                                                                return (
+                                                                    <ExecutionRow
+                                                                        key={execution.executionId}
+                                                                        execution={execution}
+                                                                        expanded={expanded}
+                                                                        onToggleExpanded={() => toggleExpanded(execution.executionId)}
+                                                                    />
+                                                                );
+                                                            })}
+                                                        </div>
                                                     )}
                                                 </div>
                                             );
@@ -632,6 +637,101 @@ export default function CollectionRunnerModal({
                     </div>
                 </div>
             </div>
+        </div>
+    );
+}
+
+function ExecutionRow({
+    execution,
+    expanded,
+    onToggleExpanded,
+}: {
+    execution: RunnerExecutionResult;
+    expanded: boolean;
+    onToggleExpanded: () => void;
+}) {
+    return (
+        <div
+            style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                borderRadius: 10,
+                border: rowBorderStyle(execution.status),
+                background: "var(--pg-surface-1)",
+                padding: "8px 10px",
+            }}
+        >
+            <div
+                style={{
+                    display: "grid",
+                    gridTemplateColumns: "70px minmax(0, 1fr) auto",
+                    alignItems: "center",
+                    gap: 10,
+                }}
+            >
+                <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
+                    #{execution.planIndex}
+                </div>
+                <div style={{ minWidth: 0 }}>
+                    <div
+                        style={{
+                            color: "var(--pg-text)",
+                            fontSize: 13,
+                            fontWeight: 700,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                        }}
+                    >
+                        {execution.requestMethod.toUpperCase()} {execution.requestName}
+                    </div>
+                    <div
+                        style={{
+                            fontSize: 12,
+                            color: "var(--pg-text-muted)",
+                            marginTop: 2,
+                            display: "flex",
+                            gap: 8,
+                            flexWrap: "wrap",
+                        }}
+                    >
+                        <span>Req iteration #{execution.requestIterationIndex}</span>
+                        {typeof execution.collectionIterationIndex === "number" && (
+                            <span>
+                                Collection iteration #{execution.collectionIterationIndex}
+                            </span>
+                        )}
+                        {execution.startedAt && (
+                            <span>Started {formatTime(execution.startedAt)}</span>
+                        )}
+                    </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={runStatusBadgeStyle(execution.status)}>
+                        {runStateLabel(execution.status)}
+                    </span>
+                    {typeof execution.httpStatus === "number" && (
+                        <span style={statusCodeBadgeStyle(execution.httpStatus)}>
+                            {execution.httpStatus}
+                        </span>
+                    )}
+                    {typeof execution.durationMs === "number" && (
+                        <span style={durationBadgeStyle()}>{execution.durationMs}ms</span>
+                    )}
+                    <button
+                        onClick={onToggleExpanded}
+                        style={expandButtonStyle()}
+                        title={expanded ? "Hide details" : "Show details"}
+                    >
+                        {expanded ? "−" : "+"}
+                    </button>
+                </div>
+            </div>
+
+            {expanded && (
+                <ExecutionDetails execution={execution} />
+            )}
         </div>
     );
 }
