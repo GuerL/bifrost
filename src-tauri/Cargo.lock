@@ -2806,6 +2806,7 @@ dependencies = [
 name = "postguerl"
 version = "0.1.0"
 dependencies = [
+ "rand 0.8.5",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

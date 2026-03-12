@@ -108,6 +108,14 @@ export function useMonacoVariableSupport({
     const bodyJsonContentListenerRef = useRef<MonacoApi.IDisposable | null>(null);
     const bodyRawContentListenerRef = useRef<MonacoApi.IDisposable | null>(null);
 
+    const getVariableValueForDisplay = useCallback((name: string): string | undefined => {
+        const direct = variableValuesRef.current.get(name);
+        if (direct !== undefined) return direct;
+
+        if (!name.startsWith("$")) return undefined;
+        return variableValuesRef.current.get(name.toLowerCase());
+    }, []);
+
     const refreshEditorVariableDecorations = useCallback(
         (
             editor: MonacoApi.editor.IStandaloneCodeEditor | null,
@@ -125,7 +133,7 @@ export function useMonacoVariableSupport({
             const nextDecorations = collectTemplateVariableMatches(text).map((entry) => {
                 const startPos = model.getPositionAt(entry.startOffset);
                 const endPos = model.getPositionAt(entry.endOffset);
-                const missing = !variableValuesRef.current.has(entry.name);
+                const missing = getVariableValueForDisplay(entry.name) === undefined;
 
                 return {
                     range: {
@@ -147,7 +155,7 @@ export function useMonacoVariableSupport({
                 nextDecorations
             );
         },
-        []
+        [getVariableValueForDisplay]
     );
 
     const bindBodyJsonEditor = useCallback(
@@ -249,7 +257,7 @@ export function useMonacoVariableSupport({
 
                     return {
                         suggestions: filtered.slice(0, 100).map((name) => {
-                            const resolved = variableValuesRef.current.get(name);
+                            const resolved = getVariableValueForDisplay(name);
                             const detail = resolved === undefined
                                 ? "Missing in active environment"
                                 : `Current: ${truncateForHover(resolved, 90)}`;
@@ -281,7 +289,7 @@ export function useMonacoVariableSupport({
 
                     const startPos = model.getPositionAt(match.startOffset);
                     const endPos = model.getPositionAt(match.endOffset);
-                    const value = variableValuesRef.current.get(match.name);
+                    const value = getVariableValueForDisplay(match.name);
                     const description = value === undefined
                         ? "Variable missing in the active environment."
                         : `Current value: \`${truncateForHover(value)}\``;
@@ -303,7 +311,7 @@ export function useMonacoVariableSupport({
 
             monacoProvidersRef.current.push(completionDisposable, hoverDisposable);
         }
-    }, []);
+    }, [getVariableValueForDisplay]);
 
     const editorOptions = useMemo(
         () => ({

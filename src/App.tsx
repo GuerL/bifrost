@@ -86,6 +86,12 @@ type PersistedResponsesState = Record<string, PersistedResponsesCollection>;
 
 const OPEN_TABS_STORAGE_KEY = "postguerl:open-tabs:v1";
 const RESPONSES_STORAGE_KEY = "postguerl:last-responses:v1";
+const DYNAMIC_VARIABLE_NAMES = ["$timestamp", "$uuid", "$randomInt"] as const;
+const DYNAMIC_VARIABLE_PREVIEWS: Record<string, string> = {
+    "$timestamp": "Generated at runtime (Unix timestamp in ms)",
+    "$uuid": "Generated at runtime (UUID v4)",
+    "$randomint": "Generated at runtime (0-999)",
+};
 
 function normalizedRequestOrder(collection: CollectionLoaded): string[] {
     const existingIds = new Set(collection.requests.map((request) => request.id));
@@ -125,6 +131,19 @@ function buildDefaultAuth(type: RequestAuth["type"]): RequestAuth {
         return { type: "api_key", key: "", value: "", in: "header" };
     }
     return { type: "none" };
+}
+
+function normalizeDynamicVariableKey(name: string): string {
+    return name.trim().toLowerCase();
+}
+
+function isSupportedDynamicVariable(name: string): boolean {
+    const normalized = normalizeDynamicVariableKey(name);
+    return DYNAMIC_VARIABLE_NAMES.some((entry) => entry.toLowerCase() === normalized);
+}
+
+function dynamicVariablePreview(name: string): string | undefined {
+    return DYNAMIC_VARIABLE_PREVIEWS[normalizeDynamicVariableKey(name)];
 }
 
 function parseHttpError(error: unknown): { kind: string; message: string; durationMs?: number } {
@@ -443,8 +462,22 @@ export default function App() {
         return values;
     }, [activeEnvironment]);
 
+    const variableValuesWithDynamic = useMemo(() => {
+        const values = new Map(activeEnvironmentValues);
+        for (const variableName of DYNAMIC_VARIABLE_NAMES) {
+            const preview = dynamicVariablePreview(variableName);
+            if (!preview) continue;
+            values.set(variableName, preview);
+            values.set(variableName.toLowerCase(), preview);
+        }
+        return values;
+    }, [activeEnvironmentValues]);
+
     const variableSuggestions = useMemo(
-        () => Array.from(activeEnvironmentValues.keys()).sort((a, b) => a.localeCompare(b)),
+        () =>
+            Array.from(
+                new Set([...activeEnvironmentValues.keys(), ...DYNAMIC_VARIABLE_NAMES])
+            ).sort((a, b) => a.localeCompare(b)),
         [activeEnvironmentValues]
     );
 
@@ -452,6 +485,7 @@ export default function App() {
         (name: string): VariableStatus => {
             const key = name.trim();
             if (!key) return "missing";
+            if (isSupportedDynamicVariable(key)) return "ok";
             return activeEnvironmentValues.has(key) ? "ok" : "missing";
         },
         [activeEnvironmentValues]
@@ -461,6 +495,9 @@ export default function App() {
         (name: string): string | undefined => {
             const key = name.trim();
             if (!key) return undefined;
+            if (isSupportedDynamicVariable(key)) {
+                return dynamicVariablePreview(key);
+            }
             return activeEnvironmentValues.get(key);
         },
         [activeEnvironmentValues]
@@ -473,7 +510,7 @@ export default function App() {
         bindBodyRawEditor,
     } = useMonacoVariableSupport({
         variableSuggestions,
-        variableValues: activeEnvironmentValues,
+        variableValues: variableValuesWithDynamic,
     });
 
     const isDirty = useMemo(() => {
