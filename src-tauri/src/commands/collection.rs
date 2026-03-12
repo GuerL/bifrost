@@ -49,6 +49,7 @@ pub fn init_default_collection(app: AppHandle) -> Result<(), String> {
         headers: vec![],
         query: vec![],
         body: Body::None,
+        auth: Auth::None,
     };
 
     let ping_second = Request {
@@ -61,6 +62,7 @@ pub fn init_default_collection(app: AppHandle) -> Result<(), String> {
         body: Body::Json {
             value: serde_json::json!({"hello": "world"}),
         },
+        auth: Auth::None,
     };
 
     let invalid_htp_request = Request {
@@ -71,6 +73,7 @@ pub fn init_default_collection(app: AppHandle) -> Result<(), String> {
         headers: vec![],
         query: vec![],
         body: Body::None,
+        auth: Auth::None,
     };
 
     let timeout_http_request = Request {
@@ -81,6 +84,7 @@ pub fn init_default_collection(app: AppHandle) -> Result<(), String> {
         headers: vec![],
         query: vec![],
         body: Body::None,
+        auth: Auth::None,
     };
 
     let meta_path = collection_meta_path(&app, "default")?;

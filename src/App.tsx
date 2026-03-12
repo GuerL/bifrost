@@ -44,6 +44,7 @@ import type {
     Environment,
     HttpResponseDto,
     KeyValue,
+    RequestAuth,
     Request,
 } from "./types.ts";
 
@@ -111,6 +112,19 @@ function requestsInOrder(collection: CollectionLoaded): Request[] {
     return normalizedRequestOrder(collection)
         .map((requestId) => requestsById.get(requestId))
         .filter((request): request is Request => !!request);
+}
+
+function buildDefaultAuth(type: RequestAuth["type"]): RequestAuth {
+    if (type === "bearer") {
+        return { type: "bearer", token: "" };
+    }
+    if (type === "basic") {
+        return { type: "basic", username: "", password: "" };
+    }
+    if (type === "api_key") {
+        return { type: "api_key", key: "", value: "", in: "header" };
+    }
+    return { type: "none" };
 }
 
 function parseHttpError(error: unknown): { kind: string; message: string; durationMs?: number } {
@@ -261,7 +275,7 @@ export default function App() {
     const [draftsById, setDraftsById] = useState<Record<string, Request>>({});
     const [pending, setPending] = useState(false);
     const [editorText, setEditorText] = useState("");
-    const [tab, setTab] = useState<"headers" | "query" | "body" | "json">("headers");
+    const [tab, setTab] = useState<"headers" | "query" | "body" | "auth" | "json">("headers");
     const [contextMenu, setContextMenu] = useState<RequestContextMenu | null>(null);
     const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
     const [renameNameInput, setRenameNameInput] = useState("");
@@ -2200,6 +2214,12 @@ export default function App() {
                                 >
                                     Body
                                 </button>
+                                <button
+                                    onClick={() => setTab("auth")}
+                                    style={editorTabStyle(tab === "auth")}
+                                >
+                                    Auth
+                                </button>
                             </div>
 
                             {tab === "headers" && (
@@ -2238,6 +2258,182 @@ export default function App() {
                                     editorPanelStyle={editorPanelStyle}
                                 />
                             )}
+
+                            {tab === "auth" &&
+                                (() => {
+                                    const auth = draft.auth;
+
+                                    return (
+                                        <div
+                                            style={{
+                                                marginTop: 12,
+                                                display: "flex",
+                                                flexDirection: "column",
+                                                gap: 10,
+                                            }}
+                                        >
+                                            <div style={{ display: "grid", gap: 6 }}>
+                                                <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 600 }}>
+                                                    Auth type
+                                                </span>
+                                                <select
+                                                    value={auth.type}
+                                                    onChange={(event) =>
+                                                        updateDraft({
+                                                            auth: buildDefaultAuth(event.target.value as RequestAuth["type"]),
+                                                        })
+                                                    }
+                                                    style={selectStyle()}
+                                                >
+                                                    <option value="none">None</option>
+                                                    <option value="bearer">Bearer token</option>
+                                                    <option value="basic">Basic auth</option>
+                                                    <option value="api_key">API key</option>
+                                                </select>
+                                            </div>
+
+                                            {auth.type === "bearer" && (
+                                                <div style={{ display: "grid", gap: 6 }}>
+                                                    <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 600 }}>
+                                                        Token
+                                                    </span>
+                                                    <VariableInput
+                                                        value={auth.token}
+                                                        onChange={(token) =>
+                                                            updateDraft({
+                                                                auth: { type: "bearer", token },
+                                                            })
+                                                        }
+                                                        placeholder="{{token}}"
+                                                        resolveVariableStatus={resolveVariableStatus}
+                                                        resolveVariableValue={resolveVariableValue}
+                                                        variableSuggestions={variableSuggestions}
+                                                    />
+                                                </div>
+                                            )}
+
+                                            {auth.type === "basic" && (
+                                                <>
+                                                    <div style={{ display: "grid", gap: 6 }}>
+                                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 600 }}>
+                                                            Username
+                                                        </span>
+                                                        <VariableInput
+                                                            value={auth.username}
+                                                            onChange={(username) =>
+                                                                updateDraft({
+                                                                    auth: {
+                                                                        type: "basic",
+                                                                        username,
+                                                                        password: auth.password,
+                                                                    },
+                                                                })
+                                                            }
+                                                            placeholder="{{username}}"
+                                                            resolveVariableStatus={resolveVariableStatus}
+                                                            resolveVariableValue={resolveVariableValue}
+                                                            variableSuggestions={variableSuggestions}
+                                                        />
+                                                    </div>
+                                                    <div style={{ display: "grid", gap: 6 }}>
+                                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 600 }}>
+                                                            Password
+                                                        </span>
+                                                        <VariableInput
+                                                            value={auth.password}
+                                                            onChange={(password) =>
+                                                                updateDraft({
+                                                                    auth: {
+                                                                        type: "basic",
+                                                                        username: auth.username,
+                                                                        password,
+                                                                    },
+                                                                })
+                                                            }
+                                                            placeholder="{{password}}"
+                                                            resolveVariableStatus={resolveVariableStatus}
+                                                            resolveVariableValue={resolveVariableValue}
+                                                            variableSuggestions={variableSuggestions}
+                                                        />
+                                                    </div>
+                                                </>
+                                            )}
+
+                                            {auth.type === "api_key" && (
+                                                <>
+                                                    <div style={{ display: "grid", gap: 6 }}>
+                                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 600 }}>
+                                                            Add to
+                                                        </span>
+                                                        <select
+                                                            value={auth.in}
+                                                            onChange={(event) =>
+                                                                updateDraft({
+                                                                    auth: {
+                                                                        type: "api_key",
+                                                                        key: auth.key,
+                                                                        value: auth.value,
+                                                                        in: event.target.value as "header" | "query",
+                                                                    },
+                                                                })
+                                                            }
+                                                            style={selectStyle()}
+                                                        >
+                                                            <option value="header">Header</option>
+                                                            <option value="query">Query</option>
+                                                        </select>
+                                                    </div>
+
+                                                    <div style={{ display: "grid", gap: 6 }}>
+                                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 600 }}>
+                                                            Key
+                                                        </span>
+                                                        <VariableInput
+                                                            value={auth.key}
+                                                            onChange={(key) =>
+                                                                updateDraft({
+                                                                    auth: {
+                                                                        type: "api_key",
+                                                                        key,
+                                                                        value: auth.value,
+                                                                        in: auth.in,
+                                                                    },
+                                                                })
+                                                            }
+                                                            placeholder="x-api-key"
+                                                            resolveVariableStatus={resolveVariableStatus}
+                                                            resolveVariableValue={resolveVariableValue}
+                                                            variableSuggestions={variableSuggestions}
+                                                        />
+                                                    </div>
+
+                                                    <div style={{ display: "grid", gap: 6 }}>
+                                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 600 }}>
+                                                            Value
+                                                        </span>
+                                                        <VariableInput
+                                                            value={auth.value}
+                                                            onChange={(value) =>
+                                                                updateDraft({
+                                                                    auth: {
+                                                                        type: "api_key",
+                                                                        key: auth.key,
+                                                                        value,
+                                                                        in: auth.in,
+                                                                    },
+                                                                })
+                                                            }
+                                                            placeholder="{{api_key}}"
+                                                            resolveVariableStatus={resolveVariableStatus}
+                                                            resolveVariableValue={resolveVariableValue}
+                                                            variableSuggestions={variableSuggestions}
+                                                        />
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
 
                             {tab === "json" && (
                                 <>

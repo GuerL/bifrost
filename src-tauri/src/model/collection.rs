@@ -27,6 +27,28 @@ pub enum Body {
     Form { fields: Vec<KeyValue> },
 }
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Auth {
+    #[default]
+    None,
+    Bearer { token: String },
+    Basic { username: String, password: String },
+    ApiKey {
+        key: String,
+        value: String,
+        #[serde(rename = "in")]
+        location: AuthLocation,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthLocation {
+    Header,
+    Query,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
     pub id: String,
@@ -36,6 +58,8 @@ pub struct Request {
     pub headers: Vec<KeyValue>,
     pub query: Vec<KeyValue>,
     pub body: Body,
+    #[serde(default)]
+    pub auth: Auth,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -13,6 +13,12 @@ export type Body =
     | { type: "json"; value: any }
     | { type: "form"; fields: KeyValue[] };
 
+export type RequestAuth =
+    | { type: "none" }
+    | { type: "bearer"; token: string }
+    | { type: "basic"; username: string; password: string }
+    | { type: "api_key"; key: string; value: string; in: "header" | "query" };
+
 export type Request = {
     id: string;
     name: string;
@@ -21,6 +27,7 @@ export type Request = {
     headers: KeyValue[];
     query: KeyValue[];
     body: Body;
+    auth: RequestAuth;
 };
 
 export type CollectionLoaded = {

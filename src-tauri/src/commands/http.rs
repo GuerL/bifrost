@@ -1,6 +1,6 @@
 use crate::commands::environment::load_environment_values;
 use crate::commands::state::{RequestRegistry, RunningRequest};
-use crate::model::collection::{Body, HttpMethod, KeyValue, Request};
+use crate::model::collection::{Auth, AuthLocation, Body, HttpMethod, KeyValue, Request};
 use crate::model::http::{HttpErrorDto, HttpResponseDto};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -195,11 +195,93 @@ fn resolve_request_vars(
         }
     };
 
+    req.auth = match req.auth {
+        Auth::None => Auth::None,
+        Auth::Bearer { token } => Auth::Bearer {
+            token: replace_vars_in_text(&token, vars, &mut unresolved),
+        },
+        Auth::Basic { username, password } => Auth::Basic {
+            username: replace_vars_in_text(&username, vars, &mut unresolved),
+            password: replace_vars_in_text(&password, vars, &mut unresolved),
+        },
+        Auth::ApiKey {
+            key,
+            value,
+            location,
+        } => Auth::ApiKey {
+            key: replace_vars_in_text(&key, vars, &mut unresolved),
+            value: replace_vars_in_text(&value, vars, &mut unresolved),
+            location,
+        },
+    };
+
     let mut unresolved_vec: Vec<String> = unresolved.into_iter().collect();
     unresolved_vec.sort();
     (req, unresolved_vec)
 }
-pub async fn do_send_request(req: Request) -> Result<HttpResponseDto, HttpErrorDto> {
+
+fn upsert_header(headers: &mut Vec<KeyValue>, key: &str, value: String) {
+    if let Some(entry) = headers
+        .iter_mut()
+        .find(|header| header.key.eq_ignore_ascii_case(key))
+    {
+        entry.value = value;
+        return;
+    }
+
+    headers.push(KeyValue {
+        key: key.to_string(),
+        value,
+    });
+}
+
+fn upsert_query(query: &mut Vec<KeyValue>, key: &str, value: String) {
+    if let Some(entry) = query.iter_mut().find(|param| param.key == key) {
+        entry.value = value;
+        return;
+    }
+
+    query.push(KeyValue {
+        key: key.to_string(),
+        value,
+    });
+}
+
+fn apply_auth_to_request(req: &mut Request) {
+    let auth = req.auth.clone();
+    match auth {
+        Auth::None => {}
+        Auth::Bearer { token } => {
+            upsert_header(&mut req.headers, "Authorization", format!("Bearer {token}"));
+        }
+        Auth::Basic { .. } => {
+            // handled with reqwest::RequestBuilder::basic_auth below
+        }
+        Auth::ApiKey {
+            key,
+            value,
+            location,
+        } => {
+            let trimmed_key = key.trim();
+            if trimmed_key.is_empty() {
+                return;
+            }
+
+            match location {
+                AuthLocation::Header => {
+                    upsert_header(&mut req.headers, trimmed_key, value.clone());
+                }
+                AuthLocation::Query => {
+                    upsert_query(&mut req.query, trimmed_key, value.clone());
+                }
+            }
+        }
+    }
+}
+
+pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpErrorDto> {
+    apply_auth_to_request(&mut req);
+
     // 1) validate URL early
     let url = reqwest::Url::parse(&req.url)
         .map_err(|e| err("invalid_url", "Invalid URL", Some(e.to_string()), None))?;
@@ -245,6 +327,13 @@ pub async fn do_send_request(req: Request) -> Result<HttpResponseDto, HttpErrorD
             .collect();
         builder = builder.query(&pairs);
     }
+
+    builder = match &req.auth {
+        Auth::Basic { username, password } => {
+            builder.basic_auth(username.clone(), Some(password.clone()))
+        }
+        _ => builder,
+    };
 
     // body
     builder = match &req.body {

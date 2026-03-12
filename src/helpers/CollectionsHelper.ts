@@ -57,6 +57,7 @@ export async function devCreate(current: CollectionLoaded | null, setCurrent: (c
      headers: [],
      query: [],
      body: { type: "none" },
+     auth: { type: "none" },
    };
 
     await invoke("create_request", { collectionId: current.meta.id, request: req });
