@@ -34,6 +34,7 @@ pub fn run() {
             commands::collection::update_request,
             commands::collection::delete_request,
             commands::collection::rename_request,
+            commands::collection::reorder_requests,
             commands::collection::list_collections,
             commands::collection::create_collection,
             commands::collection::rename_collection,

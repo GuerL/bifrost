@@ -43,6 +43,11 @@ type CloseDraftModal = {
     requestId: string;
 };
 
+type RequestDropIndicator = {
+    requestId: string;
+    position: "before" | "after";
+};
+
 type DeleteCollectionModal = {
     id: string;
     name: string;
@@ -202,6 +207,8 @@ export default function App() {
     const [renameNameInput, setRenameNameInput] = useState("");
     const [renameError, setRenameError] = useState("");
     const [renameBusy, setRenameBusy] = useState(false);
+    const [draggedRequestId, setDraggedRequestId] = useState<string | null>(null);
+    const [dropIndicator, setDropIndicator] = useState<RequestDropIndicator | null>(null);
     const [environmentsModalOpen, setEnvironmentsModalOpen] = useState(false);
     const [envSelectedId, setEnvSelectedId] = useState<string | null>(null);
     const [envDraftName, setEnvDraftName] = useState("");
@@ -225,6 +232,8 @@ export default function App() {
         setSelectedRequestId(null);
         setOpenRequestIds([]);
         setResp(null);
+        setDraggedRequestId(null);
+        setDropIndicator(null);
         setResponsesByRequestId({});
         setDraftsById({});
         setCloseDraftModal(null);
@@ -508,6 +517,11 @@ export default function App() {
     }, [current?.meta.id]);
 
     useEffect(() => {
+        setDraggedRequestId(null);
+        setDropIndicator(null);
+    }, [current?.meta.id]);
+
+    useEffect(() => {
         if (!current) return;
         const validIds = new Set(current.requests.map((request) => request.id));
         setOpenRequestIds((previous) => previous.filter((requestId) => validIds.has(requestId)));
@@ -600,6 +614,8 @@ export default function App() {
         function onKeyDown(e: KeyboardEvent) {
             if (e.key !== "Escape") return;
             setContextMenu(null);
+            setDraggedRequestId(null);
+            setDropIndicator(null);
             if (!renameBusy) {
                 setRenameTargetId(null);
                 setRenameError("");
@@ -621,6 +637,27 @@ export default function App() {
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [renameBusy, envBusy, collectionBusy, closeDraftBusy]);
+
+    useEffect(() => {
+        if (!draggedRequestId) return;
+
+        const previousCursor = document.body.style.cursor;
+        const previousUserSelect = document.body.style.userSelect;
+        document.body.style.cursor = "grabbing";
+        document.body.style.userSelect = "none";
+
+        function onMouseUp() {
+            setDraggedRequestId(null);
+            setDropIndicator(null);
+        }
+
+        window.addEventListener("mouseup", onMouseUp);
+        return () => {
+            window.removeEventListener("mouseup", onMouseUp);
+            document.body.style.cursor = previousCursor;
+            document.body.style.userSelect = previousUserSelect;
+        };
+    }, [draggedRequestId]);
 
     const updateDraft = useCallback(
         (patch: Partial<Request>) => {
@@ -864,8 +901,86 @@ export default function App() {
         setSelectedRequestId(r.id);
     }
 
+    async function reorderRequestsInCollection(
+        sourceRequestId: string,
+        targetRequestId: string,
+        position: "before" | "after"
+    ) {
+        if (!current) return;
+        if (targetRequestId === sourceRequestId) return;
+
+        const currentOrder = current.requests.map((request) => request.id);
+        if (!currentOrder.includes(targetRequestId) || !currentOrder.includes(sourceRequestId)) {
+            return;
+        }
+
+        const withoutDragged = currentOrder.filter((id) => id !== sourceRequestId);
+        const targetIndex = withoutDragged.indexOf(targetRequestId);
+        if (targetIndex === -1) return;
+
+        const insertIndex = position === "before" ? targetIndex : targetIndex + 1;
+        withoutDragged.splice(insertIndex, 0, sourceRequestId);
+        const nextOrder = withoutDragged;
+
+        const unchanged =
+            nextOrder.length === currentOrder.length &&
+            nextOrder.every((id, index) => id === currentOrder[index]);
+        if (unchanged) return;
+
+        const previousCurrent = current;
+        const requestsById = new Map(previousCurrent.requests.map((request) => [request.id, request]));
+        const nextRequests = nextOrder
+            .map((id) => requestsById.get(id))
+            .filter((request): request is Request => !!request);
+
+        if (nextRequests.length !== nextOrder.length) {
+            setStatus("❌ Reorder failed: inconsistent request set");
+            return;
+        }
+
+        setCurrent((previous) => {
+            if (!previous || previous.meta.id !== previousCurrent.meta.id) return previous;
+            return {
+                ...previous,
+                meta: {
+                    ...previous.meta,
+                    request_order: nextOrder,
+                },
+                requests: nextRequests,
+            };
+        });
+
+        try {
+            await invoke("reorder_requests", {
+                collectionId: previousCurrent.meta.id,
+                requestOrder: nextOrder,
+            });
+            setStatus("✅ Request order updated");
+        } catch (e) {
+            setCurrent((previous) => {
+                if (!previous || previous.meta.id !== previousCurrent.meta.id) return previous;
+                return previousCurrent;
+            });
+            setStatus(`❌ Reorder failed: ${String(e)}`);
+        }
+    }
+
+    function beginRequestDrag(
+        e: React.MouseEvent<HTMLElement>,
+        requestId: string
+    ) {
+        if (e.button !== 0) return;
+        setDraggedRequestId(requestId);
+        setDropIndicator(null);
+    }
+
     function onDeleteRequest(requestId: string) {
         if (!current) return;
+
+        if (draggedRequestId === requestId) {
+            setDraggedRequestId(null);
+            setDropIndicator(null);
+        }
 
         setDraftsById((prev) => {
             const next = { ...prev };
@@ -1353,37 +1468,146 @@ export default function App() {
                                 paddingRight: 4,
                             }}
                         >
+                            {current && current.requests.length > 0 && (
+                                <div
+                                    onMouseMove={() => {
+                                        const firstRequestId = current.requests[0].id;
+                                        if (!draggedRequestId || draggedRequestId === firstRequestId) return;
+                                        setDropIndicator({
+                                            requestId: firstRequestId,
+                                            position: "before",
+                                        });
+                                    }}
+                                    onMouseUp={() => {
+                                        const firstRequestId = current.requests[0].id;
+                                        if (!draggedRequestId || draggedRequestId === firstRequestId) return;
+                                        setDropIndicator(null);
+                                        setDraggedRequestId(null);
+                                        void reorderRequestsInCollection(
+                                            draggedRequestId,
+                                            firstRequestId,
+                                            "before"
+                                        );
+                                    }}
+                                    style={listEdgeDropStyle(
+                                        !!current.requests[0] &&
+                                            dropIndicator?.requestId === current.requests[0].id &&
+                                            dropIndicator.position === "before"
+                                    )}
+                                >
+                                    {dropIndicator?.requestId === current.requests[0].id &&
+                                        dropIndicator.position === "before" && (
+                                            <span style={edgeDropLabelStyle()}>Drop at top</span>
+                                        )}
+                                </div>
+                            )}
+
                             {current &&
                                 current.requests.map((r) => {
                                     const hasLocalDraft = !!draftsById[r.id];
+                                    const showDropBefore =
+                                        dropIndicator?.requestId === r.id &&
+                                        dropIndicator.position === "before";
+                                    const showDropAfter =
+                                        dropIndicator?.requestId === r.id &&
+                                        dropIndicator.position === "after";
 
                                     return (
-                                        <button
+                                        <div
                                             key={r.id}
-                                            onClick={() => setSelection(r)}
-                                            onContextMenu={(e) => {
-                                                e.preventDefault();
-                                                setSelection(r);
-                                                setContextMenu({
-                                                    x: e.clientX,
-                                                    y: e.clientY,
-                                                    requestId: r.id,
-                                                });
+                                            onMouseMove={(e) => {
+                                                if (!draggedRequestId || draggedRequestId === r.id) return;
+                                                const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                                                const position =
+                                                    e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+                                                setDropIndicator((previous) =>
+                                                    previous?.requestId === r.id && previous.position === position
+                                                        ? previous
+                                                        : { requestId: r.id, position }
+                                                );
                                             }}
-                                            style={{
-                                                ...requestListItemStyle(
-                                                    r.id === selectedRequestId,
-                                                    hasLocalDraft
-                                                ),
-                                                width: "100%",
-                                                textAlign: "left",
-                                                flexShrink: 0,
+                                            onMouseUp={(e) => {
+                                                if (!draggedRequestId || draggedRequestId === r.id) return;
+                                                const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                                                const position =
+                                                    e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+
+                                                setDropIndicator(null);
+                                                setDraggedRequestId(null);
+                                                void reorderRequestsInCollection(draggedRequestId, r.id, position);
                                             }}
+                                            style={requestDropRowStyle(showDropBefore, showDropAfter)}
                                         >
-                                            {r.method.toUpperCase()} {r.name} {hasLocalDraft ? "●" : ""}
-                                        </button>
+                                            {showDropBefore && <div style={dropMarkerStyle("before")} />}
+                                            <div
+                                                onMouseDown={(e) => beginRequestDrag(e, r.id)}
+                                                title="Drag to reorder"
+                                                style={dragHandleStyle(draggedRequestId === r.id)}
+                                            >
+                                                ⋮⋮
+                                            </div>
+
+                                            <button
+                                                onMouseDown={(e) => beginRequestDrag(e, r.id)}
+                                                onClick={() => setSelection(r)}
+                                                onContextMenu={(e) => {
+                                                    e.preventDefault();
+                                                    setSelection(r);
+                                                    setContextMenu({
+                                                        x: e.clientX,
+                                                        y: e.clientY,
+                                                        requestId: r.id,
+                                                    });
+                                                }}
+                                                style={{
+                                                    ...requestListItemStyle(
+                                                        r.id === selectedRequestId,
+                                                        hasLocalDraft
+                                                    ),
+                                                    width: "100%",
+                                                    textAlign: "left",
+                                                    flexShrink: 0,
+                                                }}
+                                            >
+                                                {r.method.toUpperCase()} {r.name} {hasLocalDraft ? "●" : ""}
+                                            </button>
+                                            {showDropAfter && <div style={dropMarkerStyle("after")} />}
+                                        </div>
                                     );
                                 })}
+
+                            {current && current.requests.length > 0 && (
+                                <div
+                                    onMouseMove={() => {
+                                        const lastRequestId = current.requests[current.requests.length - 1].id;
+                                        if (!draggedRequestId || draggedRequestId === lastRequestId) return;
+                                        setDropIndicator({
+                                            requestId: lastRequestId,
+                                            position: "after",
+                                        });
+                                    }}
+                                    onMouseUp={() => {
+                                        const lastRequestId = current.requests[current.requests.length - 1].id;
+                                        if (!draggedRequestId || draggedRequestId === lastRequestId) return;
+                                        setDropIndicator(null);
+                                        setDraggedRequestId(null);
+                                        void reorderRequestsInCollection(
+                                            draggedRequestId,
+                                            lastRequestId,
+                                            "after"
+                                        );
+                                    }}
+                                    style={listEdgeDropStyle(
+                                        dropIndicator?.requestId === current.requests[current.requests.length - 1].id &&
+                                            dropIndicator.position === "after"
+                                    )}
+                                >
+                                    {dropIndicator?.requestId === current.requests[current.requests.length - 1].id &&
+                                        dropIndicator.position === "after" && (
+                                            <span style={edgeDropLabelStyle()}>Drop at bottom</span>
+                                        )}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -1871,6 +2095,85 @@ function requestListItemStyle(active: boolean, hasLocalDraft: boolean): React.CS
         boxShadow: active ? "0 12px 24px rgba(var(--pg-primary-rgb), 0.35)" : "none",
         color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
         fontWeight: active ? 700 : 500,
+    };
+}
+
+function requestDropRowStyle(
+    dropBefore: boolean,
+    dropAfter: boolean
+): React.CSSProperties {
+    return {
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        borderRadius: 10,
+        paddingTop: 1,
+        paddingBottom: 1,
+        background:
+            dropBefore || dropAfter ? "rgba(var(--pg-primary-rgb), 0.08)" : "transparent",
+    };
+}
+
+function listEdgeDropStyle(active: boolean): React.CSSProperties {
+    return {
+        height: active ? 20 : 10,
+        borderRadius: 8,
+        border: active ? "1px dashed var(--pg-primary)" : "1px dashed transparent",
+        color: "var(--pg-primary-ink)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 11,
+        fontWeight: 700,
+        marginBottom: 2,
+        marginTop: 2,
+        transition: "all 120ms ease-out",
+    };
+}
+
+function dragHandleStyle(active: boolean): React.CSSProperties {
+    return {
+        width: 28,
+        height: 34,
+        borderRadius: 10,
+        border: "1px solid var(--pg-border)",
+        background: active ? "var(--pg-primary)" : "var(--pg-surface-2)",
+        color: active ? "var(--pg-primary-ink)" : "var(--pg-text-muted)",
+        cursor: active ? "grabbing" : "grab",
+        padding: 0,
+        lineHeight: 1,
+        boxShadow: "none",
+        flexShrink: 0,
+        userSelect: "none",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+    };
+}
+
+function edgeDropLabelStyle(): React.CSSProperties {
+    return {
+        background: "var(--pg-primary)",
+        color: "var(--pg-primary-ink)",
+        borderRadius: 999,
+        padding: "1px 8px",
+        lineHeight: 1.4,
+    };
+}
+
+function dropMarkerStyle(position: "before" | "after"): React.CSSProperties {
+    return {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        top: position === "before" ? -3 : undefined,
+        bottom: position === "after" ? -3 : undefined,
+        height: 3,
+        borderRadius: 999,
+        background: "var(--pg-primary)",
+        pointerEvents: "none",
+        boxShadow: "0 0 0 1px rgba(var(--pg-primary-rgb), 0.35)",
     };
 }
 

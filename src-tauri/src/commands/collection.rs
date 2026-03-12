@@ -402,6 +402,36 @@ pub fn rename_request(
 }
 
 #[tauri::command]
+pub fn reorder_requests(
+    app: AppHandle,
+    collection_id: String,
+    request_order: Vec<String>,
+) -> Result<(), String> {
+    let meta_path = collection_meta_path(&app, &collection_id)?;
+    if !meta_path.exists() {
+        return Err(format!("Collection not found: {}", collection_id));
+    }
+
+    let mut meta = read_json::<CollectionMeta>(&meta_path)?;
+    if meta.request_order.len() != request_order.len() {
+        return Err("Invalid request order length".into());
+    }
+
+    let mut expected = meta.request_order.clone();
+    let mut next = request_order.clone();
+    expected.sort();
+    next.sort();
+
+    if expected != next {
+        return Err("Invalid request order IDs".into());
+    }
+
+    meta.request_order = request_order;
+    write_json(&meta_path, &meta)?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
