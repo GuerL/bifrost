@@ -16,6 +16,7 @@ import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
 import RequestBodyEditor from "./components/RequestBodyEditor.tsx";
 import CollectionsModal from "./components/CollectionsModal.tsx";
 import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
+import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
 import {
     buttonStyle,
@@ -54,7 +55,17 @@ type PersistedTabsEntry = {
 
 type PersistedTabsState = Record<string, PersistedTabsEntry>;
 
+type PersistedResponseEntry = {
+    response: HttpResponseDto | null;
+    statusText: string;
+    updatedAt: string;
+};
+
+type PersistedResponsesCollection = Record<string, PersistedResponseEntry>;
+type PersistedResponsesState = Record<string, PersistedResponsesCollection>;
+
 const OPEN_TABS_STORAGE_KEY = "postguerl:open-tabs:v1";
+const RESPONSES_STORAGE_KEY = "postguerl:last-responses:v1";
 
 function readPersistedTabsState(): PersistedTabsState {
     if (typeof window === "undefined") return {};
@@ -93,6 +104,90 @@ function writePersistedTabsState(state: PersistedTabsState) {
     }
 }
 
+function sanitizeHttpResponse(input: unknown): HttpResponseDto | null {
+    if (!input || typeof input !== "object") return null;
+    const source = input as Record<string, unknown>;
+    if (
+        typeof source.status !== "number" ||
+        !Array.isArray(source.headers) ||
+        typeof source.body_text !== "string" ||
+        typeof source.duration_ms !== "number"
+    ) {
+        return null;
+    }
+
+    const headers = source.headers
+        .filter(
+            (item): item is { key: string; value: string } =>
+                !!item &&
+                typeof item === "object" &&
+                typeof (item as { key?: unknown }).key === "string" &&
+                typeof (item as { value?: unknown }).value === "string"
+        )
+        .map((item) => ({ key: item.key, value: item.value }));
+
+    return {
+        status: source.status,
+        headers,
+        body_text: source.body_text,
+        duration_ms: source.duration_ms,
+    };
+}
+
+function sanitizeResponseEntry(entry: unknown): PersistedResponseEntry | null {
+    if (!entry || typeof entry !== "object") return null;
+    const source = entry as Record<string, unknown>;
+    if (typeof source.statusText !== "string" || typeof source.updatedAt !== "string") {
+        return null;
+    }
+
+    return {
+        response: sanitizeHttpResponse(source.response),
+        statusText: source.statusText,
+        updatedAt: source.updatedAt,
+    };
+}
+
+function readPersistedResponsesState(): PersistedResponsesState {
+    if (typeof window === "undefined") return {};
+    try {
+        const raw = window.localStorage.getItem(RESPONSES_STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw) as unknown;
+        if (!parsed || typeof parsed !== "object") return {};
+
+        const result: PersistedResponsesState = {};
+        for (const [collectionId, value] of Object.entries(parsed as Record<string, unknown>)) {
+            if (!value || typeof value !== "object") continue;
+            const entries: PersistedResponsesCollection = {};
+            for (const [requestId, entry] of Object.entries(value as Record<string, unknown>)) {
+                const normalized = sanitizeResponseEntry(entry);
+                if (!normalized) continue;
+                entries[requestId] = normalized;
+            }
+            result[collectionId] = entries;
+        }
+        return result;
+    } catch {
+        return {};
+    }
+}
+
+function writePersistedResponsesState(state: PersistedResponsesState) {
+    if (typeof window === "undefined") return;
+    try {
+        window.localStorage.setItem(RESPONSES_STORAGE_KEY, JSON.stringify(state));
+    } catch {
+        // ignore storage write failures
+    }
+}
+
+function shortRequestRunLabel(entry: PersistedResponseEntry | undefined): string {
+    if (!entry) return "";
+    if (entry.response) return ` · ${entry.response.status}`;
+    return entry.statusText.startsWith("❌") ? " · ERR" : "";
+}
+
 export default function App() {
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
@@ -102,6 +197,8 @@ export default function App() {
     const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
     const [openRequestIds, setOpenRequestIds] = useState<string[]>([]);
     const [resp, setResp] = useState<HttpResponseDto | null>(null);
+    const [responsesByRequestId, setResponsesByRequestId] = useState<PersistedResponsesCollection>({});
+    const [responseTab, setResponseTab] = useState<ResponseTabId>("body");
     const [draftsById, setDraftsById] = useState<Record<string, Request>>({});
     const [pending, setPending] = useState(false);
     const [editorText, setEditorText] = useState("");
@@ -134,6 +231,7 @@ export default function App() {
         setSelectedRequestId(null);
         setOpenRequestIds([]);
         setResp(null);
+        setResponsesByRequestId({});
         setDraftsById({});
         setCloseDraftModal(null);
         setCloseDraftBusy(false);
@@ -204,6 +302,13 @@ export default function App() {
             })
             .filter((value): value is { requestId: string; method: Request["method"]; name: string; hasLocalDraft: boolean } => value !== null);
     }, [current, openRequestIds, draftsById]);
+
+    const selectedResponseStatusText = useMemo(() => {
+        if (!selectedRequestId) return status || "Idle";
+        if (pending) return "Sending...";
+        const persistedStatus = responsesByRequestId[selectedRequestId]?.statusText;
+        return persistedStatus ?? (status || "No request sent yet.");
+    }, [selectedRequestId, pending, responsesByRequestId, status]);
 
     const activeEnvironment = useMemo(
         () => environments.find((env) => env.id === activeEnvironmentId) ?? null,
@@ -331,6 +436,53 @@ export default function App() {
 
     useEffect(() => {
         if (!current) {
+            setResponsesByRequestId({});
+            return;
+        }
+
+        const persisted = readPersistedResponsesState();
+        const source = persisted[current.meta.id] ?? {};
+        const validRequestIds = new Set(current.requests.map((request) => request.id));
+        const filtered = Object.fromEntries(
+            Object.entries(source).filter(([requestId]) => validRequestIds.has(requestId))
+        ) as PersistedResponsesCollection;
+
+        setResponsesByRequestId(filtered);
+    }, [current?.meta.id]);
+
+    useEffect(() => {
+        if (!current) return;
+        const validRequestIds = new Set(current.requests.map((request) => request.id));
+        setResponsesByRequestId((previous) => {
+            const next = Object.fromEntries(
+                Object.entries(previous).filter(([requestId]) => validRequestIds.has(requestId))
+            ) as PersistedResponsesCollection;
+
+            if (Object.keys(next).length === Object.keys(previous).length) {
+                return previous;
+            }
+            return next;
+        });
+    }, [current?.requests]);
+
+    useEffect(() => {
+        if (!current) return;
+        const persisted = readPersistedResponsesState();
+        persisted[current.meta.id] = responsesByRequestId;
+        writePersistedResponsesState(persisted);
+    }, [current?.meta.id, responsesByRequestId]);
+
+    useEffect(() => {
+        if (!selectedRequestId) {
+            setResp(null);
+            return;
+        }
+        const entry = responsesByRequestId[selectedRequestId];
+        setResp(entry?.response ?? null);
+    }, [selectedRequestId, responsesByRequestId]);
+
+    useEffect(() => {
+        if (!current) {
             setOpenRequestIds([]);
             hydratedTabsCollectionIdRef.current = null;
             return;
@@ -351,13 +503,11 @@ export default function App() {
 
         if (persistedEntry.activeRequestId && validIds.has(persistedEntry.activeRequestId)) {
             setSelectedRequestId(persistedEntry.activeRequestId);
-            setResp(null);
         } else if (
             restoredIds.length > 0 &&
             (!selectedRequestId || !validIds.has(selectedRequestId))
         ) {
             setSelectedRequestId(restoredIds[0]);
-            setResp(null);
         }
 
         hydratedTabsCollectionIdRef.current = current.meta.id;
@@ -578,7 +728,6 @@ export default function App() {
             if (selectedRequestId === requestId) {
                 const nextSelection = remaining[Math.min(index, remaining.length - 1)] ?? null;
                 setSelectedRequestId(nextSelection);
-                setResp(null);
             }
         },
         [openRequestIds, selectedRequestId]
@@ -654,13 +803,31 @@ export default function App() {
                 req,
                 environmentId: activeEnvironmentId,
             });
+            const statusText = `✅ ${r.status} in ${r.duration_ms}ms`;
             setResp(r);
-            setStatus(`✅ ${r.status} in ${r.duration_ms}ms`);
+            setStatus(statusText);
+            setResponsesByRequestId((previous) => ({
+                ...previous,
+                [selectedRequestId]: {
+                    response: r,
+                    statusText,
+                    updatedAt: new Date().toISOString(),
+                },
+            }));
         } catch (e: any) {
             const kind = e?.kind ?? "unknown";
             const msg = e?.message ?? String(e);
             const d = e?.duration_ms;
-            setStatus(`❌ ${kind}: ${msg}${d != null ? ` (${d}ms)` : ""}`);
+            const statusText = `❌ ${kind}: ${msg}${d != null ? ` (${d}ms)` : ""}`;
+            setStatus(statusText);
+            setResponsesByRequestId((previous) => ({
+                ...previous,
+                [selectedRequestId]: {
+                    response: previous[selectedRequestId]?.response ?? null,
+                    statusText,
+                    updatedAt: new Date().toISOString(),
+                },
+            }));
         } finally {
             const p = await isPending(selectedRequestId).catch(() => false);
             setPending(p);
@@ -672,7 +839,16 @@ export default function App() {
 
         try {
             await invoke("cancel_request", { requestId: selectedRequestId });
-            setStatus("⛔ Cancel requested");
+            const statusText = "⛔ Cancel requested";
+            setStatus(statusText);
+            setResponsesByRequestId((previous) => ({
+                ...previous,
+                [selectedRequestId]: {
+                    response: previous[selectedRequestId]?.response ?? null,
+                    statusText,
+                    updatedAt: new Date().toISOString(),
+                },
+            }));
         } catch (e) {
             setStatus(`❌ Cancel failed: ${String(e)}`);
         } finally {
@@ -683,7 +859,6 @@ export default function App() {
 
     function setSelection(r: Request) {
         setSelectedRequestId(r.id);
-        setResp(null);
     }
 
     function onDeleteRequest(requestId: string) {
@@ -695,6 +870,11 @@ export default function App() {
             return next;
         });
         setOpenRequestIds((previous) => previous.filter((id) => id !== requestId));
+        setResponsesByRequestId((previous) => {
+            const next = { ...previous };
+            delete next[requestId];
+            return next;
+        });
         setCloseDraftModal((previous) =>
             previous?.requestId === requestId ? null : previous
         );
@@ -1173,6 +1353,7 @@ export default function App() {
                             {current &&
                                 current.requests.map((r) => {
                                     const hasLocalDraft = !!draftsById[r.id];
+                                    const runLabel = shortRequestRunLabel(responsesByRequestId[r.id]);
 
                                     return (
                                         <button
@@ -1197,7 +1378,7 @@ export default function App() {
                                                 flexShrink: 0,
                                             }}
                                         >
-                                            {r.method.toUpperCase()} {r.name} {hasLocalDraft ? "●" : ""}
+                                            {r.method.toUpperCase()} {r.name}{runLabel} {hasLocalDraft ? "●" : ""}
                                         </button>
                                     );
                                 })}
@@ -1231,6 +1412,9 @@ export default function App() {
                             >
                                 {openTabs.map((openTab) => {
                                     const active = openTab.requestId === selectedRequestId;
+                                    const runLabel = shortRequestRunLabel(
+                                        responsesByRequestId[openTab.requestId]
+                                    );
                                     return (
                                         <div
                                             key={openTab.requestId}
@@ -1239,11 +1423,10 @@ export default function App() {
                                             <button
                                                 onClick={() => {
                                                     setSelectedRequestId(openTab.requestId);
-                                                    setResp(null);
                                                 }}
                                                 style={draftTabButtonStyle(active)}
                                             >
-                                                {openTab.method.toUpperCase()} {openTab.name}
+                                                {openTab.method.toUpperCase()} {openTab.name}{runLabel}
                                                 {openTab.hasLocalDraft ? " ●" : ""}
                                             </button>
                                             <button
@@ -1408,44 +1591,12 @@ export default function App() {
                                 </>
                             )}
 
-                            <div
-                                style={{
-                                    display: "flex",
-                                    gap: 8,
-                                    flexDirection: "column",
-                                    width: "100%",
-                                    flexShrink: 0,
-                                }}
-                            >
-                                <div
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "space-between",
-                                        gap: 8,
-                                    }}
-                                >
-                                    <div>
-                                        <h3 style={{ margin: 0 }}>Response</h3>
-                                    </div>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                        <h3 style={{ margin: 0 }}>Status</h3>
-                                        <div>{status}</div>
-                                    </div>
-                                </div>
-
-                                <pre
-                                    style={{
-                                        background: "var(--pg-surface-1)",
-                                        color: "var(--pg-text-dim)",
-                                        width: "100%",
-                                        height: "clamp(180px, 30vh, 360px)",
-                                        overflow: "auto",
-                                    }}
-                                >
-                  {resp ? JSON.stringify(resp, null, 2) : "No response yet."}
-                </pre>
-                            </div>
+                            <ResponsePanel
+                                response={resp}
+                                statusText={selectedResponseStatusText}
+                                activeTab={responseTab}
+                                onTabChange={setResponseTab}
+                            />
                         </>
                     )}
 
