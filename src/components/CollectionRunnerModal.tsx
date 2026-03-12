@@ -737,6 +737,11 @@ function ExecutionRow({
 }
 
 function ExecutionDetails({ execution }: { execution: RunnerExecutionResult }) {
+    const preRequestScriptError = execution.preRequestScriptError ?? null;
+    const postResponseScriptError = execution.postResponseScriptError ?? null;
+    const preRequestScriptTests = execution.preRequestScriptTests ?? [];
+    const postResponseScriptTests = execution.postResponseScriptTests ?? [];
+
     return (
         <div
             style={{
@@ -808,6 +813,54 @@ function ExecutionDetails({ execution }: { execution: RunnerExecutionResult }) {
                         {execution.response.bodyText}
                         {execution.response.bodyTruncated ? "\n\n…truncated" : ""}
                     </pre>
+                )}
+            </span>
+
+            <span style={detailLabelStyle()}>Pre-request script</span>
+            <span style={detailValueStyle()}>{preRequestScriptError ?? "—"}</span>
+
+            <span style={detailLabelStyle()}>Post-response script</span>
+            <span style={detailValueStyle()}>{postResponseScriptError ?? "—"}</span>
+
+            <span style={detailLabelStyle()}>Pre-request tests</span>
+            <span style={detailValueStyle()}>
+                {preRequestScriptTests.length === 0 ? (
+                    "—"
+                ) : (
+                    <div style={{ display: "grid", gap: 4 }}>
+                        {preRequestScriptTests.map((test, index) => (
+                            <div
+                                key={`${test.name}-${index}`}
+                                style={{
+                                    color: test.status === "passed" ? "var(--pg-primary-soft)" : "var(--pg-danger)",
+                                }}
+                            >
+                                {test.status === "passed" ? "✓" : "✗"} {test.name}
+                                {test.error ? ` — ${test.error}` : ""}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </span>
+
+            <span style={detailLabelStyle()}>Post-response tests</span>
+            <span style={detailValueStyle()}>
+                {postResponseScriptTests.length === 0 ? (
+                    "—"
+                ) : (
+                    <div style={{ display: "grid", gap: 4 }}>
+                        {postResponseScriptTests.map((test, index) => (
+                            <div
+                                key={`${test.name}-${index}`}
+                                style={{
+                                    color: test.status === "passed" ? "var(--pg-primary-soft)" : "var(--pg-danger)",
+                                }}
+                            >
+                                {test.status === "passed" ? "✓" : "✗"} {test.name}
+                                {test.error ? ` — ${test.error}` : ""}
+                            </div>
+                        ))}
+                    </div>
                 )}
             </span>
         </div>

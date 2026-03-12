@@ -40,6 +40,12 @@ export function createQueuedExecutionResult(
         errorCode: null,
         errorMessage: null,
         response: null,
+        extractedVariables: [],
+        extractionErrors: [],
+        preRequestScriptError: null,
+        postResponseScriptError: null,
+        preRequestScriptTests: [],
+        postResponseScriptTests: [],
     };
 }
 

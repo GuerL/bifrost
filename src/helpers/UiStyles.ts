@@ -95,3 +95,21 @@ export function windowButtonStyle(
         boxShadow: "0 8px 20px rgba(2, 6, 23, 0.2)",
     };
 }
+
+export function codeTextareaStyle(minHeight = 160): CSSProperties {
+    return {
+        width: "100%",
+        minHeight,
+        resize: "vertical",
+        fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
+        fontSize: 13,
+        lineHeight: 1.5,
+        borderRadius: 10,
+        border: "1px solid var(--pg-border)",
+        background: "var(--pg-editor-deep)",
+        color: "var(--pg-text)",
+        padding: "10px 12px",
+        boxShadow: "inset 0 0 0 1px rgba(148, 163, 184, 0.08)",
+        outline: "none",
+    };
+}

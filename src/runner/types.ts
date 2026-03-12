@@ -30,6 +30,12 @@ export type RunnerResponseSnapshot = {
     durationMs: number;
 };
 
+export type RunnerScriptTestResult = {
+    name: string;
+    status: "passed" | "failed";
+    error: string | null;
+};
+
 export type RunnerExecutionResult = RunnerExecutionPlanItem & {
     executionId: string;
     status: RunnerExecutionStatus;
@@ -42,6 +48,12 @@ export type RunnerExecutionResult = RunnerExecutionPlanItem & {
     errorCode: string | null;
     errorMessage: string | null;
     response: RunnerResponseSnapshot | null;
+    extractedVariables: { key: string; value: string }[];
+    extractionErrors: string[];
+    preRequestScriptError: string | null;
+    postResponseScriptError: string | null;
+    preRequestScriptTests: RunnerScriptTestResult[];
+    postResponseScriptTests: RunnerScriptTestResult[];
 };
 
 export type RunnerRunSummary = {

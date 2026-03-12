@@ -12,6 +12,11 @@ type CookieItem = {
 type ResponsePanelProps = {
     response: HttpResponseDto | null;
     statusText: string;
+    scriptReport: {
+        preRequestError: string | null;
+        postResponseError: string | null;
+        tests: { name: string; status: "passed" | "failed"; error: string | null }[];
+    } | null;
     activeTab: ResponseTabId;
     onTabChange: (tab: ResponseTabId) => void;
 };
@@ -19,11 +24,17 @@ type ResponsePanelProps = {
 export default function ResponsePanel({
     response,
     statusText,
+    scriptReport,
     activeTab,
     onTabChange,
 }: ResponsePanelProps) {
     const parsedBody = useMemo(() => formatResponseBody(response), [response]);
     const cookies = useMemo(() => extractCookies(response), [response]);
+    const hasScriptInfo = !!scriptReport && (
+        !!scriptReport.preRequestError ||
+        !!scriptReport.postResponseError ||
+        scriptReport.tests.length > 0
+    );
 
     return (
         <div
@@ -63,6 +74,46 @@ export default function ResponsePanel({
                     Headers
                 </button>
             </div>
+
+            {hasScriptInfo && scriptReport && (
+                <div style={scriptPanelStyle()}>
+                    <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
+                        Script report
+                    </div>
+
+                    {scriptReport.preRequestError && (
+                        <div style={scriptErrorStyle()}>
+                            Pre-request error: {scriptReport.preRequestError}
+                        </div>
+                    )}
+
+                    {scriptReport.postResponseError && (
+                        <div style={scriptErrorStyle()}>
+                            Post-response error: {scriptReport.postResponseError}
+                        </div>
+                    )}
+
+                    {scriptReport.tests.length > 0 && (
+                        <div style={{ display: "grid", gap: 6 }}>
+                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
+                                Tests
+                            </div>
+                            {scriptReport.tests.map((test, index) => (
+                                <div
+                                    key={`${test.name}-${index}`}
+                                    style={{
+                                        fontSize: 12,
+                                        color: test.status === "passed" ? "var(--pg-primary-soft)" : "var(--pg-danger)",
+                                    }}
+                                >
+                                    {test.status === "passed" ? "✓" : "✗"} {test.name}
+                                    {test.error ? ` — ${test.error}` : ""}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {activeTab === "body" && (
                 <pre style={responsePreStyle()}>
@@ -260,5 +311,25 @@ function tdStyle(): React.CSSProperties {
         padding: "8px 6px",
         verticalAlign: "top",
         wordBreak: "break-word",
+    };
+}
+
+function scriptPanelStyle(): React.CSSProperties {
+    return {
+        border: "1px solid var(--pg-border)",
+        borderRadius: 12,
+        background: "var(--pg-surface-1)",
+        padding: 10,
+        display: "grid",
+        gap: 8,
+        flexShrink: 0,
+    };
+}
+
+function scriptErrorStyle(): React.CSSProperties {
+    return {
+        fontSize: 12,
+        color: "var(--pg-danger)",
+        lineHeight: 1.4,
     };
 }

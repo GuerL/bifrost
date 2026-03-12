@@ -19,6 +19,15 @@ export type RequestAuth =
     | { type: "basic"; username: string; password: string }
     | { type: "api_key"; key: string; value: string; in: "header" | "query" };
 
+export type ResponseExtractorRule =
+    | { id: string; from: "json_body"; variable: string; path: string }
+    | { id: string; from: "header"; variable: string; header: string };
+
+export type RequestScripts = {
+    pre_request: string;
+    post_response: string;
+};
+
 export type Request = {
     id: string;
     name: string;
@@ -28,6 +37,8 @@ export type Request = {
     query: KeyValue[];
     body: Body;
     auth: RequestAuth;
+    extractors: ResponseExtractorRule[];
+    scripts: RequestScripts;
 };
 
 export type CollectionLoaded = {

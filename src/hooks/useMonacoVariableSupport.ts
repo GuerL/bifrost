@@ -4,6 +4,7 @@ import type * as MonacoApi from "monaco-editor";
 
 const TEMPLATE_VARIABLE_PATTERN = /{{\s*([^{}]+?)\s*}}/g;
 const BODY_MODEL_PATH_SEGMENT = "/postguerl-body/";
+const SCRIPT_MODEL_PATH_SEGMENT = "/postguerl-script/";
 
 type TemplateVariableMatch = {
     name: string;
@@ -32,6 +33,10 @@ type UseMonacoVariableSupportResult = {
 
 function isBodyMonacoModel(model: MonacoApi.editor.ITextModel): boolean {
     return model.uri.path.includes(BODY_MODEL_PATH_SEGMENT);
+}
+
+function isScriptMonacoModel(model: MonacoApi.editor.ITextModel): boolean {
+    return model.uri.path.includes(SCRIPT_MODEL_PATH_SEGMENT);
 }
 
 function collectTemplateVariableMatches(text: string): TemplateVariableMatch[] {
@@ -210,6 +215,56 @@ export function useMonacoVariableSupport({
         if (monacoFeaturesRegisteredRef.current) return;
         monacoFeaturesRegisteredRef.current = true;
 
+        const scriptApiDts = `
+declare const pg: {
+  environment: {
+    get(name: string): string | undefined;
+    set(name: string, value: unknown): void;
+    unset(name: string): void;
+    toObject(): Record<string, string>;
+  };
+  collectionVariables: {
+    get(name: string): string | undefined;
+    set(name: string, value: unknown): void;
+    unset(name: string): void;
+    toObject(): Record<string, string>;
+  };
+  globals: {
+    get(name: string): string | undefined;
+    set(name: string, value: unknown): void;
+    unset(name: string): void;
+    toObject(): Record<string, string>;
+  };
+  response: {
+    status: { toBe(expected: unknown): void; toEqual(expected: unknown): void };
+    statusCode: number | null;
+    body: string;
+    text(): string;
+    json<T = unknown>(): T;
+    headers: {
+      get(name: string): string | undefined;
+      has(name: string): boolean;
+      entries(): Array<{ key: string; value: string }>;
+      toObject(): Record<string, string>;
+    };
+  };
+  test(name: string, callback: () => void): void;
+  expect(actual: unknown): {
+    toBe(expected: unknown): void;
+    toEqual(expected: unknown): void;
+    toBeTruthy(): void;
+    toBeFalsy(): void;
+  };
+};`;
+        monaco.languages.typescript.javascriptDefaults.addExtraLib(
+            scriptApiDts,
+            "file:///postguerl/pg-scripting.d.ts"
+        );
+        monaco.languages.typescript.typescriptDefaults.addExtraLib(
+            scriptApiDts,
+            "file:///postguerl/pg-scripting.d.ts"
+        );
+
         const languagesWithTemplateSupport = [
             "json",
             "plaintext",
@@ -228,10 +283,32 @@ export function useMonacoVariableSupport({
                     model: MonacoApi.editor.ITextModel,
                     position: MonacoApi.Position
                 ) => {
-                    if (!isBodyMonacoModel(model)) return { suggestions: [] };
+                    if (!isBodyMonacoModel(model) && !isScriptMonacoModel(model)) {
+                        return { suggestions: [] };
+                    }
 
                     const suggestions = variableSuggestionsRef.current;
                     if (!suggestions.length) return { suggestions: [] };
+
+                    if (isScriptMonacoModel(model)) {
+                        const jsSuggestions = [
+                            "pg.response.json()",
+                            "pg.response.text()",
+                            "pg.response.headers.get(\"Authorization\")",
+                            "pg.environment.get(\"key\")",
+                            "pg.environment.set(\"key\", \"value\")",
+                            "pg.collectionVariables.set(\"foo\", \"bar\")",
+                            "pg.test(\"name\", () => {})",
+                        ];
+                        return {
+                            suggestions: jsSuggestions.map((value, index) => ({
+                                label: value,
+                                insertText: value,
+                                kind: monaco.languages.CompletionItemKind.Function,
+                                sortText: `0_${String(index).padStart(3, "0")}`,
+                            })),
+                        };
+                    }
 
                     const text = model.getValue();
                     const offset = model.getOffsetAt(position);

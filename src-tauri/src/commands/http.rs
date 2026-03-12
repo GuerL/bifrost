@@ -441,8 +441,9 @@ pub async fn send_request(
     request_id: String,
     req: Request,
     environment_id: Option<String>,
+    extra_variables: Option<HashMap<String, String>>,
 ) -> Result<HttpResponseDto, HttpErrorDto> {
-    let vars = load_environment_values(&app, environment_id).map_err(|e| {
+    let mut vars = load_environment_values(&app, environment_id).map_err(|e| {
         err(
             "environment",
             "Failed to load environment values",
@@ -450,6 +451,11 @@ pub async fn send_request(
             None,
         )
     })?;
+    if let Some(extra) = extra_variables {
+        for (key, value) in extra {
+            vars.insert(key, value);
+        }
+    }
     let (req, unresolved) = resolve_request_vars(req, &vars);
     if !unresolved.is_empty() {
         return Err(err(

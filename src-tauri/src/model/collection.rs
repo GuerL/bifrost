@@ -49,6 +49,31 @@ pub enum AuthLocation {
     Query,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "from", rename_all = "snake_case")]
+pub enum ResponseExtractorRule {
+    JsonBody {
+        #[serde(default)]
+        id: String,
+        variable: String,
+        path: String,
+    },
+    Header {
+        #[serde(default)]
+        id: String,
+        variable: String,
+        header: String,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct RequestScripts {
+    #[serde(default)]
+    pub pre_request: String,
+    #[serde(default)]
+    pub post_response: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
     pub id: String,
@@ -60,6 +85,10 @@ pub struct Request {
     pub body: Body,
     #[serde(default)]
     pub auth: Auth,
+    #[serde(default)]
+    pub extractors: Vec<ResponseExtractorRule>,
+    #[serde(default)]
+    pub scripts: RequestScripts,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

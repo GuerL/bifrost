@@ -14,6 +14,7 @@ import KeyValueTable from "./KeyValueTable.tsx";
 import TopBar from "./TopBar.tsx";
 import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
 import RequestBodyEditor from "./components/RequestBodyEditor.tsx";
+import RequestScriptsEditor from "./components/RequestScriptsEditor.tsx";
 import CollectionsModal from "./components/CollectionsModal.tsx";
 import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
 import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.tsx";
@@ -33,6 +34,12 @@ import {
 } from "./runner/mappers.ts";
 import { summarizeRunnerExecutions } from "./runner/stats.ts";
 import { readRunnerRunForCollection, writeRunnerRunForCollection } from "./runner/storage.ts";
+import {
+    runPostResponseScript,
+    runPreRequestScript,
+    type ScriptEnvironmentMutation,
+    type ScriptTestResult,
+} from "./helpers/RequestScriptsRuntime.ts";
 import type {
     RunnerExecutionResult,
     RunnerIterationMode,
@@ -46,6 +53,7 @@ import type {
     KeyValue,
     RequestAuth,
     Request,
+    RequestScripts,
 } from "./types.ts";
 
 type RequestContextMenu = {
@@ -83,6 +91,12 @@ type PersistedResponseEntry = {
 
 type PersistedResponsesCollection = Record<string, PersistedResponseEntry>;
 type PersistedResponsesState = Record<string, PersistedResponsesCollection>;
+
+type RequestScriptExecutionReport = {
+    preRequestError: string | null;
+    postResponseError: string | null;
+    tests: ScriptTestResult[];
+};
 
 const OPEN_TABS_STORAGE_KEY = "postguerl:open-tabs:v1";
 const RESPONSES_STORAGE_KEY = "postguerl:last-responses:v1";
@@ -131,6 +145,23 @@ function buildDefaultAuth(type: RequestAuth["type"]): RequestAuth {
         return { type: "api_key", key: "", value: "", in: "header" };
     }
     return { type: "none" };
+}
+
+function requestScriptsOrDefault(request: Request): RequestScripts {
+    return request.scripts ?? { pre_request: "", post_response: "" };
+}
+
+function applyEnvironmentMutationsToMap(
+    target: Map<string, string>,
+    mutations: ScriptEnvironmentMutation[]
+) {
+    for (const mutation of mutations) {
+        if (mutation.type === "set") {
+            target.set(mutation.key, mutation.value);
+            continue;
+        }
+        target.delete(mutation.key);
+    }
 }
 
 function normalizeDynamicVariableKey(name: string): string {
@@ -285,16 +316,22 @@ export default function App() {
     const [openRequestIds, setOpenRequestIds] = useState<string[]>([]);
     const [resp, setResp] = useState<HttpResponseDto | null>(null);
     const [responsesByRequestId, setResponsesByRequestId] = useState<PersistedResponsesCollection>({});
+    const [scriptReportsByRequestId, setScriptReportsByRequestId] = useState<
+        Record<string, RequestScriptExecutionReport>
+    >({});
     const [runnerRun, setRunnerRun] = useState<RunnerRun | null>(null);
     const [runnerIterationMode, setRunnerIterationMode] =
         useState<RunnerIterationMode>("collection_iteration");
     const [runnerIterations, setRunnerIterations] = useState(1);
     const [collectionRunStopOnFailure, setCollectionRunStopOnFailure] = useState(true);
+    const [sessionVariables, setSessionVariables] = useState<Record<string, string>>({});
     const [responseTab, setResponseTab] = useState<ResponseTabId>("body");
     const [draftsById, setDraftsById] = useState<Record<string, Request>>({});
     const [pending, setPending] = useState(false);
     const [editorText, setEditorText] = useState("");
-    const [tab, setTab] = useState<"headers" | "query" | "body" | "auth" | "json">("headers");
+    const [tab, setTab] = useState<"headers" | "query" | "body" | "auth" | "scripts" | "json">(
+        "headers"
+    );
     const [contextMenu, setContextMenu] = useState<RequestContextMenu | null>(null);
     const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
     const [renameNameInput, setRenameNameInput] = useState("");
@@ -338,6 +375,8 @@ export default function App() {
         setDraggedOpenTabRequestId(null);
         setOpenTabDropIndicator(null);
         setResponsesByRequestId({});
+        setScriptReportsByRequestId({});
+        setSessionVariables({});
         setRunnerRun(null);
         collectionRunCancelRef.current = false;
         collectionRunActiveRequestIdRef.current = null;
@@ -439,6 +478,11 @@ export default function App() {
         return runnerStatus ?? persistedStatus ?? (status || "No request sent yet.");
     }, [selectedRequestId, pending, responsesByRequestId, status, latestRunnerExecutionByRequestId, collectionRunPending]);
 
+    const selectedScriptReport = useMemo(() => {
+        if (!selectedRequestId) return null;
+        return scriptReportsByRequestId[selectedRequestId] ?? null;
+    }, [selectedRequestId, scriptReportsByRequestId]);
+
     const activeEnvironment = useMemo(
         () => environments.find((env) => env.id === activeEnvironmentId) ?? null,
         [environments, activeEnvironmentId]
@@ -462,8 +506,18 @@ export default function App() {
         return values;
     }, [activeEnvironment]);
 
-    const variableValuesWithDynamic = useMemo(() => {
+    const runtimeVariableValues = useMemo(() => {
         const values = new Map(activeEnvironmentValues);
+        for (const [key, value] of Object.entries(sessionVariables)) {
+            const trimmed = key.trim();
+            if (!trimmed) continue;
+            values.set(trimmed, value);
+        }
+        return values;
+    }, [activeEnvironmentValues, sessionVariables]);
+
+    const variableValuesWithDynamic = useMemo(() => {
+        const values = new Map(runtimeVariableValues);
         for (const variableName of DYNAMIC_VARIABLE_NAMES) {
             const preview = dynamicVariablePreview(variableName);
             if (!preview) continue;
@@ -471,14 +525,14 @@ export default function App() {
             values.set(variableName.toLowerCase(), preview);
         }
         return values;
-    }, [activeEnvironmentValues]);
+    }, [runtimeVariableValues]);
 
     const variableSuggestions = useMemo(
         () =>
             Array.from(
-                new Set([...activeEnvironmentValues.keys(), ...DYNAMIC_VARIABLE_NAMES])
+                new Set([...runtimeVariableValues.keys(), ...DYNAMIC_VARIABLE_NAMES])
             ).sort((a, b) => a.localeCompare(b)),
-        [activeEnvironmentValues]
+        [runtimeVariableValues]
     );
 
     const resolveVariableStatus = useCallback(
@@ -486,9 +540,9 @@ export default function App() {
             const key = name.trim();
             if (!key) return "missing";
             if (isSupportedDynamicVariable(key)) return "ok";
-            return activeEnvironmentValues.has(key) ? "ok" : "missing";
+            return runtimeVariableValues.has(key) ? "ok" : "missing";
         },
-        [activeEnvironmentValues]
+        [runtimeVariableValues]
     );
 
     const resolveVariableValue = useCallback(
@@ -498,9 +552,9 @@ export default function App() {
             if (isSupportedDynamicVariable(key)) {
                 return dynamicVariablePreview(key);
             }
-            return activeEnvironmentValues.get(key);
+            return runtimeVariableValues.get(key);
         },
-        [activeEnvironmentValues]
+        [runtimeVariableValues]
     );
 
     const {
@@ -546,6 +600,61 @@ export default function App() {
             setStatus(`❌ Environments failed: ${String(e)}`);
         }
     }
+
+    const persistScriptEnvironmentMutations = useCallback(
+        async (mutations: ScriptEnvironmentMutation[]): Promise<string | null> => {
+            if (!activeEnvironmentId || mutations.length === 0) {
+                return null;
+            }
+
+            const activeEnvironment =
+                environments.find((env) => env.id === activeEnvironmentId) ?? null;
+            if (!activeEnvironment) {
+                return "Active environment not found.";
+            }
+
+            const nextMap = new Map<string, string>();
+            for (const variable of activeEnvironment.variables) {
+                const key = variable.key.trim();
+                if (!key) continue;
+                nextMap.set(key, variable.value);
+            }
+
+            applyEnvironmentMutationsToMap(nextMap, mutations);
+
+            const nextVariables = Array.from(nextMap.entries()).map(([key, value]) => ({
+                key,
+                value,
+            }));
+
+            try {
+                await invoke("save_environment", {
+                    environment: {
+                        id: activeEnvironment.id,
+                        name: activeEnvironment.name,
+                        variables: nextVariables,
+                    },
+                });
+
+                setEnvironments((previous) =>
+                    previous.map((environment) =>
+                        environment.id === activeEnvironment.id
+                            ? { ...environment, variables: nextVariables }
+                            : environment
+                    )
+                );
+
+                if (envSelectedId === activeEnvironment.id) {
+                    setEnvDraftVars(nextVariables);
+                }
+
+                return null;
+            } catch (error) {
+                return String(error);
+            }
+        },
+        [activeEnvironmentId, environments, envSelectedId]
+    );
 
     useEffect(() => {
         (async () => {
@@ -595,6 +704,10 @@ export default function App() {
         ) as PersistedResponsesCollection;
 
         setResponsesByRequestId(filtered);
+    }, [current?.meta.id]);
+
+    useEffect(() => {
+        setScriptReportsByRequestId({});
     }, [current?.meta.id]);
 
     useEffect(() => {
@@ -1032,14 +1145,69 @@ export default function App() {
         setResp(null);
         setPending(true);
         setStatus("Sending...");
+        let preScriptError: string | null = null;
+        let preScriptTests: ScriptTestResult[] = [];
+        let runtimeVariables = { ...sessionVariables };
+        const requestScripts = requestScriptsOrDefault(req);
+        const scriptEnvironmentMutations: ScriptEnvironmentMutation[] = [];
 
         try {
+            const preScript = runPreRequestScript({
+                script: requestScripts.pre_request,
+                request: req,
+                runtimeVariables,
+                environmentValues: activeEnvironmentValues,
+            });
+            preScriptError = preScript.error;
+            preScriptTests = preScript.tests;
+            scriptEnvironmentMutations.push(...preScript.environmentMutations);
+            runtimeVariables = preScript.runtimeVariables;
+            setSessionVariables(runtimeVariables);
+            const requestToSend = preScript.request;
+
             const r = await invoke<HttpResponseDto>("send_request", {
                 requestId: selectedRequestId,
-                req,
+                req: requestToSend,
                 environmentId: activeEnvironmentId,
+                extraVariables: runtimeVariables,
             });
-            const statusText = `✅ ${r.status} in ${r.duration_ms}ms`;
+
+            const postScript = runPostResponseScript({
+                script: requestScriptsOrDefault(requestToSend).post_response,
+                request: requestToSend,
+                response: r,
+                runtimeVariables,
+                environmentValues: activeEnvironmentValues,
+            });
+            scriptEnvironmentMutations.push(...postScript.environmentMutations);
+            runtimeVariables = postScript.runtimeVariables;
+            setSessionVariables(runtimeVariables);
+            const scriptTests = [...preScript.tests, ...postScript.tests];
+            const failedScriptTests = scriptTests.filter((test) => test.status === "failed").length;
+            setScriptReportsByRequestId((previous) => ({
+                ...previous,
+                [selectedRequestId]: {
+                    preRequestError: preScript.error,
+                    postResponseError: postScript.error,
+                    tests: scriptTests,
+                },
+            }));
+
+            const environmentPersistError = await persistScriptEnvironmentMutations(
+                scriptEnvironmentMutations
+            );
+
+            const scriptIssueCount = [preScript.error, postScript.error].filter((entry) => !!entry).length;
+            const scriptErrorSuffix =
+                scriptIssueCount > 0 ? ` • script issues ${scriptIssueCount}` : "";
+            const scriptTestsSuffix =
+                scriptTests.length > 0
+                    ? ` • tests ${scriptTests.length - failedScriptTests}/${scriptTests.length}`
+                    : "";
+            const environmentErrorSuffix = environmentPersistError
+                ? " • environment save issue"
+                : "";
+            const statusText = `✅ ${r.status} in ${r.duration_ms}ms${scriptErrorSuffix}${scriptTestsSuffix}${environmentErrorSuffix}`;
             setResp(r);
             setStatus(statusText);
             setResponsesByRequestId((previous) => ({
@@ -1051,8 +1219,23 @@ export default function App() {
                 },
             }));
         } catch (e: any) {
+            const environmentPersistError = await persistScriptEnvironmentMutations(
+                scriptEnvironmentMutations
+            );
             const { kind, message, durationMs } = parseHttpError(e);
-            const statusText = `❌ ${kind}: ${message}${durationMs != null ? ` (${durationMs}ms)` : ""}`;
+            setScriptReportsByRequestId((previous) => ({
+                ...previous,
+                [selectedRequestId]: {
+                    preRequestError: preScriptError,
+                    postResponseError: null,
+                    tests: preScriptTests,
+                },
+            }));
+            const scriptSuffix = preScriptError ? ` • script issue` : "";
+            const environmentErrorSuffix = environmentPersistError
+                ? " • environment save issue"
+                : "";
+            const statusText = `❌ ${kind}: ${message}${durationMs != null ? ` (${durationMs}ms)` : ""}${scriptSuffix}${environmentErrorSuffix}`;
             setStatus(statusText);
             setResponsesByRequestId((previous) => ({
                 ...previous,
@@ -1152,6 +1335,8 @@ export default function App() {
         const startedAt = new Date().toISOString();
         let cancelledByUser = false;
         let currentExecutions = plan.map((item) => createQueuedExecutionResult(runId, item));
+        let runVariables: Record<string, string> = { ...sessionVariables };
+        const runScriptEnvironmentMutations: ScriptEnvironmentMutation[] = [];
 
         const initialRun: RunnerRun = {
             runId,
@@ -1267,14 +1452,54 @@ export default function App() {
                 continue;
             }
 
+            const preScript = runPreRequestScript({
+                script: requestScriptsOrDefault(requestToSend).pre_request,
+                request: requestToSend,
+                runtimeVariables: runVariables,
+                environmentValues: activeEnvironmentValues,
+            });
+            const preRequestScriptError = preScript.error;
+            const preRequestScriptTests = preScript.tests;
+            runScriptEnvironmentMutations.push(...preScript.environmentMutations);
+            runVariables = preScript.runtimeVariables;
+            setSessionVariables(runVariables);
+            const executableRequest = preScript.request;
+
             try {
                 const response = await invoke<HttpResponseDto>("send_request", {
                     requestId: planItem.requestId,
-                    req: requestToSend,
+                    req: executableRequest,
                     environmentId: activeEnvironmentId,
+                    extraVariables: runVariables,
                 });
 
-                const statusText = `✅ ${response.status} in ${response.duration_ms}ms`;
+                const postScript = runPostResponseScript({
+                    script: requestScriptsOrDefault(executableRequest).post_response,
+                    request: executableRequest,
+                    response,
+                    runtimeVariables: runVariables,
+                    environmentValues: activeEnvironmentValues,
+                });
+                const postResponseScriptError = postScript.error;
+                const postResponseScriptTests = postScript.tests;
+                runScriptEnvironmentMutations.push(...postScript.environmentMutations);
+                runVariables = postScript.runtimeVariables;
+                setSessionVariables(runVariables);
+
+                const scriptIssues = [preRequestScriptError, postResponseScriptError].filter(
+                    (entry) => !!entry
+                );
+                const totalScriptTests = preRequestScriptTests.length + postResponseScriptTests.length;
+                const failedScriptTests = [...preRequestScriptTests, ...postResponseScriptTests].filter(
+                    (test) => test.status === "failed"
+                ).length;
+                const scriptErrorsSuffix =
+                    scriptIssues.length > 0 ? ` • script issues ${scriptIssues.length}` : "";
+                const scriptTestsSuffix =
+                    totalScriptTests > 0
+                        ? ` • tests ${totalScriptTests - failedScriptTests}/${totalScriptTests}`
+                        : "";
+                const statusText = `✅ ${response.status} in ${response.duration_ms}ms${scriptErrorsSuffix}${scriptTestsSuffix}`;
                 commitRun(
                     updateExecutionAt(planItem.planIndex, {
                         status: "success",
@@ -1286,6 +1511,12 @@ export default function App() {
                         errorCode: null,
                         errorMessage: null,
                         response: toResponseSnapshot(response),
+                        extractedVariables: [],
+                        extractionErrors: [],
+                        preRequestScriptError,
+                        postResponseScriptError,
+                        preRequestScriptTests,
+                        postResponseScriptTests,
                     })
                 );
                 setResponsesByRequestId((previous) => ({
@@ -1294,6 +1525,14 @@ export default function App() {
                         response,
                         statusText,
                         updatedAt: new Date().toISOString(),
+                    },
+                }));
+                setScriptReportsByRequestId((previous) => ({
+                    ...previous,
+                    [planItem.requestId]: {
+                        preRequestError: preRequestScriptError,
+                        postResponseError: postResponseScriptError,
+                        tests: [...preRequestScriptTests, ...postResponseScriptTests],
                     },
                 }));
             } catch (error) {
@@ -1318,6 +1557,12 @@ export default function App() {
                         errorCode: parsed.code,
                         errorMessage: parsed.message,
                         response: null,
+                        extractedVariables: [],
+                        extractionErrors: [],
+                        preRequestScriptError,
+                        postResponseScriptError: null,
+                        preRequestScriptTests,
+                        postResponseScriptTests: [],
                     })
                 );
                 setResponsesByRequestId((previous) => ({
@@ -1326,6 +1571,14 @@ export default function App() {
                         response: previous[planItem.requestId]?.response ?? null,
                         statusText,
                         updatedAt: new Date().toISOString(),
+                    },
+                }));
+                setScriptReportsByRequestId((previous) => ({
+                    ...previous,
+                    [planItem.requestId]: {
+                        preRequestError: preRequestScriptError,
+                        postResponseError: null,
+                        tests: preRequestScriptTests,
                     },
                 }));
 
@@ -1351,24 +1604,31 @@ export default function App() {
                     : "completed";
         commitRun(currentExecutions, finalStatus, finishedAt);
 
+        const environmentPersistError = await persistScriptEnvironmentMutations(
+            runScriptEnvironmentMutations
+        );
+        const environmentErrorSuffix = environmentPersistError
+            ? " • environment save issue"
+            : "";
+
         collectionRunActiveRequestIdRef.current = null;
         collectionRunCancelRef.current = false;
 
         if (finalSummary.wasCancelledByUser) {
             setStatus(
-                `⛔ Run cancelled: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.cancelled} cancelled, ${finalSummary.skipped} skipped`
+                `⛔ Run cancelled: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.cancelled} cancelled, ${finalSummary.skipped} skipped${environmentErrorSuffix}`
             );
             return;
         }
 
         if (finalSummary.failed > 0) {
             setStatus(
-                `❌ Run complete: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.skipped} skipped`
+                `❌ Run complete: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.skipped} skipped${environmentErrorSuffix}`
             );
             return;
         }
 
-        setStatus(`✅ Run complete: ${finalSummary.success}/${finalSummary.total} success`);
+        setStatus(`✅ Run complete: ${finalSummary.success}/${finalSummary.total} success${environmentErrorSuffix}`);
     }
 
     async function cancelCollectionRun() {
@@ -1517,6 +1777,11 @@ export default function App() {
         });
         setOpenRequestIds((previous) => previous.filter((id) => id !== requestId));
         setResponsesByRequestId((previous) => {
+            const next = { ...previous };
+            delete next[requestId];
+            return next;
+        });
+        setScriptReportsByRequestId((previous) => {
             const next = { ...previous };
             delete next[requestId];
             return next;
@@ -2257,6 +2522,12 @@ export default function App() {
                                 >
                                     Auth
                                 </button>
+                                <button
+                                    onClick={() => setTab("scripts")}
+                                    style={editorTabStyle(tab === "scripts")}
+                                >
+                                    Scripts
+                                </button>
                             </div>
 
                             {tab === "headers" && (
@@ -2472,6 +2743,17 @@ export default function App() {
                                     );
                                 })()}
 
+                            {tab === "scripts" && (
+                                <RequestScriptsEditor
+                                    scripts={requestScriptsOrDefault(draft)}
+                                    selectedRequestId={selectedRequestId}
+                                    beforeMountMonaco={beforeMountMonaco}
+                                    editorOptions={editorOptions}
+                                    editorPanelStyle={editorPanelStyle}
+                                    onChange={(next) => updateDraft({ scripts: next })}
+                                />
+                            )}
+
                             {tab === "json" && (
                                 <>
                                     <div style={editorPanelStyle("52vh", 360)}>
@@ -2504,9 +2786,63 @@ export default function App() {
                             <ResponsePanel
                                 response={resp}
                                 statusText={selectedResponseStatusText}
+                                scriptReport={selectedScriptReport}
                                 activeTab={responseTab}
                                 onTabChange={setResponseTab}
                             />
+
+                            <div
+                                style={{
+                                    marginTop: 10,
+                                    border: "1px solid var(--pg-border)",
+                                    borderRadius: 10,
+                                    background: "var(--pg-surface-1)",
+                                    padding: 10,
+                                }}
+                            >
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                                    <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
+                                        Runtime variables ({Object.keys(sessionVariables).length})
+                                    </div>
+                                    <button
+                                        onClick={() => setSessionVariables({})}
+                                        disabled={Object.keys(sessionVariables).length === 0}
+                                        style={buttonStyle(Object.keys(sessionVariables).length === 0)}
+                                    >
+                                        Clear runtime variables
+                                    </button>
+                                </div>
+
+                                {Object.keys(sessionVariables).length === 0 ? (
+                                    <div style={{ fontSize: 12, color: "var(--pg-text-muted)", marginTop: 8 }}>
+                                        No runtime variable yet. Configure extraction rules and run a request.
+                                    </div>
+                                ) : (
+                                    <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                                        {Object.entries(sessionVariables)
+                                            .sort(([a], [b]) => a.localeCompare(b))
+                                            .map(([key, value]) => (
+                                                <div
+                                                    key={key}
+                                                    style={{
+                                                        display: "grid",
+                                                        gridTemplateColumns: "minmax(0, 220px) minmax(0, 1fr)",
+                                                        gap: 8,
+                                                        fontSize: 12,
+                                                        alignItems: "center",
+                                                    }}
+                                                >
+                                                    <div style={{ color: "var(--pg-text-muted)", fontFamily: "monospace" }}>
+                                                        {key}
+                                                    </div>
+                                                    <div style={{ color: "var(--pg-text-dim)", fontFamily: "monospace", wordBreak: "break-word" }}>
+                                                        {value}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                    </div>
+                                )}
+                            </div>
                         </>
                     )}
 
