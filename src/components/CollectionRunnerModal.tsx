@@ -507,6 +507,7 @@ export default function CollectionRunnerModal({
                                                     <thead>
                                                         <tr>
                                                             <th style={thStyle()}>Request</th>
+                                                            <th style={thStyle()}>Method</th>
                                                             <th style={thStyle()}>Executions</th>
                                                             <th style={thStyle()}>Average</th>
                                                             <th style={thStyle()}>Min</th>
@@ -517,6 +518,7 @@ export default function CollectionRunnerModal({
                                                         {averages.requestAverages.map((item) => (
                                                             <tr key={item.requestId}>
                                                                 <td style={tdStyle()}>{item.requestName}</td>
+                                                                <td style={tdStyle()}>{item.requestMethod.toUpperCase()}</td>
                                                                 <td style={tdStyle()}>{item.executionCount}</td>
                                                                 <td style={tdStyle()}>{formatDuration(item.averageDurationMs)}</td>
                                                                 <td style={tdStyle()}>{formatDuration(item.minDurationMs)}</td>
@@ -525,7 +527,7 @@ export default function CollectionRunnerModal({
                                                         ))}
                                                         {averages.requestAverages.length === 0 && (
                                                             <tr>
-                                                                <td style={tdStyle()} colSpan={5}>
+                                                                <td style={tdStyle()} colSpan={6}>
                                                                     No request-level timing data.
                                                                 </td>
                                                             </tr>
