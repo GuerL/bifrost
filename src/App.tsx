@@ -182,12 +182,6 @@ function writePersistedResponsesState(state: PersistedResponsesState) {
     }
 }
 
-function shortRequestRunLabel(entry: PersistedResponseEntry | undefined): string {
-    if (!entry) return "";
-    if (entry.response) return ` · ${entry.response.status}`;
-    return entry.statusText.startsWith("❌") ? " · ERR" : "";
-}
-
 export default function App() {
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
@@ -1353,7 +1347,6 @@ export default function App() {
                             {current &&
                                 current.requests.map((r) => {
                                     const hasLocalDraft = !!draftsById[r.id];
-                                    const runLabel = shortRequestRunLabel(responsesByRequestId[r.id]);
 
                                     return (
                                         <button
@@ -1378,7 +1371,7 @@ export default function App() {
                                                 flexShrink: 0,
                                             }}
                                         >
-                                            {r.method.toUpperCase()} {r.name}{runLabel} {hasLocalDraft ? "●" : ""}
+                                            {r.method.toUpperCase()} {r.name} {hasLocalDraft ? "●" : ""}
                                         </button>
                                     );
                                 })}
@@ -1412,9 +1405,6 @@ export default function App() {
                             >
                                 {openTabs.map((openTab) => {
                                     const active = openTab.requestId === selectedRequestId;
-                                    const runLabel = shortRequestRunLabel(
-                                        responsesByRequestId[openTab.requestId]
-                                    );
                                     return (
                                         <div
                                             key={openTab.requestId}
@@ -1426,7 +1416,7 @@ export default function App() {
                                                 }}
                                                 style={draftTabButtonStyle(active)}
                                             >
-                                                {openTab.method.toUpperCase()} {openTab.name}{runLabel}
+                                                {openTab.method.toUpperCase()} {openTab.name}
                                                 {openTab.hasLocalDraft ? " ●" : ""}
                                             </button>
                                             <button
