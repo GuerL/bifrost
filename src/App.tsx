@@ -1191,18 +1191,81 @@ export default function App() {
 
     useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
-            const isSaveShortcut = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s";
-            if (!isSaveShortcut) return;
+            const isCommand = e.ctrlKey || e.metaKey;
+            if (!isCommand || e.altKey) return;
 
-            e.preventDefault();
-            if (isDirty) {
-                void saveDraft();
+            const key = e.key.toLowerCase();
+
+            if (key === "s") {
+                e.preventDefault();
+                if (isDirty) {
+                    void saveDraft();
+                }
+                return;
+            }
+
+            if (key === "t") {
+                if (!current || collectionRunPending) return;
+                e.preventDefault();
+                setContextMenu(null);
+                setRootAddMenu(null);
+                onNewRequest(null);
+                return;
+            }
+
+            if (key === "d") {
+                if (!current || !selectedRequestId) return;
+                if (!openRequestIds.includes(selectedRequestId)) return;
+                e.preventDefault();
+                setContextMenu(null);
+                setRootAddMenu(null);
+                onDuplicateRequest(selectedRequestId);
+                return;
+            }
+
+            if (key === "w") {
+                if (!selectedRequestId) return;
+                if (!openRequestIds.includes(selectedRequestId)) return;
+                e.preventDefault();
+                setContextMenu(null);
+                setRootAddMenu(null);
+                requestCloseTab(selectedRequestId);
+                return;
+            }
+
+            if (key === "e") {
+                if (!current || !selectedRequestId) return;
+                e.preventDefault();
+                const row = sidebarRows.find(
+                    (entry): entry is Extract<SidebarTreeRow, { kind: "request" }> =>
+                        entry.kind === "request" && entry.requestId === selectedRequestId
+                );
+                if (row) {
+                    openRenameModal(row);
+                    return;
+                }
+
+                const request = current.requests.find((entry) => entry.id === selectedRequestId);
+                if (!request) return;
+                setRenameTarget({ kind: "request", id: request.id });
+                setRenameNameInput(request.name);
+                setRenameError("");
+                setContextMenu(null);
+                setRootAddMenu(null);
             }
         }
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [isDirty, saveDraft]);
+    }, [
+        isDirty,
+        saveDraft,
+        current,
+        selectedRequestId,
+        openRequestIds,
+        collectionRunPending,
+        sidebarRows,
+    ]);
 
     async function sendSelected() {
         if (collectionRunPending) return;
