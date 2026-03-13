@@ -520,13 +520,15 @@ fn map_body(
             .and_then(|raw| raw.language.as_ref())
             .map(|value| value.to_ascii_lowercase());
         let header_content_type = content_type_header.unwrap_or("").to_ascii_lowercase();
+        let parsed_json = serde_json::from_str::<serde_json::Value>(&raw_text).ok();
 
         let looks_json = language.as_deref() == Some("json")
             || header_content_type.contains("application/json")
-            || header_content_type.contains("+json");
+            || header_content_type.contains("+json")
+            || parsed_json.is_some();
 
         if looks_json {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw_text) {
+            if let Some(parsed) = parsed_json {
                 return Body::Json {
                     value: parsed,
                     text: raw_text,
