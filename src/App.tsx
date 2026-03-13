@@ -75,7 +75,7 @@ type CloseDraftModal = {
 
 type RequestDropIndicator = {
     nodeId: string;
-    position: "before" | "after";
+    position: "before" | "after" | "inside";
 };
 
 type OpenTabDropIndicator = {
@@ -1749,6 +1749,30 @@ export default function App() {
         }
     }
 
+    async function moveNodeInsideFolder(sourceNodeId: string, targetFolderId: string) {
+        if (!current) return;
+
+        try {
+            await invoke("move_node", {
+                collectionId: current.meta.id,
+                nodeId: sourceNodeId,
+                targetFolderId,
+                targetIndex: 1_000_000,
+            });
+            await loadCollection(
+                current.meta.id,
+                selectedRequestId,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                setStatus
+            );
+            setStatus("✅ Node moved to folder");
+        } catch (error) {
+            setStatus(`❌ Move failed: ${String(error)}`);
+        }
+    }
+
     function beginRequestDrag(
         e: React.MouseEvent<HTMLElement>,
         nodeId: string
@@ -2347,7 +2371,6 @@ export default function App() {
                 onManageCollections={openCollectionsModal}
                 onManageEnvironments={openEnvironmentsModal}
                 onSaveDraft={saveDraft}
-                onNewRequest={onNewRequest}
                 onOpenRawJson={() => setTab("json")}
                 onOpenCollectionRunner={() => setRunnerModalOpen(true)}
                 canSaveDraft={!!current && !!draft && isDirty}
@@ -2468,14 +2491,22 @@ export default function App() {
                                         row.kind === "request" ? !!draftsById[row.requestId] : false;
                                     const isSelected =
                                         row.kind === "request" && row.requestId === selectedRequestId;
+                                    const isFolderCollapsed =
+                                        row.kind === "folder" && expandedFolders[row.folderId] === false;
                                     const showDropBefore =
                                         dropIndicator?.nodeId === row.nodeId &&
                                         dropIndicator.position === "before";
                                     const showDropAfter =
                                         dropIndicator?.nodeId === row.nodeId &&
                                         dropIndicator.position === "after";
+                                    const showDropInside =
+                                        dropIndicator?.nodeId === row.nodeId &&
+                                        dropIndicator.position === "inside";
                                     const missingRequest =
                                         row.kind === "request" && row.request === null;
+                                    const rowIndentPx =
+                                        row.depth * 10 +
+                                        (row.kind === "request" && row.parentFolderId ? 6 : 0);
 
                                     return (
                                         <div
@@ -2483,8 +2514,19 @@ export default function App() {
                                             onMouseMove={(e) => {
                                                 if (!draggedRequestId || draggedRequestId === row.nodeId) return;
                                                 const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                                                const position =
-                                                    e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+                                                const relativeY = (e.clientY - rect.top) / rect.height;
+                                                let position: RequestDropIndicator["position"] = "after";
+                                                if (row.kind === "folder") {
+                                                    if (relativeY < 0.28) {
+                                                        position = "before";
+                                                    } else if (relativeY > 0.72) {
+                                                        position = "after";
+                                                    } else {
+                                                        position = "inside";
+                                                    }
+                                                } else {
+                                                    position = relativeY < 0.5 ? "before" : "after";
+                                                }
                                                 setDropIndicator((previous) =>
                                                     previous?.nodeId === row.nodeId &&
                                                     previous.position === position
@@ -2495,14 +2537,39 @@ export default function App() {
                                             onMouseUp={(e) => {
                                                 if (!draggedRequestId || draggedRequestId === row.nodeId) return;
                                                 const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                                                const position =
-                                                    e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+                                                const relativeY = (e.clientY - rect.top) / rect.height;
+                                                let position: RequestDropIndicator["position"] = "after";
+                                                if (row.kind === "folder") {
+                                                    if (relativeY < 0.28) {
+                                                        position = "before";
+                                                    } else if (relativeY > 0.72) {
+                                                        position = "after";
+                                                    } else {
+                                                        position = "inside";
+                                                    }
+                                                } else {
+                                                    position = relativeY < 0.5 ? "before" : "after";
+                                                }
 
                                                 setDropIndicator(null);
                                                 setDraggedRequestId(null);
-                                                void moveNodeInCollection(draggedRequestId, row.nodeId, position);
+                                                if (position === "inside" && row.kind === "folder") {
+                                                    void moveNodeInsideFolder(draggedRequestId, row.folderId);
+                                                    return;
+                                                }
+                                                void moveNodeInCollection(
+                                                    draggedRequestId,
+                                                    row.nodeId,
+                                                    position === "before" ? "before" : "after"
+                                                );
                                             }}
-                                            style={requestDropRowStyle(showDropBefore, showDropAfter)}
+                                            style={requestDropRowStyle(
+                                                showDropBefore,
+                                                showDropAfter,
+                                                showDropInside,
+                                                rowIndentPx,
+                                                row.kind === "folder" && isFolderCollapsed
+                                            )}
                                         >
                                             {showDropBefore && <div style={dropMarkerStyle("before")} />}
                                             <button
@@ -2541,7 +2608,7 @@ export default function App() {
                                                     flexShrink: 0,
                                                     cursor: draggedRequestId === row.nodeId ? "grabbing" : "grab",
                                                     userSelect: "none",
-                                                    paddingLeft: 10 + row.depth * 14,
+                                                    paddingLeft: 10,
                                                     opacity: missingRequest ? 0.75 : 1,
                                                 }}
                                             >
@@ -2553,6 +2620,12 @@ export default function App() {
                                                         }`
                                                         : `[Missing] ${row.requestId}`}
                                             </button>
+                                            {showDropInside && row.kind === "folder" && !isFolderCollapsed && (
+                                                <div style={dropMarkerStyle("inside")} />
+                                            )}
+                                            {showDropInside && row.kind === "folder" && isFolderCollapsed && (
+                                                <div style={dropInsideOutlineStyle()} />
+                                            )}
                                             {showDropAfter && <div style={dropMarkerStyle("after")} />}
                                         </div>
                                     );
@@ -3511,7 +3584,10 @@ function requestListItemStyle(active: boolean, hasLocalDraft: boolean): React.CS
 
 function requestDropRowStyle(
     dropBefore: boolean,
-    dropAfter: boolean
+    dropAfter: boolean,
+    dropInside: boolean,
+    indentPx: number,
+    emphasizeInside: boolean
 ): React.CSSProperties {
     return {
         position: "relative",
@@ -3520,17 +3596,20 @@ function requestDropRowStyle(
         borderRadius: 10,
         paddingTop: 1,
         paddingBottom: 1,
+        marginLeft: indentPx,
         background:
-            dropBefore || dropAfter ? "rgba(var(--pg-primary-rgb), 0.08)" : "transparent",
+            dropBefore || dropAfter || (dropInside && !emphasizeInside)
+                ? "rgba(var(--pg-primary-rgb), 0.08)"
+                : "transparent",
     };
 }
 
-function dropMarkerStyle(position: "before" | "after"): React.CSSProperties {
+function dropMarkerStyle(position: "before" | "after" | "inside"): React.CSSProperties {
     return {
         position: "absolute",
-        left: 0,
-        right: 0,
-        top: position === "before" ? 1 : undefined,
+        left: position === "inside" ? "16%" : 0,
+        right: position === "inside" ? "16%" : 0,
+        top: position === "inside" ? "calc(50% - 2px)" : position === "before" ? 1 : undefined,
         bottom: position === "after" ? 1 : undefined,
         height: 4,
         borderRadius: 999,
@@ -3538,6 +3617,18 @@ function dropMarkerStyle(position: "before" | "after"): React.CSSProperties {
         pointerEvents: "none",
         zIndex: 2,
         boxShadow: "0 0 0 1px rgba(var(--pg-primary-rgb), 0.45), 0 0 10px rgba(var(--pg-primary-rgb), 0.5)",
+    };
+}
+
+function dropInsideOutlineStyle(): React.CSSProperties {
+    return {
+        position: "absolute",
+        inset: 0,
+        borderRadius: 10,
+        border: "2px solid var(--pg-primary)",
+        boxShadow: "inset 0 0 0 1px rgba(var(--pg-primary-rgb), 0.45)",
+        pointerEvents: "none",
+        zIndex: 2,
     };
 }
 
