@@ -531,7 +531,7 @@ fn map_body(
             if let Some(parsed) = parsed_json {
                 return Body::Json {
                     value: parsed,
-                    text: raw_text,
+                    text: String::new(),
                 };
             }
             warnings.push(format!(
