@@ -1,11 +1,17 @@
 import KeyValueTable from "../KeyValueTable.tsx";
 import type { Environment, KeyValue } from "../types.ts";
+import ConfirmationModal from "./ConfirmationModal.tsx";
 import {
     buttonStyle,
     dangerButtonStyle,
     modalInputStyle,
     primaryButtonStyle,
 } from "../helpers/UiStyles.ts";
+
+type DeleteEnvironmentTarget = {
+    id: string;
+    name: string;
+};
 
 type EnvironmentsModalProps = {
     open: boolean;
@@ -16,15 +22,18 @@ type EnvironmentsModalProps = {
     selectedEnvironmentId: string | null;
     draftName: string;
     draftVars: KeyValue[];
+    deleteTarget: DeleteEnvironmentTarget | null;
     onClose: () => void;
     onCreate: () => void;
     onDuplicate: () => void;
-    onDelete: () => void;
+    onRequestDelete: () => void;
     onPickEnvironment: (environmentId: string) => void;
     onDraftNameChange: (value: string) => void;
     onDraftVarsChange: (next: KeyValue[]) => void;
     onSetActive: () => void;
     onSave: () => void;
+    onCancelDelete: () => void;
+    onConfirmDelete: () => void;
 };
 
 export default function EnvironmentsModal({
@@ -36,15 +45,18 @@ export default function EnvironmentsModal({
     selectedEnvironmentId,
     draftName,
     draftVars,
+    deleteTarget,
     onClose,
     onCreate,
     onDuplicate,
-    onDelete,
+    onRequestDelete,
     onPickEnvironment,
     onDraftNameChange,
     onDraftVarsChange,
     onSetActive,
     onSave,
+    onCancelDelete,
+    onConfirmDelete,
 }: EnvironmentsModalProps) {
     return (
         <>
@@ -171,7 +183,7 @@ export default function EnvironmentsModal({
                                             </button>
                                             <div style={{ display: "flex", gap: 8 }}>
                                                 <button
-                                                    onClick={onDelete}
+                                                    onClick={onRequestDelete}
                                                     disabled={busy}
                                                     style={dangerButtonStyle(busy)}
                                                 >
@@ -193,6 +205,20 @@ export default function EnvironmentsModal({
                     </div>
                 </div>
             )}
+
+            <ConfirmationModal
+                open={!!deleteTarget}
+                busy={busy}
+                title="Delete environment"
+                message={
+                    deleteTarget
+                        ? `Delete "${deleteTarget.name}"? Variables stored in this environment will be removed.`
+                        : ""
+                }
+                confirmLabel="Delete"
+                onCancel={onCancelDelete}
+                onConfirm={onConfirmDelete}
+            />
         </>
     );
 }

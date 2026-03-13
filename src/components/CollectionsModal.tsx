@@ -5,6 +5,7 @@ import {
     modalInputStyle,
     primaryButtonStyle,
 } from "../helpers/UiStyles.ts";
+import ConfirmationModal from "./ConfirmationModal.tsx";
 
 type DeleteCollectionTarget = {
     id: string;
@@ -211,51 +212,19 @@ export default function CollectionsModal({
                 </div>
             )}
 
-            {deleteTarget && (
-                <div
-                    style={{
-                        position: "fixed",
-                        inset: 0,
-                        zIndex: 1390,
-                        background: "rgba(0,0,0,0.45)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        padding: 16,
-                    }}
-                    onMouseDown={() => {
-                        if (!busy) onCancelDelete();
-                    }}
-                >
-                    <div
-                        onMouseDown={(e) => e.stopPropagation()}
-                        style={{
-                            width: "100%",
-                            maxWidth: 500,
-                            border: "1px solid var(--pg-border)",
-                            borderRadius: 12,
-                            background: "var(--pg-surface-1)",
-                            padding: 16,
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 12,
-                        }}
-                    >
-                        <h3 style={{ margin: 0 }}>Delete collection</h3>
-                        <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.5 }}>
-                            Delete <strong>{deleteTarget.name}</strong>? This will remove all requests in this collection.
-                        </div>
-                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                            <button onClick={onCancelDelete} disabled={busy} style={buttonStyle(busy)}>
-                                Cancel
-                            </button>
-                            <button onClick={onConfirmDelete} disabled={busy} style={dangerButtonStyle(busy)}>
-                                {busy ? "Deleting..." : "Delete"}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <ConfirmationModal
+                open={!!deleteTarget}
+                busy={busy}
+                title="Delete collection"
+                message={
+                    deleteTarget
+                        ? `Delete "${deleteTarget.name}"? This will remove all requests in this collection.`
+                        : ""
+                }
+                confirmLabel="Delete"
+                onCancel={onCancelDelete}
+                onConfirm={onConfirmDelete}
+            />
         </>
     );
 }

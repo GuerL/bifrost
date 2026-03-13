@@ -76,6 +76,11 @@ type DeleteCollectionModal = {
     name: string;
 };
 
+type DeleteEnvironmentModal = {
+    id: string;
+    name: string;
+};
+
 type PersistedTabsEntry = {
     openRequestIds: string[];
     activeRequestId: string | null;
@@ -356,6 +361,7 @@ export default function App() {
     const [runnerModalOpen, setRunnerModalOpen] = useState(false);
     const [runnerSelectedRequestIds, setRunnerSelectedRequestIds] = useState<string[]>([]);
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
+    const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
@@ -382,6 +388,7 @@ export default function App() {
         collectionRunActiveRequestIdRef.current = null;
         setRunnerModalOpen(false);
         setRunnerSelectedRequestIds([]);
+        setDeleteEnvironmentModal(null);
         setDraftsById({});
         setCloseDraftModal(null);
         setCloseDraftBusy(false);
@@ -2068,6 +2075,7 @@ export default function App() {
         setEnvDraftName(selected?.name ?? "");
         setEnvDraftVars(selected?.variables ?? []);
         setEnvError("");
+        setDeleteEnvironmentModal(null);
         setEnvironmentsModalOpen(true);
     }
 
@@ -2075,6 +2083,7 @@ export default function App() {
         if (envBusy) return;
         setEnvironmentsModalOpen(false);
         setEnvError("");
+        setDeleteEnvironmentModal(null);
     }
 
     function pickEnvironmentForEdit(environmentId: string) {
@@ -2084,6 +2093,7 @@ export default function App() {
         setEnvDraftName(env.name);
         setEnvDraftVars(env.variables);
         setEnvError("");
+        setDeleteEnvironmentModal(null);
     }
 
     async function onCreateEnvironment() {
@@ -2119,13 +2129,21 @@ export default function App() {
         }
     }
 
-    async function onDeleteEnvironment() {
+    function requestDeleteSelectedEnvironment() {
         if (!envSelectedId || envBusy) return;
+        const selected = environments.find((entry) => entry.id === envSelectedId);
+        if (!selected) return;
+        setDeleteEnvironmentModal({ id: selected.id, name: selected.name });
+    }
+
+    async function onDeleteEnvironment() {
+        if (!deleteEnvironmentModal || envBusy) return;
         setEnvBusy(true);
         setEnvError("");
         try {
-            await invoke("delete_environment", { environmentId: envSelectedId });
+            await invoke("delete_environment", { environmentId: deleteEnvironmentModal.id });
             await reloadEnvironments();
+            setDeleteEnvironmentModal(null);
             setStatus("✅ Environment deleted");
         } catch (e) {
             setEnvError(`Delete failed: ${String(e)}`);
@@ -3057,10 +3075,11 @@ export default function App() {
                 selectedEnvironmentId={envSelectedId}
                 draftName={envDraftName}
                 draftVars={envDraftVars}
+                deleteTarget={deleteEnvironmentModal}
                 onClose={closeEnvironmentsModal}
                 onCreate={() => void onCreateEnvironment()}
                 onDuplicate={() => void onDuplicateEnvironment()}
-                onDelete={() => void onDeleteEnvironment()}
+                onRequestDelete={requestDeleteSelectedEnvironment}
                 onPickEnvironment={pickEnvironmentForEdit}
                 onDraftNameChange={setEnvDraftName}
                 onDraftVarsChange={setEnvDraftVars}
@@ -3069,6 +3088,8 @@ export default function App() {
                     void onSelectEnvironment(envSelectedId);
                 }}
                 onSave={() => void onSaveEnvironment()}
+                onCancelDelete={() => setDeleteEnvironmentModal(null)}
+                onConfirmDelete={() => void onDeleteEnvironment()}
             />
         </>
     );
