@@ -520,12 +520,12 @@ fn map_body(
             .and_then(|raw| raw.language.as_ref())
             .map(|value| value.to_ascii_lowercase());
         let header_content_type = content_type_header.unwrap_or("").to_ascii_lowercase();
-        let parsed_json = serde_json::from_str::<serde_json::Value>(&raw_text).ok();
-
-        let looks_json = language.as_deref() == Some("json")
+        let parsed_json = parse_postman_json_body(&raw_text);
+        let explicit_json_mode = language.as_deref() == Some("json")
             || header_content_type.contains("application/json")
-            || header_content_type.contains("+json")
-            || parsed_json.is_some();
+            || header_content_type.contains("+json");
+
+        let looks_json = explicit_json_mode || parsed_json.is_some();
 
         if looks_json {
             if let Some(parsed) = parsed_json {
@@ -534,10 +534,12 @@ fn map_body(
                     text: String::new(),
                 };
             }
-            warnings.push(format!(
-                "Request '{}' raw body marked as JSON but could not be parsed, imported as raw text",
-                request_name
-            ));
+            if explicit_json_mode {
+                warnings.push(format!(
+                    "Request '{}' raw body marked as JSON but could not be parsed, imported as raw text",
+                    request_name
+                ));
+            }
         }
 
         let content_type = if header_content_type.is_empty() {
@@ -613,6 +615,14 @@ fn map_body(
     }
 
     Body::None
+}
+
+fn parse_postman_json_body(input: &str) -> Option<serde_json::Value> {
+    let normalized = input.trim_start_matches('\u{feff}');
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(normalized) {
+        return Some(parsed);
+    }
+    json5::from_str::<serde_json::Value>(normalized).ok()
 }
 
 fn map_auth(auth: Option<&PostmanAuthDto>) -> Auth {
