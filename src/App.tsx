@@ -69,6 +69,11 @@ type SidebarContextMenu = {
     row: SidebarTreeRow;
 };
 
+type RootAddMenu = {
+    x: number;
+    y: number;
+};
+
 type CloseDraftModal = {
     requestId: string;
 };
@@ -335,6 +340,7 @@ export default function App() {
         "headers"
     );
     const [contextMenu, setContextMenu] = useState<SidebarContextMenu | null>(null);
+    const [rootAddMenu, setRootAddMenu] = useState<RootAddMenu | null>(null);
     const [renameTarget, setRenameTarget] = useState<{ kind: "request" | "folder"; id: string } | null>(null);
     const [renameNameInput, setRenameNameInput] = useState("");
     const [renameError, setRenameError] = useState("");
@@ -370,6 +376,7 @@ export default function App() {
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
+    const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
     const hydratedTabsCollectionIdRef = useRef<string | null>(null);
     const hydratedRunnerCollectionIdRef = useRef<string | null>(null);
@@ -393,6 +400,7 @@ export default function App() {
         setMoveNodeTargetFolderId(null);
         setMoveNodeBusy(false);
         setMoveNodeError("");
+        setRootAddMenu(null);
         setDraggedOpenTabRequestId(null);
         setOpenTabDropIndicator(null);
         setResponsesByRequestId({});
@@ -969,6 +977,7 @@ export default function App() {
         function onKeyDown(e: KeyboardEvent) {
             if (e.key !== "Escape") return;
             setContextMenu(null);
+            setRootAddMenu(null);
             setDraggedRequestId(null);
             setDropIndicator(null);
             setDraggedOpenTabRequestId(null);
@@ -2001,6 +2010,16 @@ export default function App() {
         );
     }
 
+    function openRootAddMenuFromButton() {
+        if (!current) return;
+        const rect = rootAddButtonRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        setRootAddMenu({
+            x: rect.right - 180,
+            y: rect.bottom + 6,
+        });
+    }
+
     function openCreateFolder(parentFolderId: string | null) {
         setCreateFolderModal({ parentFolderId });
         setCreateFolderNameInput("");
@@ -2458,18 +2477,26 @@ export default function App() {
                                 gap: 8,
                                 flexShrink: 0,
                             }}
+                            onContextMenu={(event) => {
+                                event.preventDefault();
+                                if (!current) return;
+                                setContextMenu(null);
+                                setRootAddMenu({ x: event.clientX, y: event.clientY });
+                            }}
                         >
                             <h3 style={{ margin: 0 }}>Saved Requests</h3>
                             <div style={{ display: "flex", gap: 6 }}>
-                                <button style={buttonStyle(!current)} disabled={!current} onClick={() => onNewRequest(null)}>
-                                    + Request
-                                </button>
                                 <button
-                                    style={buttonStyle(!current)}
+                                    ref={rootAddButtonRef}
+                                    style={{ ...buttonStyle(!current), width: 34, padding: 0 }}
                                     disabled={!current}
-                                    onClick={() => openCreateFolder(null)}
+                                    onClick={() => {
+                                        setContextMenu(null);
+                                        openRootAddMenuFromButton();
+                                    }}
+                                    title="Add..."
                                 >
-                                    + Folder
+                                    ...
                                 </button>
                             </div>
                         </div>
@@ -2589,6 +2616,7 @@ export default function App() {
                                                 }}
                                                 onContextMenu={(e) => {
                                                     e.preventDefault();
+                                                    setRootAddMenu(null);
                                                     if (row.kind === "request" && row.request) {
                                                         setSelection(row.request);
                                                     }
@@ -3121,6 +3149,54 @@ export default function App() {
                     )}
                 </div>
             </div>
+
+            {rootAddMenu && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1190,
+                    }}
+                    onClick={() => setRootAddMenu(null)}
+                >
+                    <div
+                        style={{
+                            position: "fixed",
+                            top: rootAddMenu.y,
+                            left: rootAddMenu.x,
+                            minWidth: 180,
+                            padding: 6,
+                            borderRadius: 10,
+                            border: "1px solid var(--pg-border)",
+                            background: "var(--pg-surface-1)",
+                            boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4,
+                        }}
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <button
+                            style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                            onClick={() => {
+                                setRootAddMenu(null);
+                                onNewRequest(null);
+                            }}
+                        >
+                            Add request
+                        </button>
+                        <button
+                            style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                            onClick={() => {
+                                setRootAddMenu(null);
+                                openCreateFolder(null);
+                            }}
+                        >
+                            Add folder
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {contextMenu && (
                 <div
