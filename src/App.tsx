@@ -58,6 +58,7 @@ import type {
     Environment,
     HttpResponseDto,
     ImportPostmanResult,
+    ImportPortableResult,
     KeyValue,
     RequestAuth,
     Request,
@@ -325,18 +326,6 @@ function safeFileName(value: string): string {
         .toLowerCase();
 }
 
-function downloadTextFile(fileName: string, content: string) {
-    const blob = new Blob([content], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
-}
-
 export default function App() {
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
@@ -401,6 +390,7 @@ export default function App() {
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
     const postmanImportInputRef = useRef<HTMLInputElement | null>(null);
+    const portableImportInputRef = useRef<HTMLInputElement | null>(null);
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
     const hydratedTabsCollectionIdRef = useRef<string | null>(null);
@@ -2222,6 +2212,10 @@ export default function App() {
         postmanImportInputRef.current?.click();
     }
 
+    function openPortableImportPicker() {
+        portableImportInputRef.current?.click();
+    }
+
     async function onPostmanImportFileSelected(event: ChangeEvent<HTMLInputElement>) {
         const file = event.target.files?.[0];
         event.target.value = "";
@@ -2252,17 +2246,58 @@ export default function App() {
         }
     }
 
+    async function onPortableImportFileSelected(event: ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+
+        try {
+            setStatus(`Importing Postguerl portable file: ${file.name}...`);
+            const jsonText = await file.text();
+            const imported = await invoke<ImportPortableResult>(
+                "import_collection_portable_from_json",
+                { jsonText }
+            );
+
+            await invoke("set_active_collection", {
+                collectionId: imported.collection_id,
+            });
+            await reloadCollectionsAndRestoreActive(imported.collection_id);
+
+            const warningsSuffix =
+                imported.warnings.length > 0
+                    ? ` • ${imported.warnings.length} warning(s)`
+                    : "";
+            setStatus(
+                `✅ Imported '${imported.collection_name}' (${imported.imported_requests} requests)${warningsSuffix}`
+            );
+        } catch (error) {
+            setStatus(`❌ Portable import failed: ${String(error)}`);
+        }
+    }
+
     async function onExportPortableCollection() {
         if (!current) return;
 
         try {
             setStatus(`Exporting '${current.meta.name}'...`);
-            const json = await invoke<string>("export_collection_portable", {
+            const appDataDir = await invoke<string>("app_data_dir");
+            const suggestedFilePath = `${appDataDir}/${safeFileName(current.meta.name)}.postguerl.portable.json`;
+            const userPath = window.prompt(
+                "Choose export file path",
+                suggestedFilePath
+            );
+            if (!userPath || !userPath.trim()) {
+                setStatus("ℹ️ Portable export cancelled");
+                return;
+            }
+
+            await invoke("export_collection_portable_to_file", {
                 collectionId: current.meta.id,
+                path: userPath.trim(),
             });
-            const fileName = `${safeFileName(current.meta.name)}.postguerl.portable.json`;
-            downloadTextFile(fileName, json);
-            setStatus(`✅ Portable export ready: ${fileName}`);
+
+            setStatus(`✅ Portable export saved: ${userPath.trim()}`);
         } catch (error) {
             setStatus(`❌ Portable export failed: ${String(error)}`);
         }
@@ -2531,6 +2566,7 @@ export default function App() {
                 onOpenRawJson={() => setTab("json")}
                 onOpenCollectionRunner={() => setRunnerModalOpen(true)}
                 onImportPostman={openPostmanImportPicker}
+                onImportPortable={openPortableImportPicker}
                 onExportPortable={() => void onExportPortableCollection()}
                 canSaveDraft={!!current && !!draft && isDirty}
                 hasDraft={!!draft}
@@ -2544,6 +2580,13 @@ export default function App() {
                 accept=".json,application/json"
                 style={{ display: "none" }}
                 onChange={(event) => void onPostmanImportFileSelected(event)}
+            />
+            <input
+                ref={portableImportInputRef}
+                type="file"
+                accept=".json,application/json"
+                style={{ display: "none" }}
+                onChange={(event) => void onPortableImportFileSelected(event)}
             />
 
             <div

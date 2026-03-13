@@ -87,3 +87,10 @@ export type ImportPostmanResult = {
     imported_environment_id: string | null;
     warnings: string[];
 };
+
+export type ImportPortableResult = {
+    collection_id: string;
+    collection_name: string;
+    imported_requests: number;
+    warnings: string[];
+};

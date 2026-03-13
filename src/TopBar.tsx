@@ -27,6 +27,7 @@ type TopBarProps = {
     onOpenRawJson: () => void;
     onOpenCollectionRunner: () => void;
     onImportPostman: () => void;
+    onImportPortable: () => void;
     onExportPortable: () => void;
     canSaveDraft: boolean;
     hasDraft: boolean;
@@ -48,6 +49,7 @@ export default function TopBar({
     onOpenRawJson,
     onOpenCollectionRunner,
     onImportPostman,
+    onImportPortable,
     onExportPortable,
     canSaveDraft,
     hasDraft,
@@ -171,6 +173,9 @@ export default function TopBar({
                 </button>
                 <button onClick={onImportPostman} style={buttonStyle(false)}>
                     Import Postman
+                </button>
+                <button onClick={onImportPortable} style={buttonStyle(false)}>
+                    Import Postguerl
                 </button>
                 <button
                     onClick={onExportPortable}

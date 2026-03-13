@@ -55,6 +55,8 @@ pub fn run() {
             commands::import_export::import_postman_collection_from_json,
             commands::import_export::export_collection_portable,
             commands::import_export::export_collection_portable_to_file,
+            commands::import_export::import_collection_portable_from_file,
+            commands::import_export::import_collection_portable_from_json,
             commands::import_export::export_collection_to_postman,
             commands::import_export::export_collection_to_postman_file
         ])
