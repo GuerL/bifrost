@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { buttonStyle, dangerButtonStyle, primaryButtonStyle, selectStyle } from "../helpers/UiStyles.ts";
 import type { Request } from "../types.ts";
 import { groupRunnerExecutionsForDisplay } from "../runner/grouping.ts";
@@ -18,6 +18,14 @@ type RunnerFolderSelectionGroup = {
     folderId: string;
     label: string;
     requestIds: string[];
+};
+
+type RunnerFolderSelectionTreeNode = {
+    folderId: string;
+    name: string;
+    label: string;
+    requestIds: string[];
+    children: RunnerFolderSelectionTreeNode[];
 };
 
 type CollectionRunnerModalProps = {
@@ -70,6 +78,7 @@ export default function CollectionRunnerModal({
     const [executionFilter, setExecutionFilter] = useState<RunResultFilter>("all");
     const [expandedByGroupId, setExpandedByGroupId] = useState<Record<string, boolean>>({});
     const [expandedByExecutionId, setExpandedByExecutionId] = useState<Record<string, boolean>>({});
+    const [expandedFolderTreeById, setExpandedFolderTreeById] = useState<Record<string, boolean>>({});
 
     useEffect(() => {
         if (!open) return;
@@ -78,6 +87,7 @@ export default function CollectionRunnerModal({
         setResultTab("executions");
         setExpandedByGroupId({});
         setExpandedByExecutionId({});
+        setExpandedFolderTreeById({});
     }, [open]);
 
     useEffect(() => {
@@ -119,6 +129,10 @@ export default function CollectionRunnerModal({
         () => groupRunnerExecutionsForDisplay(visibleExecutions, run?.mode ?? runMode),
         [visibleExecutions, run?.mode, runMode]
     );
+    const folderSelectionTree = useMemo(
+        () => buildRunnerFolderSelectionTree(folderSelectionGroups),
+        [folderSelectionGroups]
+    );
     const requestPathById = useMemo(() => {
         const map = new Map<string, string>();
         for (const group of folderSelectionGroups) {
@@ -152,6 +166,13 @@ export default function CollectionRunnerModal({
     function runAndOpenResults() {
         setMainTab("results");
         onRun();
+    }
+
+    function toggleFolderTreeExpanded(folderId: string) {
+        setExpandedFolderTreeById((previous) => ({
+            ...previous,
+            [folderId]: !(previous[folderId] ?? true),
+        }));
     }
 
     return (
@@ -365,49 +386,18 @@ export default function CollectionRunnerModal({
                                                 overflowY: "auto",
                                             }}
                                         >
-                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)", marginBottom: 8 }}>
+                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)", marginBottom: 8, fontWeight: 700 }}>
                                                 Folders
                                             </div>
-                                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                                {folderSelectionGroups.map((group) => {
-                                                    const total = group.requestIds.length;
-                                                    const selectedInGroup = group.requestIds.filter((id) =>
-                                                        selectedSet.has(id)
-                                                    ).length;
-                                                    const allSelected = total > 0 && selectedInGroup === total;
-                                                    const partiallySelected =
-                                                        selectedInGroup > 0 && selectedInGroup < total;
-
-                                                    return (
-                                                        <button
-                                                            key={group.folderId}
-                                                            disabled={isRunning || total === 0}
-                                                            onClick={() =>
-                                                                onToggleFolderSelection(group.requestIds, !allSelected)
-                                                            }
-                                                            style={{
-                                                                ...buttonStyle(isRunning || total === 0),
-                                                                fontSize: 12,
-                                                                justifyContent: "space-between",
-                                                                borderColor: allSelected
-                                                                    ? "var(--pg-primary)"
-                                                                    : partiallySelected
-                                                                        ? "var(--pg-primary-soft)"
-                                                                        : "var(--pg-border)",
-                                                                background: allSelected
-                                                                    ? "rgba(var(--pg-primary-rgb), 0.12)"
-                                                                    : "var(--pg-surface-0)",
-                                                            }}
-                                                            title={group.label}
-                                                        >
-                                                            <span style={{ minWidth: 0, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                                                {allSelected ? "☑" : partiallySelected ? "◪" : "☐"} {group.label}
-                                                            </span>
-                                                            <span style={{ fontSize: 11, color: "var(--pg-text-muted)" }}>
-                                                                {selectedInGroup}/{total}
-                                                            </span>
-                                                        </button>
-                                                    );
+                                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                                {renderFolderTreeNodes({
+                                                    nodes: folderSelectionTree,
+                                                    depth: 0,
+                                                    selectedSet,
+                                                    isRunning,
+                                                    expandedFolderTreeById,
+                                                    onToggleExpanded: toggleFolderTreeExpanded,
+                                                    onToggleFolderSelection,
                                                 })}
                                             </div>
                                         </div>
@@ -522,16 +512,16 @@ export default function CollectionRunnerModal({
                             overflow: "hidden",
                         }}
                     >
-                    <div
-                        style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            gap: 10,
-                            borderBottom: "1px solid var(--pg-border)",
-                            padding: "10px 12px",
-                        }}
-                    >
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: 10,
+                                borderBottom: "1px solid var(--pg-border)",
+                                padding: "10px 12px",
+                            }}
+                        >
                         <div style={{ display: "flex", gap: 8 }}>
                             <button
                                 onClick={() => setResultTab("executions")}
@@ -547,31 +537,31 @@ export default function CollectionRunnerModal({
                             </button>
                         </div>
 
-                        {resultTab === "executions" && (
-                            <div style={{ display: "flex", gap: 8 }}>
-                                <button
-                                    onClick={() => setExecutionFilter("all")}
-                                    style={filterTabStyle(executionFilter === "all")}
-                                >
-                                    All
-                                </button>
-                                <button
-                                    onClick={() => setExecutionFilter("failed")}
-                                    style={filterTabStyle(executionFilter === "failed")}
-                                >
-                                    Failed
-                                </button>
-                                <button
-                                    onClick={() => setExecutionFilter("success")}
-                                    style={filterTabStyle(executionFilter === "success")}
-                                >
-                                    Success
-                                </button>
-                            </div>
-                        )}
-                    </div>
+                            {resultTab === "executions" && (
+                                <div style={{ display: "flex", gap: 8 }}>
+                                    <button
+                                        onClick={() => setExecutionFilter("all")}
+                                        style={filterTabStyle(executionFilter === "all")}
+                                    >
+                                        All
+                                    </button>
+                                    <button
+                                        onClick={() => setExecutionFilter("failed")}
+                                        style={filterTabStyle(executionFilter === "failed")}
+                                    >
+                                        Failed
+                                    </button>
+                                    <button
+                                        onClick={() => setExecutionFilter("success")}
+                                        style={filterTabStyle(executionFilter === "success")}
+                                    >
+                                        Success
+                                    </button>
+                                </div>
+                            )}
+                        </div>
 
-                    <div style={{ minHeight: 0, flex: 1, overflowY: "auto", padding: 12 }}>
+                        <div style={{ minHeight: 0, flex: 1, overflowY: "auto", padding: 12 }}>
                         {resultTab === "executions" && (
                             <>
                                 {!run && (
@@ -766,8 +756,8 @@ export default function CollectionRunnerModal({
                                 )}
                             </>
                         )}
+                        </div>
                     </div>
-                </div>
                 )}
 
                 <div
@@ -914,6 +904,157 @@ function ExecutionRow({
             )}
         </div>
     );
+}
+
+function buildRunnerFolderSelectionTree(
+    groups: RunnerFolderSelectionGroup[]
+): RunnerFolderSelectionTreeNode[] {
+    const roots: RunnerFolderSelectionTreeNode[] = [];
+    const byLabel = new Map<string, RunnerFolderSelectionTreeNode>();
+
+    for (const group of groups) {
+        const segments = group.label
+            .split(" / ")
+            .map((segment) => segment.trim())
+            .filter((segment) => segment.length > 0);
+        if (segments.length === 0) continue;
+
+        const parentLabel = segments.slice(0, -1).join(" / ");
+        const name = segments[segments.length - 1];
+        const node: RunnerFolderSelectionTreeNode = {
+            folderId: group.folderId,
+            name,
+            label: group.label,
+            requestIds: group.requestIds,
+            children: [],
+        };
+
+        if (!parentLabel) {
+            roots.push(node);
+        } else {
+            const parent = byLabel.get(parentLabel);
+            if (parent) {
+                parent.children.push(node);
+            } else {
+                roots.push(node);
+            }
+        }
+
+        byLabel.set(group.label, node);
+    }
+
+    return roots;
+}
+
+function renderFolderTreeNodes({
+    nodes,
+    depth,
+    selectedSet,
+    isRunning,
+    expandedFolderTreeById,
+    onToggleExpanded,
+    onToggleFolderSelection,
+}: {
+    nodes: RunnerFolderSelectionTreeNode[];
+    depth: number;
+    selectedSet: Set<string>;
+    isRunning: boolean;
+    expandedFolderTreeById: Record<string, boolean>;
+    onToggleExpanded: (folderId: string) => void;
+    onToggleFolderSelection: (requestIds: string[], selected: boolean) => void;
+}): ReactElement[] {
+    const out: ReactElement[] = [];
+
+    for (const node of nodes) {
+        const total = node.requestIds.length;
+        const selectedInGroup = node.requestIds.filter((id) => selectedSet.has(id)).length;
+        const allSelected = total > 0 && selectedInGroup === total;
+        const partiallySelected = selectedInGroup > 0 && selectedInGroup < total;
+        const hasChildren = node.children.length > 0;
+        const expanded = expandedFolderTreeById[node.folderId] ?? true;
+
+        out.push(
+            <div key={node.folderId} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div
+                    style={{
+                        display: "grid",
+                        gridTemplateColumns: "18px minmax(0, 1fr)",
+                        alignItems: "center",
+                        gap: 6,
+                        paddingLeft: depth * 14,
+                    }}
+                >
+                    <button
+                        onClick={() => hasChildren && onToggleExpanded(node.folderId)}
+                        style={{
+                            border: "none",
+                            background: "transparent",
+                            color: "var(--pg-text-muted)",
+                            cursor: hasChildren ? "pointer" : "default",
+                            padding: 0,
+                            fontSize: 12,
+                            width: 16,
+                            height: 16,
+                            display: "grid",
+                            placeItems: "center",
+                            opacity: hasChildren ? 1 : 0.35,
+                        }}
+                        disabled={!hasChildren}
+                    >
+                        {hasChildren ? (expanded ? "▾" : "▸") : "•"}
+                    </button>
+                    <button
+                        disabled={isRunning || total === 0}
+                        onClick={() => onToggleFolderSelection(node.requestIds, !allSelected)}
+                        style={{
+                            ...buttonStyle(isRunning || total === 0),
+                            fontSize: 12,
+                            justifyContent: "space-between",
+                            borderColor: allSelected
+                                ? "var(--pg-primary)"
+                                : partiallySelected
+                                    ? "var(--pg-primary-soft)"
+                                    : "var(--pg-border)",
+                            background: allSelected
+                                ? "rgba(var(--pg-primary-rgb), 0.12)"
+                                : "var(--pg-surface-0)",
+                        }}
+                        title={node.label}
+                    >
+                        <span
+                            style={{
+                                minWidth: 0,
+                                textAlign: "left",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                            }}
+                        >
+                            {allSelected ? "☑" : partiallySelected ? "◪" : "☐"} {node.name}
+                        </span>
+                        <span style={{ fontSize: 11, color: "var(--pg-text-muted)" }}>
+                            {selectedInGroup}/{total}
+                        </span>
+                    </button>
+                </div>
+                {hasChildren && expanded && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {renderFolderTreeNodes({
+                            nodes: node.children,
+                            depth: depth + 1,
+                            selectedSet,
+                            isRunning,
+                            expandedFolderTreeById,
+                            onToggleExpanded,
+                            onToggleFolderSelection,
+                        })}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    return out;
 }
 
 function ExecutionDetails({ execution }: { execution: RunnerExecutionResult }) {
