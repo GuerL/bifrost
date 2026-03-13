@@ -2640,13 +2640,59 @@ export default function App() {
                                                     opacity: missingRequest ? 0.75 : 1,
                                                 }}
                                             >
-                                                {row.kind === "folder"
-                                                    ? `${expandedFolders[row.folderId] === false ? "▸" : "▾"} ${row.name}`
-                                                    : row.request
-                                                        ? `${row.request.method.toUpperCase()} ${row.request.name} ${
-                                                            hasLocalDraft ? "●" : ""
-                                                        }`
-                                                        : `[Missing] ${row.requestId}`}
+                                                {row.kind === "folder" ? (
+                                                    <span
+                                                        style={{
+                                                            display: "inline-flex",
+                                                            alignItems: "center",
+                                                            gap: 8,
+                                                            minWidth: 0,
+                                                        }}
+                                                    >
+                                                        <span
+                                                            style={{
+                                                                width: 12,
+                                                                display: "inline-flex",
+                                                                justifyContent: "center",
+                                                                color: "var(--pg-text-muted)",
+                                                                flexShrink: 0,
+                                                            }}
+                                                        >
+                                                            {expandedFolders[row.folderId] === false ? "▸" : "▾"}
+                                                        </span>
+                                                        <svg
+                                                            width="14"
+                                                            height="14"
+                                                            viewBox="0 0 24 24"
+                                                            fill="none"
+                                                            xmlns="http://www.w3.org/2000/svg"
+                                                            style={{ flexShrink: 0, color: "var(--pg-text-muted)" }}
+                                                        >
+                                                            <path
+                                                                d="M3 7.5C3 6.67157 3.67157 6 4.5 6H9.1C9.56335 6 9.99834 6.214 10.2789 6.57998L11.4211 8.07002C11.7017 8.436 12.1367 8.65 12.6 8.65H19.5C20.3284 8.65 21 9.32157 21 10.15V17.5C21 18.3284 20.3284 19 19.5 19H4.5C3.67157 19 3 18.3284 3 17.5V7.5Z"
+                                                                stroke="currentColor"
+                                                                strokeWidth="1.8"
+                                                                strokeLinejoin="round"
+                                                            />
+                                                        </svg>
+                                                        <span
+                                                            style={{
+                                                                minWidth: 0,
+                                                                overflow: "hidden",
+                                                                textOverflow: "ellipsis",
+                                                                whiteSpace: "nowrap",
+                                                            }}
+                                                        >
+                                                            {row.name}
+                                                        </span>
+                                                    </span>
+                                                ) : row.request ? (
+                                                    `${row.request.method.toUpperCase()} ${row.request.name} ${
+                                                        hasLocalDraft ? "●" : ""
+                                                    }`
+                                                ) : (
+                                                    `[Missing] ${row.requestId}`
+                                                )}
                                             </button>
                                             {showDropInside && row.kind === "folder" && !isFolderCollapsed && (
                                                 <div style={dropMarkerStyle("inside")} />
