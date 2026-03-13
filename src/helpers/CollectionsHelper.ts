@@ -46,7 +46,15 @@ export async function overwriteDefault(setStatus: (s: string) => void, setCollec
         setStatus(`❌ Overwrite failed: ${String(e)}`);
     }
 }
-export async function devCreate(current: CollectionLoaded | null, setCurrent: (c: CollectionLoaded) => void, setSelectedRequestId: (id: string | null) => void, setResp: (r: HttpResponseDto | null) => void, setStatus: (s: string) => void, setSelection:(r:Request)=>void) {
+export async function devCreate(
+    current: CollectionLoaded | null,
+    setCurrent: (c: CollectionLoaded) => void,
+    setSelectedRequestId: (id: string | null) => void,
+    setResp: (r: HttpResponseDto | null) => void,
+    setStatus: (s: string) => void,
+    setSelection: (r: Request) => void,
+    parentFolderId?: string | null
+) {
     if (!current) return;
     let id = crypto.randomUUID();
    const req: Request = {
@@ -62,7 +70,11 @@ export async function devCreate(current: CollectionLoaded | null, setCurrent: (c
      scripts: { pre_request: "", post_response: "" },
    };
 
-    await invoke("create_request", { collectionId: current.meta.id, request: req });
+    await invoke("create_request", {
+        collectionId: current.meta.id,
+        request: req,
+        parentFolderId: parentFolderId ?? null,
+    });
     await loadCollection(current.meta.id, req.id, setCurrent, setSelectedRequestId, setResp, setStatus); // reload
     setSelection(req);
 }
@@ -81,7 +93,8 @@ export async function devDuplicate(
     setCurrent: (c: CollectionLoaded) => void,
     setSelectedRequestId: (id: string | null) => void,
     setResp: (r: HttpResponseDto | null) => void,
-    setStatus: (s: string) => void
+    setStatus: (s: string) => void,
+    targetFolderId?: string | null
 ) {
     if (!current || !selectedRequestId) return;
 
@@ -98,6 +111,7 @@ export async function devDuplicate(
             sourceRequestId: source.id,
             newRequestId: newId,
             newName,
+            targetFolderId: targetFolderId ?? null,
         });
 
         await loadCollection(

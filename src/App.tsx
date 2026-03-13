@@ -10,6 +10,13 @@ import {
     initDefault,
     loadCollection,
 } from "./helpers/CollectionsHelper.ts";
+import {
+    buildSidebarRows,
+    folderOptions,
+    requestsInTreeOrder,
+    type FolderOption,
+    type SidebarTreeRow,
+} from "./helpers/CollectionTree.ts";
 import KeyValueTable from "./KeyValueTable.tsx";
 import TopBar from "./TopBar.tsx";
 import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
@@ -56,10 +63,10 @@ import type {
     RequestScripts,
 } from "./types.ts";
 
-type RequestContextMenu = {
+type SidebarContextMenu = {
     x: number;
     y: number;
-    requestId: string;
+    row: SidebarTreeRow;
 };
 
 type CloseDraftModal = {
@@ -67,8 +74,19 @@ type CloseDraftModal = {
 };
 
 type RequestDropIndicator = {
+    nodeId: string;
+    position: "before" | "after";
+};
+
+type OpenTabDropIndicator = {
     requestId: string;
     position: "before" | "after";
+};
+
+type MoveNodeModal = {
+    nodeId: string;
+    currentParentFolderId: string | null;
+    title: string;
 };
 
 type DeleteCollectionModal = {
@@ -117,33 +135,6 @@ const DYNAMIC_VARIABLE_PREVIEWS: Record<string, string> = {
     "$uuid": "Generated at runtime (UUID v4)",
     "$randomint": "Generated at runtime (0-999)",
 };
-
-function normalizedRequestOrder(collection: CollectionLoaded): string[] {
-    const existingIds = new Set(collection.requests.map((request) => request.id));
-    const normalized: string[] = [];
-    const used = new Set<string>();
-
-    for (const requestId of collection.meta.request_order) {
-        if (!existingIds.has(requestId) || used.has(requestId)) continue;
-        normalized.push(requestId);
-        used.add(requestId);
-    }
-
-    for (const request of collection.requests) {
-        if (used.has(request.id)) continue;
-        normalized.push(request.id);
-        used.add(request.id);
-    }
-
-    return normalized;
-}
-
-function requestsInOrder(collection: CollectionLoaded): Request[] {
-    const requestsById = new Map(collection.requests.map((request) => [request.id, request]));
-    return normalizedRequestOrder(collection)
-        .map((requestId) => requestsById.get(requestId))
-        .filter((request): request is Request => !!request);
-}
 
 function buildDefaultAuth(type: RequestAuth["type"]): RequestAuth {
     if (type === "bearer") {
@@ -343,15 +334,24 @@ export default function App() {
     const [tab, setTab] = useState<"headers" | "query" | "body" | "auth" | "scripts" | "json">(
         "headers"
     );
-    const [contextMenu, setContextMenu] = useState<RequestContextMenu | null>(null);
-    const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
+    const [contextMenu, setContextMenu] = useState<SidebarContextMenu | null>(null);
+    const [renameTarget, setRenameTarget] = useState<{ kind: "request" | "folder"; id: string } | null>(null);
     const [renameNameInput, setRenameNameInput] = useState("");
     const [renameError, setRenameError] = useState("");
     const [renameBusy, setRenameBusy] = useState(false);
     const [draggedRequestId, setDraggedRequestId] = useState<string | null>(null);
     const [dropIndicator, setDropIndicator] = useState<RequestDropIndicator | null>(null);
+    const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+    const [createFolderModal, setCreateFolderModal] = useState<{ parentFolderId: string | null } | null>(null);
+    const [createFolderNameInput, setCreateFolderNameInput] = useState("");
+    const [createFolderBusy, setCreateFolderBusy] = useState(false);
+    const [createFolderError, setCreateFolderError] = useState("");
+    const [moveNodeModal, setMoveNodeModal] = useState<MoveNodeModal | null>(null);
+    const [moveNodeTargetFolderId, setMoveNodeTargetFolderId] = useState<string | null>(null);
+    const [moveNodeBusy, setMoveNodeBusy] = useState(false);
+    const [moveNodeError, setMoveNodeError] = useState("");
     const [draggedOpenTabRequestId, setDraggedOpenTabRequestId] = useState<string | null>(null);
-    const [openTabDropIndicator, setOpenTabDropIndicator] = useState<RequestDropIndicator | null>(null);
+    const [openTabDropIndicator, setOpenTabDropIndicator] = useState<OpenTabDropIndicator | null>(null);
     const [environmentsModalOpen, setEnvironmentsModalOpen] = useState(false);
     const [envSelectedId, setEnvSelectedId] = useState<string | null>(null);
     const [envDraftName, setEnvDraftName] = useState("");
@@ -384,6 +384,15 @@ export default function App() {
         setResp(null);
         setDraggedRequestId(null);
         setDropIndicator(null);
+        setExpandedFolders({});
+        setCreateFolderModal(null);
+        setCreateFolderNameInput("");
+        setCreateFolderBusy(false);
+        setCreateFolderError("");
+        setMoveNodeModal(null);
+        setMoveNodeTargetFolderId(null);
+        setMoveNodeBusy(false);
+        setMoveNodeError("");
         setDraggedOpenTabRequestId(null);
         setOpenTabDropIndicator(null);
         setResponsesByRequestId({});
@@ -398,6 +407,7 @@ export default function App() {
         setDraftsById({});
         setCloseDraftModal(null);
         setCloseDraftBusy(false);
+        setRenameTarget(null);
         hydratedTabsCollectionIdRef.current = null;
         hydratedRunnerCollectionIdRef.current = null;
     }
@@ -446,9 +456,34 @@ export default function App() {
         return draftsById[selectedRequestId] ?? selectedSavedRequest;
     }, [draftsById, selectedRequestId, selectedSavedRequest]);
 
+    const requestsById = useMemo(
+        () => new Map((current?.requests ?? []).map((request) => [request.id, request])),
+        [current?.requests]
+    );
+
+    const collectionFolderOptions = useMemo<FolderOption[]>(
+        () => (current ? folderOptions(current.meta.items) : []),
+        [current]
+    );
+
+    const expandedFolderIds = useMemo(() => {
+        const ids = new Set<string>();
+        for (const folder of collectionFolderOptions) {
+            if (expandedFolders[folder.folderId] !== false) {
+                ids.add(folder.folderId);
+            }
+        }
+        return ids;
+    }, [collectionFolderOptions, expandedFolders]);
+
+    const sidebarRows = useMemo<SidebarTreeRow[]>(
+        () => (current ? buildSidebarRows(current.meta.items, requestsById, expandedFolderIds) : []),
+        [current, requestsById, expandedFolderIds]
+    );
+
     const orderedRequests = useMemo(() => {
         if (!current) return [];
-        return requestsInOrder(current);
+        return requestsInTreeOrder(current);
     }, [current]);
 
     const openTabs = useMemo(() => {
@@ -813,6 +848,7 @@ export default function App() {
     useEffect(() => {
         setDraggedRequestId(null);
         setDropIndicator(null);
+        setExpandedFolders({});
         setDraggedOpenTabRequestId(null);
         setOpenTabDropIndicator(null);
     }, [current?.meta.id]);
@@ -838,6 +874,13 @@ export default function App() {
         const validIds = new Set(current.requests.map((request) => request.id));
         setOpenRequestIds((previous) => previous.filter((requestId) => validIds.has(requestId)));
     }, [current?.requests]);
+
+    useEffect(() => {
+        if (!current || !selectedRequestId) return;
+        const validIds = new Set(current.requests.map((request) => request.id));
+        if (validIds.has(selectedRequestId)) return;
+        setSelectedRequestId(null);
+    }, [current?.requests, selectedRequestId]);
 
     useEffect(() => {
         if (!selectedRequestId) return;
@@ -931,8 +974,16 @@ export default function App() {
             setDraggedOpenTabRequestId(null);
             setOpenTabDropIndicator(null);
             if (!renameBusy) {
-                setRenameTargetId(null);
+                setRenameTarget(null);
                 setRenameError("");
+            }
+            if (!createFolderBusy) {
+                setCreateFolderModal(null);
+                setCreateFolderError("");
+            }
+            if (!moveNodeBusy) {
+                setMoveNodeModal(null);
+                setMoveNodeError("");
             }
             if (!envBusy) {
                 setEnvironmentsModalOpen(false);
@@ -951,7 +1002,7 @@ export default function App() {
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [renameBusy, envBusy, collectionBusy, closeDraftBusy]);
+    }, [renameBusy, createFolderBusy, moveNodeBusy, envBusy, collectionBusy, closeDraftBusy]);
 
     useEffect(() => {
         if (!draggedRequestId && !draggedOpenTabRequestId) return;
@@ -1316,7 +1367,7 @@ export default function App() {
     async function runCollection(requestIdsToRun?: string[]) {
         if (!current || collectionRunPending) return;
 
-        const ordered = requestsInOrder(current);
+        const ordered = requestsInTreeOrder(current);
         if (ordered.length === 0) {
             setStatus("No request in this collection.");
             return;
@@ -1666,76 +1717,44 @@ export default function App() {
         setSelectedRequestId(r.id);
     }
 
-    async function reorderRequestsInCollection(
-        sourceRequestId: string,
-        targetRequestId: string,
+    async function moveNodeInCollection(
+        sourceNodeId: string,
+        targetNodeId: string,
         position: "before" | "after"
     ) {
         if (!current) return;
-        if (targetRequestId === sourceRequestId) return;
+        if (sourceNodeId === targetNodeId) return;
 
-        const currentOrder = normalizedRequestOrder(current);
-        if (!currentOrder.includes(targetRequestId) || !currentOrder.includes(sourceRequestId)) {
-            return;
-        }
-
-        const withoutDragged = currentOrder.filter((id) => id !== sourceRequestId);
-        const targetIndex = withoutDragged.indexOf(targetRequestId);
-        if (targetIndex === -1) return;
-
-        const insertIndex = position === "before" ? targetIndex : targetIndex + 1;
-        withoutDragged.splice(insertIndex, 0, sourceRequestId);
-        const nextOrder = withoutDragged;
-
-        const unchanged =
-            nextOrder.length === currentOrder.length &&
-            nextOrder.every((id, index) => id === currentOrder[index]);
-        if (unchanged) return;
-
-        const previousCurrent = current;
-        const requestsById = new Map(previousCurrent.requests.map((request) => [request.id, request]));
-        const nextRequests = nextOrder
-            .map((id) => requestsById.get(id))
-            .filter((request): request is Request => !!request);
-
-        if (nextRequests.length !== nextOrder.length) {
-            setStatus("❌ Reorder failed: inconsistent request set");
-            return;
-        }
-
-        setCurrent((previous) => {
-            if (!previous || previous.meta.id !== previousCurrent.meta.id) return previous;
-            return {
-                ...previous,
-                meta: {
-                    ...previous.meta,
-                    request_order: nextOrder,
-                },
-                requests: nextRequests,
-            };
-        });
+        const targetRow = sidebarRows.find((row) => row.nodeId === targetNodeId);
+        if (!targetRow) return;
 
         try {
-            await invoke("reorder_requests", {
-                collectionId: previousCurrent.meta.id,
-                requestOrder: nextOrder,
+            await invoke("move_node", {
+                collectionId: current.meta.id,
+                nodeId: sourceNodeId,
+                targetFolderId: targetRow.parentFolderId,
+                targetIndex: targetRow.indexInParent + (position === "after" ? 1 : 0),
             });
-            setStatus("✅ Request order updated");
-        } catch (e) {
-            setCurrent((previous) => {
-                if (!previous || previous.meta.id !== previousCurrent.meta.id) return previous;
-                return previousCurrent;
-            });
-            setStatus(`❌ Reorder failed: ${String(e)}`);
+            await loadCollection(
+                current.meta.id,
+                selectedRequestId,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                setStatus
+            );
+            setStatus("✅ Collection order updated");
+        } catch (error) {
+            setStatus(`❌ Move failed: ${String(error)}`);
         }
     }
 
     function beginRequestDrag(
         e: React.MouseEvent<HTMLElement>,
-        requestId: string
+        nodeId: string
     ) {
         if (e.button !== 0) return;
-        setDraggedRequestId(requestId);
+        setDraggedRequestId(nodeId);
         setDropIndicator(null);
     }
 
@@ -1813,7 +1832,29 @@ export default function App() {
         );
     }
 
-    function onDuplicateRequest(requestId: string) {
+    async function onDeleteFolder(folderId: string) {
+        if (!current) return;
+        try {
+            await invoke("delete_folder", {
+                collectionId: current.meta.id,
+                folderId,
+            });
+            await loadCollection(
+                current.meta.id,
+                selectedRequestId,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                setStatus
+            );
+            setContextMenu(null);
+            setStatus("✅ Folder deleted");
+        } catch (error) {
+            setStatus(`❌ Delete folder failed: ${String(error)}`);
+        }
+    }
+
+    function onDuplicateRequest(requestId: string, targetFolderId?: string | null) {
         if (!current) return;
 
         devDuplicate(
@@ -1822,77 +1863,108 @@ export default function App() {
             setCurrent,
             setSelectedRequestId,
             setResp,
-            setStatus
+            setStatus,
+            targetFolderId
         );
     }
 
-    function openRenameModal(requestId: string) {
+    function openRenameModal(row: SidebarTreeRow) {
         if (!current) return;
-        const req = current.requests.find((r) => r.id === requestId);
-        if (!req) return;
-
-        setRenameTargetId(requestId);
-        setRenameNameInput(req.name);
+        if (row.kind === "request") {
+            const req = current.requests.find((r) => r.id === row.requestId);
+            if (!req) return;
+            setRenameTarget({ kind: "request", id: row.requestId });
+            setRenameNameInput(req.name);
+        } else {
+            setRenameTarget({ kind: "folder", id: row.folderId });
+            setRenameNameInput(row.name);
+        }
         setRenameError("");
         setContextMenu(null);
     }
 
     function closeRenameModal() {
         if (renameBusy) return;
-        setRenameTargetId(null);
+        setRenameTarget(null);
         setRenameError("");
     }
 
     async function submitRenameModal() {
-        if (!current || !renameTargetId || renameBusy) return;
+        if (!current || !renameTarget || renameBusy) return;
 
         const nextName = renameNameInput.trim();
 
         if (!nextName) {
-            setRenameError("Request name cannot be empty.");
-            return;
-        }
-
-        const source = current.requests.find((r) => r.id === renameTargetId);
-        if (!source) {
-            setRenameError("Source request not found.");
-            return;
-        }
-
-        if (nextName === source.name) {
-            setRenameError("Nothing to rename.");
+            setRenameError("Name cannot be empty.");
             return;
         }
 
         setRenameBusy(true);
         setRenameError("");
 
-        const ok = await devRename(
-            current,
-            renameTargetId,
-            nextName,
-            setCurrent,
-            setSelectedRequestId,
-            setResp,
-            setStatus
-        );
+        if (renameTarget.kind === "request") {
+            const source = current.requests.find((r) => r.id === renameTarget.id);
+            if (!source) {
+                setRenameError("Source request not found.");
+                setRenameBusy(false);
+                return;
+            }
 
-        if (ok) {
-            setDraftsById((prev) => {
-                const existing = prev[renameTargetId];
-                if (!existing) return prev;
-                const next = { ...prev };
-                next[renameTargetId] = { ...existing, name: nextName };
-                return next;
-            });
+            if (nextName === source.name) {
+                setRenameError("Nothing to rename.");
+                setRenameBusy(false);
+                return;
+            }
 
-            setRenameTargetId(null);
-            setRenameError("");
+            const ok = await devRename(
+                current,
+                renameTarget.id,
+                nextName,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                setStatus
+            );
+
+            if (ok) {
+                setDraftsById((prev) => {
+                    const existing = prev[renameTarget.id];
+                    if (!existing) return prev;
+                    const next = { ...prev };
+                    next[renameTarget.id] = { ...existing, name: nextName };
+                    return next;
+                });
+                setRenameTarget(null);
+                setRenameError("");
+            }
+            setRenameBusy(false);
+            return;
         }
-        setRenameBusy(false);
+
+        try {
+            await invoke("rename_folder", {
+                collectionId: current.meta.id,
+                folderId: renameTarget.id,
+                newName: nextName,
+            });
+            await loadCollection(
+                current.meta.id,
+                selectedRequestId,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                setStatus
+            );
+            setRenameTarget(null);
+            setStatus("✅ Folder renamed");
+        } catch (error) {
+            setRenameError(`Rename failed: ${String(error)}`);
+        } finally {
+            setRenameBusy(false);
+        }
     }
 
-    function onNewRequest() {
+    function onNewRequest(parentFolderId: string | null = null) {
         if (!current) return;
         devCreate(
             current,
@@ -1900,8 +1972,86 @@ export default function App() {
             setSelectedRequestId,
             setResp,
             setStatus,
-            setSelection
+            setSelection,
+            parentFolderId
         );
+    }
+
+    function openCreateFolder(parentFolderId: string | null) {
+        setCreateFolderModal({ parentFolderId });
+        setCreateFolderNameInput("");
+        setCreateFolderError("");
+    }
+
+    async function submitCreateFolder() {
+        if (!current || !createFolderModal || createFolderBusy) return;
+        const name = createFolderNameInput.trim();
+        if (!name) {
+            setCreateFolderError("Folder name cannot be empty.");
+            return;
+        }
+
+        setCreateFolderBusy(true);
+        setCreateFolderError("");
+        try {
+            await invoke("create_folder", {
+                collectionId: current.meta.id,
+                parentFolderId: createFolderModal.parentFolderId,
+                name,
+            });
+            await loadCollection(
+                current.meta.id,
+                selectedRequestId,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                setStatus
+            );
+            setCreateFolderModal(null);
+            setStatus("✅ Folder created");
+        } catch (error) {
+            setCreateFolderError(`Create failed: ${String(error)}`);
+        } finally {
+            setCreateFolderBusy(false);
+        }
+    }
+
+    function openMoveNodeModal(row: SidebarTreeRow) {
+        setMoveNodeModal({
+            nodeId: row.nodeId,
+            currentParentFolderId: row.parentFolderId,
+            title: row.kind === "folder" ? row.name : row.request?.name ?? row.requestId,
+        });
+        setMoveNodeTargetFolderId(row.parentFolderId);
+        setMoveNodeError("");
+    }
+
+    async function submitMoveNodeModal() {
+        if (!current || !moveNodeModal || moveNodeBusy) return;
+        setMoveNodeBusy(true);
+        setMoveNodeError("");
+        try {
+            await invoke("move_node", {
+                collectionId: current.meta.id,
+                nodeId: moveNodeModal.nodeId,
+                targetFolderId: moveNodeTargetFolderId,
+                targetIndex: 1_000_000,
+            });
+            await loadCollection(
+                current.meta.id,
+                selectedRequestId,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                setStatus
+            );
+            setMoveNodeModal(null);
+            setStatus("✅ Node moved");
+        } catch (error) {
+            setMoveNodeError(`Move failed: ${String(error)}`);
+        } finally {
+            setMoveNodeBusy(false);
+        }
     }
 
     async function onSelectEnvironment(environmentId: string | null) {
@@ -2275,7 +2425,31 @@ export default function App() {
                             overflow: "hidden",
                         }}
                     >
-                        <h3 style={{ marginTop: 16, marginBottom: 8, flexShrink: 0 }}>Saved Requests</h3>
+                        <div
+                            style={{
+                                marginTop: 16,
+                                marginBottom: 8,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: 8,
+                                flexShrink: 0,
+                            }}
+                        >
+                            <h3 style={{ margin: 0 }}>Saved Requests</h3>
+                            <div style={{ display: "flex", gap: 6 }}>
+                                <button style={buttonStyle(!current)} disabled={!current} onClick={() => onNewRequest(null)}>
+                                    + Request
+                                </button>
+                                <button
+                                    style={buttonStyle(!current)}
+                                    disabled={!current}
+                                    onClick={() => openCreateFolder(null)}
+                                >
+                                    + Folder
+                                </button>
+                            </div>
+                        </div>
 
                         <div
                             style={{
@@ -2289,73 +2463,105 @@ export default function App() {
                             }}
                         >
                             {current &&
-                                orderedRequests.map((r) => {
-                                    const hasLocalDraft = !!draftsById[r.id];
+                                sidebarRows.map((row) => {
+                                    const hasLocalDraft =
+                                        row.kind === "request" ? !!draftsById[row.requestId] : false;
+                                    const isSelected =
+                                        row.kind === "request" && row.requestId === selectedRequestId;
                                     const showDropBefore =
-                                        dropIndicator?.requestId === r.id &&
+                                        dropIndicator?.nodeId === row.nodeId &&
                                         dropIndicator.position === "before";
                                     const showDropAfter =
-                                        dropIndicator?.requestId === r.id &&
+                                        dropIndicator?.nodeId === row.nodeId &&
                                         dropIndicator.position === "after";
+                                    const missingRequest =
+                                        row.kind === "request" && row.request === null;
 
                                     return (
                                         <div
-                                            key={r.id}
+                                            key={`${row.kind}-${row.nodeId}`}
                                             onMouseMove={(e) => {
-                                                if (!draggedRequestId || draggedRequestId === r.id) return;
+                                                if (!draggedRequestId || draggedRequestId === row.nodeId) return;
                                                 const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
                                                 const position =
                                                     e.clientY < rect.top + rect.height / 2 ? "before" : "after";
                                                 setDropIndicator((previous) =>
-                                                    previous?.requestId === r.id && previous.position === position
+                                                    previous?.nodeId === row.nodeId &&
+                                                    previous.position === position
                                                         ? previous
-                                                        : { requestId: r.id, position }
+                                                        : { nodeId: row.nodeId, position }
                                                 );
                                             }}
                                             onMouseUp={(e) => {
-                                                if (!draggedRequestId || draggedRequestId === r.id) return;
+                                                if (!draggedRequestId || draggedRequestId === row.nodeId) return;
                                                 const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
                                                 const position =
                                                     e.clientY < rect.top + rect.height / 2 ? "before" : "after";
 
                                                 setDropIndicator(null);
                                                 setDraggedRequestId(null);
-                                                void reorderRequestsInCollection(draggedRequestId, r.id, position);
+                                                void moveNodeInCollection(draggedRequestId, row.nodeId, position);
                                             }}
                                             style={requestDropRowStyle(showDropBefore, showDropAfter)}
                                         >
                                             {showDropBefore && <div style={dropMarkerStyle("before")} />}
                                             <button
-                                                onMouseDown={(e) => beginRequestDrag(e, r.id)}
-                                                onClick={() => setSelection(r)}
+                                                onMouseDown={(e) => beginRequestDrag(e, row.nodeId)}
+                                                onClick={() => {
+                                                    if (row.kind === "folder") {
+                                                        setExpandedFolders((previous) => ({
+                                                            ...previous,
+                                                            [row.folderId]:
+                                                                previous[row.folderId] === false ? true : false,
+                                                        }));
+                                                        return;
+                                                    }
+                                                    if (row.request) {
+                                                        setSelection(row.request);
+                                                    }
+                                                }}
                                                 onContextMenu={(e) => {
                                                     e.preventDefault();
-                                                    setSelection(r);
+                                                    if (row.kind === "request" && row.request) {
+                                                        setSelection(row.request);
+                                                    }
                                                     setContextMenu({
                                                         x: e.clientX,
                                                         y: e.clientY,
-                                                        requestId: r.id,
+                                                        row,
                                                     });
                                                 }}
                                                 style={{
                                                     ...requestListItemStyle(
-                                                        r.id === selectedRequestId,
+                                                        isSelected,
                                                         hasLocalDraft
                                                     ),
                                                     width: "100%",
                                                     textAlign: "left",
                                                     flexShrink: 0,
-                                                    cursor: draggedRequestId === r.id ? "grabbing" : "grab",
+                                                    cursor: draggedRequestId === row.nodeId ? "grabbing" : "grab",
                                                     userSelect: "none",
+                                                    paddingLeft: 10 + row.depth * 14,
+                                                    opacity: missingRequest ? 0.75 : 1,
                                                 }}
                                             >
-                                                {r.method.toUpperCase()} {r.name} {hasLocalDraft ? "●" : ""}
+                                                {row.kind === "folder"
+                                                    ? `${expandedFolders[row.folderId] === false ? "▸" : "▾"} ${row.name}`
+                                                    : row.request
+                                                        ? `${row.request.method.toUpperCase()} ${row.request.name} ${
+                                                            hasLocalDraft ? "●" : ""
+                                                        }`
+                                                        : `[Missing] ${row.requestId}`}
                                             </button>
                                             {showDropAfter && <div style={dropMarkerStyle("after")} />}
                                         </div>
                                     );
                                 })}
-
+                            {current && sidebarRows.length === 0 && (
+                                <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
+                                    Empty collection. Create a request or a folder.
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -2871,19 +3077,60 @@ export default function App() {
                     >
                         <button
                             style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
-                            onClick={() => openRenameModal(contextMenu.requestId)}
+                            onClick={() => openRenameModal(contextMenu.row)}
                         >
                             Rename
                         </button>
+
+                        {contextMenu.row.kind === "request" && (
+                            <button
+                                style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                                onClick={() => {
+                                    const row = contextMenu.row as Extract<SidebarTreeRow, { kind: "request" }>;
+                                    setContextMenu(null);
+                                    onDuplicateRequest(row.requestId, row.parentFolderId);
+                                }}
+                            >
+                                Duplicate
+                            </button>
+                        )}
+
+                        {contextMenu.row.kind === "folder" && (
+                            <button
+                                style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                                onClick={() => {
+                                    const row = contextMenu.row as Extract<SidebarTreeRow, { kind: "folder" }>;
+                                    setContextMenu(null);
+                                    onNewRequest(row.folderId);
+                                }}
+                            >
+                                New request
+                            </button>
+                        )}
+
+                        {contextMenu.row.kind === "folder" && (
+                            <button
+                                style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                                onClick={() => {
+                                    const row = contextMenu.row as Extract<SidebarTreeRow, { kind: "folder" }>;
+                                    setContextMenu(null);
+                                    openCreateFolder(row.folderId);
+                                }}
+                            >
+                                New folder
+                            </button>
+                        )}
+
                         <button
                             style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
                             onClick={() => {
                                 setContextMenu(null);
-                                onDuplicateRequest(contextMenu.requestId);
+                                openMoveNodeModal(contextMenu.row);
                             }}
                         >
-                            Duplicate
+                            Move to...
                         </button>
+
                         <button
                             style={{
                                 ...buttonStyle(false),
@@ -2894,7 +3141,11 @@ export default function App() {
                             }}
                             onClick={() => {
                                 setContextMenu(null);
-                                onDeleteRequest(contextMenu.requestId);
+                                if (contextMenu.row.kind === "folder") {
+                                    void onDeleteFolder(contextMenu.row.folderId);
+                                    return;
+                                }
+                                onDeleteRequest(contextMenu.row.requestId);
                             }}
                         >
                             Delete
@@ -2903,7 +3154,7 @@ export default function App() {
                 </div>
             )}
 
-            {renameTargetId && (
+            {renameTarget && (
                 <div
                     style={{
                         position: "fixed",
@@ -2914,9 +3165,9 @@ export default function App() {
                         alignItems: "center",
                         justifyContent: "center",
                         padding: 16,
-                    }}
-                    onMouseDown={closeRenameModal}
-                >
+                        }}
+                        onMouseDown={closeRenameModal}
+                    >
                     <form
                         onMouseDown={(e) => e.stopPropagation()}
                         onSubmit={(e) => {
@@ -2935,17 +3186,19 @@ export default function App() {
                             gap: 12,
                         }}
                     >
-                        <h3 style={{ margin: 0 }}>Rename request</h3>
+                        <h3 style={{ margin: 0 }}>
+                            Rename {renameTarget.kind === "folder" ? "folder" : "request"}
+                        </h3>
 
                         <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
-                            Request id:{" "}
+                            {renameTarget.kind === "folder" ? "Folder id" : "Request id"}:{" "}
                             <code style={{ color: "var(--pg-text)" }}>
-                                {renameTargetId}
+                                {renameTarget.id}
                             </code>
                         </div>
 
                         <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                            <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>Request name</span>
+                            <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>Name</span>
                             <input
                                 value={renameNameInput}
                                 onChange={(e) => setRenameNameInput(e.target.value)}
@@ -2961,6 +3214,146 @@ export default function App() {
                             </button>
                             <button type="submit" disabled={renameBusy} style={primaryButtonStyle(renameBusy)}>
                                 {renameBusy ? "Renaming..." : "Rename"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {createFolderModal && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1320,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={() => {
+                        if (!createFolderBusy) setCreateFolderModal(null);
+                    }}
+                >
+                    <form
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            void submitCreateFolder();
+                        }}
+                        style={{
+                            width: "100%",
+                            maxWidth: 460,
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 12,
+                            background: "var(--pg-surface-1)",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <h3 style={{ margin: 0 }}>Create folder</h3>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>Folder name</span>
+                            <input
+                                value={createFolderNameInput}
+                                onChange={(event) => setCreateFolderNameInput(event.target.value)}
+                                disabled={createFolderBusy}
+                                autoFocus
+                            />
+                        </label>
+                        {createFolderError && (
+                            <div style={{ color: "var(--pg-danger)", fontSize: 13 }}>{createFolderError}</div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <button
+                                type="button"
+                                onClick={() => setCreateFolderModal(null)}
+                                disabled={createFolderBusy}
+                                style={buttonStyle(createFolderBusy)}
+                            >
+                                Cancel
+                            </button>
+                            <button type="submit" disabled={createFolderBusy} style={primaryButtonStyle(createFolderBusy)}>
+                                {createFolderBusy ? "Creating..." : "Create"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {moveNodeModal && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1330,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={() => {
+                        if (!moveNodeBusy) setMoveNodeModal(null);
+                    }}
+                >
+                    <form
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            void submitMoveNodeModal();
+                        }}
+                        style={{
+                            width: "100%",
+                            maxWidth: 520,
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 12,
+                            background: "var(--pg-surface-1)",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <h3 style={{ margin: 0 }}>Move</h3>
+                        <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
+                            Item: <span style={{ color: "var(--pg-text)" }}>{moveNodeModal.title}</span>
+                        </div>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>Destination folder</span>
+                            <select
+                                value={moveNodeTargetFolderId ?? ""}
+                                onChange={(event) =>
+                                    setMoveNodeTargetFolderId(event.target.value ? event.target.value : null)
+                                }
+                                disabled={moveNodeBusy}
+                                style={selectStyle()}
+                            >
+                                <option value="">Root</option>
+                                {collectionFolderOptions.map((entry) => (
+                                    <option key={entry.folderId} value={entry.folderId}>
+                                        {entry.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                        {moveNodeError && (
+                            <div style={{ color: "var(--pg-danger)", fontSize: 13 }}>{moveNodeError}</div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <button
+                                type="button"
+                                onClick={() => setMoveNodeModal(null)}
+                                disabled={moveNodeBusy}
+                                style={buttonStyle(moveNodeBusy)}
+                            >
+                                Cancel
+                            </button>
+                            <button type="submit" disabled={moveNodeBusy} style={primaryButtonStyle(moveNodeBusy)}>
+                                {moveNodeBusy ? "Moving..." : "Move"}
                             </button>
                         </div>
                     </form>

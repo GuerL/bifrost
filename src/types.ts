@@ -3,7 +3,22 @@ export type CollectionMeta = {
     id: string;
     name: string;
     request_order: string[];
+    items: CollectionNode[];
 };
+
+export type CollectionFolderNode = {
+    type: "folder";
+    id: string;
+    name: string;
+    children: CollectionNode[];
+};
+
+export type CollectionRequestRefNode = {
+    type: "request_ref";
+    request_id: string;
+};
+
+export type CollectionNode = CollectionFolderNode | CollectionRequestRefNode;
 
 export type KeyValue = { key: string; value: string };
 

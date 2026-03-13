@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct KeyValue {
     pub key: String,
     pub value: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum HttpMethod {
     Get,
@@ -18,7 +18,7 @@ pub enum HttpMethod {
     Options,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Body {
     None,
@@ -74,7 +74,7 @@ pub struct RequestScripts {
     pub post_response: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Request {
     pub id: String,
     pub name: String,
@@ -91,13 +91,29 @@ pub struct Request {
     pub scripts: RequestScripts,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CollectionNode {
+    Folder {
+        id: String,
+        name: String,
+        #[serde(default)]
+        children: Vec<CollectionNode>,
+    },
+    RequestRef {
+        request_id: String,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CollectionMeta {
     pub version: u32,
     pub id: String,
     pub name: String,
     #[serde(default)]
     pub request_order: Vec<String>,
+    #[serde(default)]
+    pub items: Vec<CollectionNode>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

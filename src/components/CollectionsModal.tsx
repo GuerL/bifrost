@@ -1,4 +1,5 @@
 import type { CollectionMeta } from "../types.ts";
+import { countTreeRequestRefs } from "../helpers/CollectionTree.ts";
 import {
     buttonStyle,
     dangerButtonStyle,
@@ -178,7 +179,7 @@ export default function CollectionsModal({
                                         </label>
 
                                         <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
-                                            Requests: {selectedCollection.request_order.length}
+                                            Requests: {countTreeRequestRefs(selectedCollection.items)}
                                         </div>
 
                                         <div style={{ marginTop: "auto", display: "flex", justifyContent: "space-between", gap: 8 }}>
