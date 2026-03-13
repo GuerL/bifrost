@@ -315,12 +315,14 @@ function responsePreStyle(): React.CSSProperties {
         background: "var(--pg-surface-1)",
         color: "var(--pg-text-dim)",
         width: "100%",
+        minWidth: 0,
         minHeight: 0,
         flex: 1,
         overflow: "auto",
         borderRadius: 12,
         border: "1px solid var(--pg-border)",
         padding: 12,
+        boxSizing: "border-box",
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
     };
@@ -328,6 +330,8 @@ function responsePreStyle(): React.CSSProperties {
 
 function responsePanelStyle(): React.CSSProperties {
     return {
+        width: "100%",
+        minWidth: 0,
         minHeight: 0,
         flex: 1,
         overflow: "auto",
@@ -335,6 +339,7 @@ function responsePanelStyle(): React.CSSProperties {
         border: "1px solid var(--pg-border)",
         background: "var(--pg-surface-1)",
         padding: 10,
+        boxSizing: "border-box",
     };
 }
 
