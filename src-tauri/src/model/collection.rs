@@ -23,7 +23,11 @@ pub enum HttpMethod {
 pub enum Body {
     None,
     Raw { content_type: String, text: String },
-    Json { value: serde_json::Value },
+    Json {
+        value: serde_json::Value,
+        #[serde(default)]
+        text: String,
+    },
     Form { fields: Vec<KeyValue> },
 }
 

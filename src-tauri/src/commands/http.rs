@@ -229,9 +229,9 @@ fn resolve_request_vars(
             ),
             text: replace_vars_in_text(&text, vars, &mut unresolved, &mut dynamic_values),
         },
-        Body::Json { mut value } => {
+        Body::Json { mut value, text } => {
             resolve_json_value(&mut value, vars, &mut unresolved, &mut dynamic_values);
-            Body::Json { value }
+            Body::Json { value, text }
         }
         Body::Form { mut fields } => {
             for kv in fields.iter_mut() {
@@ -389,7 +389,7 @@ pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpEr
         Body::Raw { content_type, text } => builder
             .header("Content-Type", content_type.clone())
             .body(text.clone()),
-        Body::Json { value } => builder.json(value),
+        Body::Json { value, .. } => builder.json(value),
         Body::Form { fields } => {
             let pairs: Vec<(String, String)> = fields
                 .iter()

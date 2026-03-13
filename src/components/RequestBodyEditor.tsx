@@ -31,6 +31,82 @@ function languageFromContentType(contentType: string): string {
     return "plaintext";
 }
 
+function stripJsonComments(input: string): string {
+    let out = "";
+    let inString = false;
+    let escaped = false;
+    let inLineComment = false;
+    let inBlockComment = false;
+
+    for (let i = 0; i < input.length; i += 1) {
+        const ch = input[i];
+        const next = input[i + 1] ?? "";
+
+        if (inLineComment) {
+            if (ch === "\n") {
+                inLineComment = false;
+                out += ch;
+            }
+            continue;
+        }
+
+        if (inBlockComment) {
+            if (ch === "*" && next === "/") {
+                inBlockComment = false;
+                i += 1;
+                continue;
+            }
+            if (ch === "\n") {
+                out += ch;
+            }
+            continue;
+        }
+
+        if (inString) {
+            out += ch;
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch === "\\") {
+                escaped = true;
+                continue;
+            }
+            if (ch === "\"") {
+                inString = false;
+            }
+            continue;
+        }
+
+        if (ch === "\"") {
+            inString = true;
+            out += ch;
+            continue;
+        }
+
+        if (ch === "/" && next === "/") {
+            inLineComment = true;
+            i += 1;
+            continue;
+        }
+
+        if (ch === "/" && next === "*") {
+            inBlockComment = true;
+            i += 1;
+            continue;
+        }
+
+        out += ch;
+    }
+
+    return out;
+}
+
+function parseJsonc(text: string): unknown {
+    const stripped = stripJsonComments(text).trim();
+    return JSON.parse(stripped.length > 0 ? stripped : "{}");
+}
+
 export default function RequestBodyEditor({
     draft,
     selectedRequestId,
@@ -55,7 +131,7 @@ export default function RequestBodyEditor({
                         t === "none"
                             ? { type: "none" }
                             : t === "json"
-                                ? { type: "json", value: {} }
+                                ? { type: "json", value: {}, text: "{\n\n}" }
                                 : t === "raw"
                                     ? { type: "raw", content_type: "text/plain", text: "" }
                                     : { type: "form", fields: [] };
@@ -69,32 +145,47 @@ export default function RequestBodyEditor({
                 <option value="form">form</option>
             </select>
 
-            {draft.body.type === "json" && (
-                <div style={editorPanelStyle("34vh", 280)}>
-                    <Editor
-                        key={`body-json-${selectedRequestId ?? "none"}`}
-                        height="100%"
-                        language="json"
-                        path={`/postguerl-body/${selectedRequestId ?? "none"}.json`}
-                        theme="postguerl-midnight"
-                        beforeMount={beforeMountMonaco}
-                        onMount={onMountBodyJsonEditor}
-                        defaultValue={JSON.stringify(draft.body.value ?? {}, null, 2)}
-                        onChange={(value) => {
-                            try {
-                                const parsed = JSON.parse(value ?? "{}");
-                                onSetFullDraft({
-                                    ...draft,
-                                    body: { type: "json", value: parsed },
-                                });
-                            } catch {
-                                // keep last valid value while user types invalid json
+            {draft.body.type === "json" && (() => {
+                const jsonBody = draft.body;
+                return (
+                    <div style={editorPanelStyle("34vh", 280)}>
+                        <Editor
+                            key={`body-json-${selectedRequestId ?? "none"}`}
+                            height="100%"
+                            language="json"
+                            path={`/postguerl-body/${selectedRequestId ?? "none"}.json`}
+                            theme="postguerl-midnight"
+                            beforeMount={beforeMountMonaco}
+                            onMount={onMountBodyJsonEditor}
+                            defaultValue={
+                                jsonBody.text && jsonBody.text.trim().length > 0
+                                    ? jsonBody.text
+                                    : JSON.stringify(jsonBody.value ?? {}, null, 2)
                             }
-                        }}
-                        options={editorOptions}
-                    />
-                </div>
-            )}
+                            onChange={(value) => {
+                                const nextText = value ?? "";
+                                try {
+                                    const parsed = parseJsonc(nextText);
+                                    onSetFullDraft({
+                                        ...draft,
+                                        body: { type: "json", value: parsed, text: nextText },
+                                    });
+                                } catch {
+                                    onSetFullDraft({
+                                        ...draft,
+                                        body: {
+                                            type: "json",
+                                            value: jsonBody.value ?? {},
+                                            text: nextText,
+                                        },
+                                    });
+                                }
+                            }}
+                            options={editorOptions}
+                        />
+                    </div>
+                );
+            })()}
 
             {draft.body.type === "raw" && (() => {
                 const rawBody = draft.body;

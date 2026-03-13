@@ -25,7 +25,7 @@ export type KeyValue = { key: string; value: string };
 export type Body =
     | { type: "none" }
     | { type: "raw"; content_type: string; text: string }
-    | { type: "json"; value: any }
+    | { type: "json"; value: any; text?: string }
     | { type: "form"; fields: KeyValue[] };
 
 export type RequestAuth =

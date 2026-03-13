@@ -400,6 +400,7 @@ pub fn init_default_collection(app: AppHandle) -> Result<(), String> {
         query: vec![],
         body: Body::Json {
             value: serde_json::json!({"hello": "world"}),
+            text: "{\n  \"hello\": \"world\"\n}".into(),
         },
         auth: Auth::None,
         extractors: vec![],
