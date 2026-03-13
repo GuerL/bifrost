@@ -72,7 +72,7 @@ pg.environment.set("accessToken", response?.token ?? "");`}
                     <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 600 }}>
                         {showingPre ? "Pre-request script" : "Post-response script"}
                     </span>
-                    <div style={editorPanelStyle(showingPre ? "24vh" : "30vh", showingPre ? 160 : 200)}>
+                    <div style={editorPanelStyle("24vh" ,  160 )}>
                         <Editor
                             key={`script-${showingPre ? "pre" : "post"}-${selectedRequestId ?? "none"}`}
                             height="100%"
