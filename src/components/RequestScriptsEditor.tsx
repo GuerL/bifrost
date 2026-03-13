@@ -32,6 +32,7 @@ export default function RequestScriptsEditor({
             <div style={{ display: "flex", gap: 12, minHeight: 0 }}>
                 <div
                     style={{
+                        marginTop:25,
                         width: 220,
                         flexShrink: 0,
                         display: "flex",
