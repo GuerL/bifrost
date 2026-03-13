@@ -10,6 +10,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(RequestRegistry::default())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::collection::greet,
             commands::fs::app_data_dir,

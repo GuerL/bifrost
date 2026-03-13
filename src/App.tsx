@@ -2280,18 +2280,25 @@ export default function App() {
         if (!current) return;
 
         try {
-            setStatus(`Exporting '${current.meta.name}'...`);
             const appDataDir = await invoke<string>("app_data_dir");
             const suggestedFilePath = `${appDataDir}/${safeFileName(current.meta.name)}.postguerl.portable.json`;
-            const userPath = window.prompt(
-                "Choose export file path",
-                suggestedFilePath
-            );
+            const userPath = await invoke<string | null>("plugin:dialog|save", {
+                options: {
+                    defaultPath: suggestedFilePath,
+                    filters: [
+                        {
+                            name: "Postguerl Portable JSON",
+                            extensions: ["json"],
+                        },
+                    ],
+                },
+            });
             if (!userPath || !userPath.trim()) {
                 setStatus("ℹ️ Portable export cancelled");
                 return;
             }
 
+            setStatus(`Exporting '${current.meta.name}'...`);
             await invoke("export_collection_portable_to_file", {
                 collectionId: current.meta.id,
                 path: userPath.trim(),
