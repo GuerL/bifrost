@@ -2787,62 +2787,11 @@ export default function App() {
                                 response={resp}
                                 statusText={selectedResponseStatusText}
                                 scriptReport={selectedScriptReport}
+                                runtimeVariables={sessionVariables}
+                                onClearRuntimeVariables={() => setSessionVariables({})}
                                 activeTab={responseTab}
                                 onTabChange={setResponseTab}
                             />
-
-                            <div
-                                style={{
-                                    marginTop: 10,
-                                    border: "1px solid var(--pg-border)",
-                                    borderRadius: 10,
-                                    background: "var(--pg-surface-1)",
-                                    padding: 10,
-                                }}
-                            >
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                                    <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
-                                        Runtime variables ({Object.keys(sessionVariables).length})
-                                    </div>
-                                    <button
-                                        onClick={() => setSessionVariables({})}
-                                        disabled={Object.keys(sessionVariables).length === 0}
-                                        style={buttonStyle(Object.keys(sessionVariables).length === 0)}
-                                    >
-                                        Clear runtime variables
-                                    </button>
-                                </div>
-
-                                {Object.keys(sessionVariables).length === 0 ? (
-                                    <div style={{ fontSize: 12, color: "var(--pg-text-muted)", marginTop: 8 }}>
-                                        No runtime variable yet. Configure extraction rules and run a request.
-                                    </div>
-                                ) : (
-                                    <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-                                        {Object.entries(sessionVariables)
-                                            .sort(([a], [b]) => a.localeCompare(b))
-                                            .map(([key, value]) => (
-                                                <div
-                                                    key={key}
-                                                    style={{
-                                                        display: "grid",
-                                                        gridTemplateColumns: "minmax(0, 220px) minmax(0, 1fr)",
-                                                        gap: 8,
-                                                        fontSize: 12,
-                                                        alignItems: "center",
-                                                    }}
-                                                >
-                                                    <div style={{ color: "var(--pg-text-muted)", fontFamily: "monospace" }}>
-                                                        {key}
-                                                    </div>
-                                                    <div style={{ color: "var(--pg-text-dim)", fontFamily: "monospace", wordBreak: "break-word" }}>
-                                                        {value}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                    </div>
-                                )}
-                            </div>
                         </>
                     )}
 

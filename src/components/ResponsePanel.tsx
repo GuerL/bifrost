@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { HttpResponseDto } from "../types.ts";
 
-export type ResponseTabId = "body" | "cookies" | "headers";
+export type ResponseTabId = "body" | "cookies" | "headers" | "runtime";
 
 type CookieItem = {
     name: string;
@@ -17,6 +17,8 @@ type ResponsePanelProps = {
         postResponseError: string | null;
         tests: { name: string; status: "passed" | "failed"; error: string | null }[];
     } | null;
+    runtimeVariables: Record<string, string>;
+    onClearRuntimeVariables: () => void;
     activeTab: ResponseTabId;
     onTabChange: (tab: ResponseTabId) => void;
 };
@@ -25,6 +27,8 @@ export default function ResponsePanel({
     response,
     statusText,
     scriptReport,
+    runtimeVariables,
+    onClearRuntimeVariables,
     activeTab,
     onTabChange,
 }: ResponsePanelProps) {
@@ -72,6 +76,9 @@ export default function ResponsePanel({
                 </button>
                 <button onClick={() => onTabChange("headers")} style={responseTabStyle(activeTab === "headers")}>
                     Headers
+                </button>
+                <button onClick={() => onTabChange("runtime")} style={responseTabStyle(activeTab === "runtime")}>
+                    Runtime
                 </button>
             </div>
 
@@ -169,6 +176,59 @@ export default function ResponsePanel({
                             ))}
                             </tbody>
                         </table>
+                    )}
+                </div>
+            )}
+
+            {activeTab === "runtime" && (
+                <div style={responsePanelStyle()}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
+                            Runtime variables ({Object.keys(runtimeVariables).length})
+                        </div>
+                        <button
+                            onClick={onClearRuntimeVariables}
+                            disabled={Object.keys(runtimeVariables).length === 0}
+                            style={responseTabStyle(false)}
+                        >
+                            Clear
+                        </button>
+                    </div>
+
+                    {Object.keys(runtimeVariables).length === 0 ? (
+                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)", marginTop: 8 }}>
+                            No runtime variable yet.
+                        </div>
+                    ) : (
+                        <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                            {Object.entries(runtimeVariables)
+                                .sort(([a], [b]) => a.localeCompare(b))
+                                .map(([key, value]) => (
+                                    <div
+                                        key={key}
+                                        style={{
+                                            display: "grid",
+                                            gridTemplateColumns: "minmax(0, 220px) minmax(0, 1fr)",
+                                            gap: 8,
+                                            fontSize: 12,
+                                            alignItems: "center",
+                                        }}
+                                    >
+                                        <div style={{ color: "var(--pg-text-muted)", fontFamily: "monospace" }}>
+                                            {key}
+                                        </div>
+                                        <div
+                                            style={{
+                                                color: "var(--pg-text-dim)",
+                                                fontFamily: "monospace",
+                                                wordBreak: "break-word",
+                                            }}
+                                        >
+                                            {value}
+                                        </div>
+                                    </div>
+                                ))}
+                        </div>
                     )}
                 </div>
             )}
