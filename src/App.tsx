@@ -105,9 +105,15 @@ type RequestScriptExecutionReport = {
 
 const OPEN_TABS_STORAGE_KEY = "postguerl:open-tabs:v1";
 const RESPONSES_STORAGE_KEY = "postguerl:last-responses:v1";
-const DYNAMIC_VARIABLE_NAMES = ["$timestamp", "$uuid", "$randomInt"] as const;
+const DYNAMIC_VARIABLE_NAMES = [
+    "$timestamp",
+    "$timestampSeconds",
+    "$uuid",
+    "$randomInt",
+] as const;
 const DYNAMIC_VARIABLE_PREVIEWS: Record<string, string> = {
     "$timestamp": "Generated at runtime (Unix timestamp in ms)",
+    "$timestampseconds": "Generated at runtime (Unix timestamp in seconds)",
     "$uuid": "Generated at runtime (UUID v4)",
     "$randomint": "Generated at runtime (0-999)",
 };

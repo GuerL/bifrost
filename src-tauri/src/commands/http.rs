@@ -183,6 +183,13 @@ fn resolve_dynamic_variable(name: &str) -> Option<String> {
                 .as_millis();
             Some(now.to_string())
         }
+        "$timestampseconds" | "$timestamp_s" => {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .ok()?
+                .as_secs();
+            Some(now.to_string())
+        }
         "$uuid" => Some(Uuid::new_v4().to_string()),
         "$randomint" => {
             let value = rand::thread_rng().gen_range(0..1000);
