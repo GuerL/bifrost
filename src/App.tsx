@@ -574,12 +574,12 @@ export default function App() {
     const selectedResponseStatusText = useMemo(() => {
         if (!selectedRequestId) return status || "Idle";
         const runnerStatus = latestRunnerExecutionByRequestId.get(selectedRequestId)?.statusText;
+        const persistedStatus = responsesByRequestId[selectedRequestId]?.statusText;
         if (collectionRunPending && runnerStatus) {
             return runnerStatus;
         }
         if (pending) return "Sending...";
-        const persistedStatus = responsesByRequestId[selectedRequestId]?.statusText;
-        return runnerStatus ?? persistedStatus ?? (status || "No request sent yet.");
+        return persistedStatus ?? runnerStatus ?? (status || "No request sent yet.");
     }, [selectedRequestId, pending, responsesByRequestId, status, latestRunnerExecutionByRequestId, collectionRunPending]);
 
     const selectedScriptReport = useMemo(() => {
@@ -1329,6 +1329,14 @@ export default function App() {
         setResp(null);
         setPending(true);
         setStatus("Sending...");
+        setScriptReportsByRequestId((previous) => ({
+            ...previous,
+            [selectedRequestId]: {
+                preRequestError: null,
+                postResponseError: null,
+                tests: [],
+            },
+        }));
         let preScriptError: string | null = null;
         let preScriptTests: ScriptTestResult[] = [];
         let runtimeVariables = { ...sessionVariables };
