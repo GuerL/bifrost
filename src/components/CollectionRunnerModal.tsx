@@ -12,6 +12,7 @@ import type {
 
 type RunResultFilter = "all" | "failed" | "success";
 type RunnerPanelTab = "executions" | "averages";
+type RunnerMainTab = "setup" | "results";
 
 type RunnerFolderSelectionGroup = {
     folderId: string;
@@ -64,6 +65,7 @@ export default function CollectionRunnerModal({
     onRun,
     onCancel,
 }: CollectionRunnerModalProps) {
+    const [mainTab, setMainTab] = useState<RunnerMainTab>("setup");
     const [resultTab, setResultTab] = useState<RunnerPanelTab>("executions");
     const [executionFilter, setExecutionFilter] = useState<RunResultFilter>("all");
     const [expandedByGroupId, setExpandedByGroupId] = useState<Record<string, boolean>>({});
@@ -71,11 +73,27 @@ export default function CollectionRunnerModal({
 
     useEffect(() => {
         if (!open) return;
+        setMainTab("setup");
         setExecutionFilter("all");
         setResultTab("executions");
         setExpandedByGroupId({});
         setExpandedByExecutionId({});
-    }, [open, run?.runId]);
+    }, [open]);
+
+    useEffect(() => {
+        if (!open) return;
+        setExecutionFilter("all");
+        setResultTab("executions");
+        setExpandedByGroupId({});
+        setExpandedByExecutionId({});
+    }, [run?.runId, open]);
+
+    useEffect(() => {
+        if (!open) return;
+        if (isRunning) {
+            setMainTab("results");
+        }
+    }, [isRunning, open]);
 
     const hasRequests = orderedRequests.length > 0;
     const selectedSet = new Set(selectedRequestIds);
@@ -101,6 +119,19 @@ export default function CollectionRunnerModal({
         () => groupRunnerExecutionsForDisplay(visibleExecutions, run?.mode ?? runMode),
         [visibleExecutions, run?.mode, runMode]
     );
+    const requestPathById = useMemo(() => {
+        const map = new Map<string, string>();
+        for (const group of folderSelectionGroups) {
+            const depth = group.label.split(" / ").length;
+            for (const requestId of group.requestIds) {
+                const previous = map.get(requestId);
+                if (!previous || depth >= previous.split(" / ").length) {
+                    map.set(requestId, group.label);
+                }
+            }
+        }
+        return map;
+    }, [folderSelectionGroups]);
 
     if (!open) return null;
 
@@ -116,6 +147,11 @@ export default function CollectionRunnerModal({
             ...previous,
             [executionId]: !previous[executionId],
         }));
+    }
+
+    function runAndOpenResults() {
+        setMainTab("results");
+        onRun();
     }
 
     return (
@@ -165,247 +201,327 @@ export default function CollectionRunnerModal({
                         border: "1px solid var(--pg-border)",
                         borderRadius: 12,
                         background: "var(--pg-surface-0)",
-                        padding: 12,
-                        display: "grid",
-                        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                        gap: 10,
-                        alignItems: "end",
-                    }}
-                >
-                    <label style={labelColStyle()}>
-                        <span style={labelTextStyle()}>Run mode</span>
-                        <select
-                            value={runMode}
-                            disabled={isRunning}
-                            onChange={(event) => onRunModeChange(event.target.value as RunnerIterationMode)}
-                            style={selectStyle()}
-                        >
-                            <option value="request_iteration">Request iteration</option>
-                            <option value="collection_iteration">Collection iteration</option>
-                        </select>
-                    </label>
-
-                    <label style={labelColStyle()}>
-                        <span style={labelTextStyle()}>Iterations</span>
-                        <input
-                            type="number"
-                            min={1}
-                            step={1}
-                            value={iterations}
-                            disabled={isRunning}
-                            onChange={(event) => {
-                                const parsed = Number.parseInt(event.target.value, 10);
-                                if (!Number.isFinite(parsed)) {
-                                    onIterationsChange(1);
-                                    return;
-                                }
-                                onIterationsChange(Math.max(1, parsed));
-                            }}
-                        />
-                    </label>
-
-                    <label style={{ ...labelColStyle(), justifyContent: "flex-end" }}>
-                        <span style={labelTextStyle()}>Stop on first failure</span>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, height: 34 }}>
-                            <input
-                                type="checkbox"
-                                checked={stopOnFailure}
-                                disabled={isRunning}
-                                onChange={(event) => onStopOnFailureChange(event.target.checked)}
-                                style={{
-                                    width: 14,
-                                    height: 14,
-                                    accentColor: "var(--pg-primary)",
-                                    cursor: isRunning ? "not-allowed" : "pointer",
-                                }}
-                            />
-                            <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
-                                Stop immediately on failure
-                            </span>
-                        </div>
-                    </label>
-
-                    <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center" }}>
-                        {isRunning ? (
-                            <button onClick={onCancel} style={dangerButtonStyle(false)}>
-                                Cancel Run
-                            </button>
-                        ) : (
-                            <button
-                                onClick={onRun}
-                                disabled={!canRunSelection}
-                                style={primaryButtonStyle(!canRunSelection)}
-                            >
-                                Run Selection
-                            </button>
-                        )}
-                    </div>
-                </div>
-
-                <div
-                    style={{
-                        border: "1px solid var(--pg-border)",
-                        borderRadius: 12,
-                        background: "var(--pg-surface-0)",
-                        padding: 12,
+                        padding: 8,
                         display: "flex",
-                        flexDirection: "column",
                         gap: 8,
                     }}
                 >
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
-                            Selected {selectedCount} / {orderedRequests.length}
-                        </div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                            <button
-                                onClick={onSelectAll}
-                                disabled={isRunning || !hasRequests}
-                                style={buttonStyle(isRunning || !hasRequests)}
-                            >
-                                Select all
-                            </button>
-                            <button
-                                onClick={onClearSelection}
-                                disabled={isRunning || selectedCount === 0}
-                                style={buttonStyle(isRunning || selectedCount === 0)}
-                            >
-                                Clear
-                            </button>
-                        </div>
-                    </div>
-
-                    {folderSelectionGroups.length > 0 && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
-                                Toggle by folder
-                            </div>
-                            <div
-                                style={{
-                                    display: "flex",
-                                    flexWrap: "wrap",
-                                    gap: 8,
-                                    maxHeight: 96,
-                                    overflowY: "auto",
-                                    paddingRight: 4,
-                                }}
-                            >
-                                {folderSelectionGroups.map((group) => {
-                                    const total = group.requestIds.length;
-                                    const selectedInGroup = group.requestIds.filter((id) =>
-                                        selectedSet.has(id)
-                                    ).length;
-                                    const allSelected = total > 0 && selectedInGroup === total;
-                                    const partiallySelected =
-                                        selectedInGroup > 0 && selectedInGroup < total;
-
-                                    return (
-                                        <button
-                                            key={group.folderId}
-                                            disabled={isRunning || total === 0}
-                                            onClick={() =>
-                                                onToggleFolderSelection(group.requestIds, !allSelected)
-                                            }
-                                            style={{
-                                                ...buttonStyle(isRunning || total === 0),
-                                                fontSize: 12,
-                                                borderColor: allSelected
-                                                    ? "var(--pg-primary)"
-                                                    : partiallySelected
-                                                        ? "var(--pg-primary-soft)"
-                                                        : "var(--pg-border)",
-                                                background: allSelected
-                                                    ? "rgba(var(--pg-primary-rgb), 0.12)"
-                                                    : "var(--pg-surface-1)",
-                                            }}
-                                            title={group.label}
-                                        >
-                                            {allSelected ? "☑" : partiallySelected ? "◪" : "☐"} {group.label} ({selectedInGroup}/{total})
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    )}
-
-                    {!hasRequests && (
-                        <div style={{ color: "var(--pg-text-muted)", fontSize: 13 }}>
-                            No request in this collection.
-                        </div>
-                    )}
-
-                    {hasRequests && (
-                        <div
-                            style={{
-                                display: "grid",
-                                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                                gap: 8,
-                                maxHeight: 120,
-                                overflowY: "auto",
-                                paddingRight: 4,
-                            }}
-                        >
-                            {orderedRequests.map((request, index) => {
-                                const selected = selectedSet.has(request.id);
-                                return (
-                                    <label
-                                        key={request.id}
-                                        style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 8,
-                                            border: "1px solid var(--pg-border)",
-                                            borderRadius: 10,
-                                            padding: "8px 10px",
-                                            background: selected ? "var(--pg-surface-1)" : "var(--pg-surface-0)",
-                                            opacity: selected ? 1 : 0.72,
-                                        }}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={selected}
-                                            disabled={isRunning}
-                                            onChange={(event) =>
-                                                onToggleRequestSelection(request.id, event.target.checked)
-                                            }
-                                            style={{
-                                                width: 14,
-                                                height: 14,
-                                                accentColor: "var(--pg-primary)",
-                                                cursor: isRunning ? "not-allowed" : "pointer",
-                                            }}
-                                        />
-                                        <span
-                                            style={{
-                                                minWidth: 0,
-                                                fontSize: 12,
-                                                color: "var(--pg-text-dim)",
-                                                whiteSpace: "nowrap",
-                                                overflow: "hidden",
-                                                textOverflow: "ellipsis",
-                                            }}
-                                        >
-                                            #{index + 1} {request.method.toUpperCase()} {request.name}
-                                        </span>
-                                    </label>
-                                );
-                            })}
-                        </div>
-                    )}
+                    <button
+                        onClick={() => setMainTab("setup")}
+                        style={tabButtonStyle(mainTab === "setup")}
+                    >
+                        Setup
+                    </button>
+                    <button
+                        onClick={() => setMainTab("results")}
+                        style={tabButtonStyle(mainTab === "results")}
+                    >
+                        Results
+                    </button>
                 </div>
 
-                <div
-                    style={{
-                        border: "1px solid var(--pg-border)",
-                        borderRadius: 12,
-                        background: "var(--pg-surface-0)",
-                        minHeight: 0,
-                        flex: 1,
-                        display: "flex",
-                        flexDirection: "column",
-                        overflow: "hidden",
-                    }}
-                >
+                {mainTab === "setup" && (
+                    <>
+                        <div
+                            style={{
+                                border: "1px solid var(--pg-border)",
+                                borderRadius: 12,
+                                background: "var(--pg-surface-0)",
+                                padding: 12,
+                                display: "grid",
+                                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                                gap: 10,
+                                alignItems: "end",
+                            }}
+                        >
+                            <label style={labelColStyle()}>
+                                <span style={labelTextStyle()}>Run mode</span>
+                                <select
+                                    value={runMode}
+                                    disabled={isRunning}
+                                    onChange={(event) => onRunModeChange(event.target.value as RunnerIterationMode)}
+                                    style={selectStyle()}
+                                >
+                                    <option value="request_iteration">Request iteration</option>
+                                    <option value="collection_iteration">Collection iteration</option>
+                                </select>
+                            </label>
+
+                            <label style={labelColStyle()}>
+                                <span style={labelTextStyle()}>Iterations</span>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    step={1}
+                                    value={iterations}
+                                    disabled={isRunning}
+                                    onChange={(event) => {
+                                        const parsed = Number.parseInt(event.target.value, 10);
+                                        if (!Number.isFinite(parsed)) {
+                                            onIterationsChange(1);
+                                            return;
+                                        }
+                                        onIterationsChange(Math.max(1, parsed));
+                                    }}
+                                />
+                            </label>
+
+                            <label style={{ ...labelColStyle(), justifyContent: "flex-end" }}>
+                                <span style={labelTextStyle()}>Stop on first failure</span>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, height: 34 }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={stopOnFailure}
+                                        disabled={isRunning}
+                                        onChange={(event) => onStopOnFailureChange(event.target.checked)}
+                                        style={{
+                                            width: 14,
+                                            height: 14,
+                                            accentColor: "var(--pg-primary)",
+                                            cursor: isRunning ? "not-allowed" : "pointer",
+                                        }}
+                                    />
+                                    <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                        Stop immediately on failure
+                                    </span>
+                                </div>
+                            </label>
+
+                            <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center" }}>
+                                {isRunning ? (
+                                    <button onClick={onCancel} style={dangerButtonStyle(false)}>
+                                        Cancel Run
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={runAndOpenResults}
+                                        disabled={!canRunSelection}
+                                        style={primaryButtonStyle(!canRunSelection)}
+                                    >
+                                        Run Selection
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        <div
+                            style={{
+                                border: "1px solid var(--pg-border)",
+                                borderRadius: 12,
+                                background: "var(--pg-surface-0)",
+                                padding: 12,
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 10,
+                                minHeight: 0,
+                                flex: 1,
+                            }}
+                        >
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                                <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                    Selected {selectedCount} / {orderedRequests.length}
+                                </div>
+                                <div style={{ display: "flex", gap: 8 }}>
+                                    <button
+                                        onClick={onSelectAll}
+                                        disabled={isRunning || !hasRequests}
+                                        style={buttonStyle(isRunning || !hasRequests)}
+                                    >
+                                        Select all
+                                    </button>
+                                    <button
+                                        onClick={onClearSelection}
+                                        disabled={isRunning || selectedCount === 0}
+                                        style={buttonStyle(isRunning || selectedCount === 0)}
+                                    >
+                                        Clear
+                                    </button>
+                                </div>
+                            </div>
+
+                            {!hasRequests && (
+                                <div style={{ color: "var(--pg-text-muted)", fontSize: 13 }}>
+                                    No request in this collection.
+                                </div>
+                            )}
+
+                            {hasRequests && (
+                                <div
+                                    style={{
+                                        display: "grid",
+                                        gridTemplateColumns: folderSelectionGroups.length > 0 ? "300px minmax(0, 1fr)" : "1fr",
+                                        gap: 10,
+                                        minHeight: 0,
+                                        flex: 1,
+                                    }}
+                                >
+                                    {folderSelectionGroups.length > 0 && (
+                                        <div
+                                            style={{
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 10,
+                                                background: "var(--pg-surface-1)",
+                                                padding: 8,
+                                                overflowY: "auto",
+                                            }}
+                                        >
+                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)", marginBottom: 8 }}>
+                                                Folders
+                                            </div>
+                                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                                {folderSelectionGroups.map((group) => {
+                                                    const total = group.requestIds.length;
+                                                    const selectedInGroup = group.requestIds.filter((id) =>
+                                                        selectedSet.has(id)
+                                                    ).length;
+                                                    const allSelected = total > 0 && selectedInGroup === total;
+                                                    const partiallySelected =
+                                                        selectedInGroup > 0 && selectedInGroup < total;
+
+                                                    return (
+                                                        <button
+                                                            key={group.folderId}
+                                                            disabled={isRunning || total === 0}
+                                                            onClick={() =>
+                                                                onToggleFolderSelection(group.requestIds, !allSelected)
+                                                            }
+                                                            style={{
+                                                                ...buttonStyle(isRunning || total === 0),
+                                                                fontSize: 12,
+                                                                justifyContent: "space-between",
+                                                                borderColor: allSelected
+                                                                    ? "var(--pg-primary)"
+                                                                    : partiallySelected
+                                                                        ? "var(--pg-primary-soft)"
+                                                                        : "var(--pg-border)",
+                                                                background: allSelected
+                                                                    ? "rgba(var(--pg-primary-rgb), 0.12)"
+                                                                    : "var(--pg-surface-0)",
+                                                            }}
+                                                            title={group.label}
+                                                        >
+                                                            <span style={{ minWidth: 0, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                                {allSelected ? "☑" : partiallySelected ? "◪" : "☐"} {group.label}
+                                                            </span>
+                                                            <span style={{ fontSize: 11, color: "var(--pg-text-muted)" }}>
+                                                                {selectedInGroup}/{total}
+                                                            </span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div
+                                        style={{
+                                            border: "1px solid var(--pg-border)",
+                                            borderRadius: 10,
+                                            background: "var(--pg-surface-1)",
+                                            overflowY: "auto",
+                                            padding: 8,
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            gap: 6,
+                                        }}
+                                    >
+                                        {orderedRequests.map((request, index) => {
+                                            const selected = selectedSet.has(request.id);
+                                            const folderPath = requestPathById.get(request.id);
+                                            return (
+                                                <label
+                                                    key={request.id}
+                                                    style={{
+                                                        display: "grid",
+                                                        gridTemplateColumns: "20px 44px 68px minmax(0, 1fr)",
+                                                        alignItems: "center",
+                                                        gap: 10,
+                                                        border: "1px solid var(--pg-border)",
+                                                        borderRadius: 10,
+                                                        padding: "8px 10px",
+                                                        background: selected ? "rgba(var(--pg-primary-rgb), 0.1)" : "var(--pg-surface-0)",
+                                                        opacity: selected ? 1 : 0.8,
+                                                    }}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selected}
+                                                        disabled={isRunning}
+                                                        onChange={(event) =>
+                                                            onToggleRequestSelection(request.id, event.target.checked)
+                                                        }
+                                                        style={{
+                                                            width: 14,
+                                                            height: 14,
+                                                            accentColor: "var(--pg-primary)",
+                                                            cursor: isRunning ? "not-allowed" : "pointer",
+                                                        }}
+                                                    />
+                                                    <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
+                                                        #{index + 1}
+                                                    </span>
+                                                    <span
+                                                        style={{
+                                                            fontSize: 11,
+                                                            fontWeight: 700,
+                                                            color: "var(--pg-text)",
+                                                            border: "1px solid var(--pg-border)",
+                                                            borderRadius: 999,
+                                                            padding: "3px 8px",
+                                                            textAlign: "center",
+                                                            background: "var(--pg-surface-1)",
+                                                        }}
+                                                    >
+                                                        {request.method.toUpperCase()}
+                                                    </span>
+                                                    <div style={{ minWidth: 0 }}>
+                                                        <div
+                                                            style={{
+                                                                fontSize: 13,
+                                                                color: "var(--pg-text)",
+                                                                whiteSpace: "nowrap",
+                                                                overflow: "hidden",
+                                                                textOverflow: "ellipsis",
+                                                            }}
+                                                        >
+                                                            {request.name}
+                                                        </div>
+                                                        <div
+                                                            style={{
+                                                                marginTop: 2,
+                                                                fontSize: 11,
+                                                                color: "var(--pg-text-muted)",
+                                                                whiteSpace: "nowrap",
+                                                                overflow: "hidden",
+                                                                textOverflow: "ellipsis",
+                                                            }}
+                                                        >
+                                                            {folderPath ?? "Root"}
+                                                        </div>
+                                                    </div>
+                                                </label>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </>
+                )}
+
+                {mainTab === "results" && (
+                    <div
+                        style={{
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 12,
+                            background: "var(--pg-surface-0)",
+                            minHeight: 0,
+                            flex: 1,
+                            display: "flex",
+                            flexDirection: "column",
+                            overflow: "hidden",
+                        }}
+                    >
                     <div
                         style={{
                             display: "flex",
@@ -652,6 +768,7 @@ export default function CollectionRunnerModal({
                         )}
                     </div>
                 </div>
+                )}
 
                 <div
                     style={{
@@ -690,7 +807,7 @@ export default function CollectionRunnerModal({
                             </button>
                         ) : (
                             <button
-                                onClick={onRun}
+                                onClick={runAndOpenResults}
                                 disabled={!canRunSelection}
                                 style={primaryButtonStyle(!canRunSelection)}
                             >
