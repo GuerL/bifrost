@@ -26,9 +26,12 @@ type TopBarProps = {
     onSaveDraft: () => void;
     onOpenRawJson: () => void;
     onOpenCollectionRunner: () => void;
+    onImportPostman: () => void;
+    onExportPortable: () => void;
     canSaveDraft: boolean;
     hasDraft: boolean;
     canOpenCollectionRunner: boolean;
+    canExportCollection: boolean;
     isCollectionRunning: boolean;
 };
 
@@ -44,9 +47,12 @@ export default function TopBar({
     onSaveDraft,
     onOpenRawJson,
     onOpenCollectionRunner,
+    onImportPostman,
+    onExportPortable,
     canSaveDraft,
     hasDraft,
     canOpenCollectionRunner,
+    canExportCollection,
     isCollectionRunning,
                                }: TopBarProps) {
     async function runWindowAction(action: "minimize" | "toggleMaximize" | "close") {
@@ -162,6 +168,16 @@ export default function TopBar({
                 </button>
                 <button onClick={onManageEnvironments} style={buttonStyle(false)}>
                     Environments
+                </button>
+                <button onClick={onImportPostman} style={buttonStyle(false)}>
+                    Import Postman
+                </button>
+                <button
+                    onClick={onExportPortable}
+                    disabled={!canExportCollection}
+                    style={buttonStyle(!canExportCollection)}
+                >
+                    Export
                 </button>
                 <button
                     onClick={onSaveDraft}

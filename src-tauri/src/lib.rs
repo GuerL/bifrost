@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod commands;
+mod import_export;
 mod model;
 mod storage;
 use commands::state::RequestRegistry;
@@ -49,7 +50,13 @@ pub fn run() {
             commands::collection::load_drafts,
             commands::collection::save_drafts,
             commands::collection::clear_draft,
-            commands::collection::duplicate_request
+            commands::collection::duplicate_request,
+            commands::import_export::import_postman_collection_from_file,
+            commands::import_export::import_postman_collection_from_json,
+            commands::import_export::export_collection_portable,
+            commands::import_export::export_collection_portable_to_file,
+            commands::import_export::export_collection_to_postman,
+            commands::import_export::export_collection_to_postman_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

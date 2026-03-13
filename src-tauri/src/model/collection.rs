@@ -22,13 +22,18 @@ pub enum HttpMethod {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Body {
     None,
-    Raw { content_type: String, text: String },
+    Raw {
+        content_type: String,
+        text: String,
+    },
     Json {
         value: serde_json::Value,
         #[serde(default)]
         text: String,
     },
-    Form { fields: Vec<KeyValue> },
+    Form {
+        fields: Vec<KeyValue>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -36,8 +41,13 @@ pub enum Body {
 pub enum Auth {
     #[default]
     None,
-    Bearer { token: String },
-    Basic { username: String, password: String },
+    Bearer {
+        token: String,
+    },
+    Basic {
+        username: String,
+        password: String,
+    },
     ApiKey {
         key: String,
         value: String,

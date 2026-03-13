@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isPending } from "./helpers/HttpHelper";
 import Editor from "@monaco-editor/react";
@@ -57,6 +57,7 @@ import type {
     CollectionMeta,
     Environment,
     HttpResponseDto,
+    ImportPostmanResult,
     KeyValue,
     RequestAuth,
     Request,
@@ -313,6 +314,29 @@ function writePersistedResponsesState(state: PersistedResponsesState) {
     }
 }
 
+function safeFileName(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) return "collection";
+    return trimmed
+        .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+        .replace(/\s+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "")
+        .toLowerCase();
+}
+
+function downloadTextFile(fileName: string, content: string) {
+    const blob = new Blob([content], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+}
+
 export default function App() {
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
@@ -376,6 +400,7 @@ export default function App() {
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
+    const postmanImportInputRef = useRef<HTMLInputElement | null>(null);
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
     const hydratedTabsCollectionIdRef = useRef<string | null>(null);
@@ -2193,6 +2218,56 @@ export default function App() {
         }
     }
 
+    function openPostmanImportPicker() {
+        postmanImportInputRef.current?.click();
+    }
+
+    async function onPostmanImportFileSelected(event: ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+
+        try {
+            setStatus(`Importing Postman collection: ${file.name}...`);
+            const jsonText = await file.text();
+            const imported = await invoke<ImportPostmanResult>(
+                "import_postman_collection_from_json",
+                { jsonText }
+            );
+
+            await invoke("set_active_collection", {
+                collectionId: imported.collection_id,
+            });
+            await reloadCollectionsAndRestoreActive(imported.collection_id);
+
+            const warningsSuffix =
+                imported.warnings.length > 0
+                    ? ` • ${imported.warnings.length} warning(s)`
+                    : "";
+            setStatus(
+                `✅ Imported '${imported.collection_name}' (${imported.imported_requests} requests, ${imported.imported_folders} folders)${warningsSuffix}`
+            );
+        } catch (error) {
+            setStatus(`❌ Postman import failed: ${String(error)}`);
+        }
+    }
+
+    async function onExportPortableCollection() {
+        if (!current) return;
+
+        try {
+            setStatus(`Exporting '${current.meta.name}'...`);
+            const json = await invoke<string>("export_collection_portable", {
+                collectionId: current.meta.id,
+            });
+            const fileName = `${safeFileName(current.meta.name)}.postguerl.portable.json`;
+            downloadTextFile(fileName, json);
+            setStatus(`✅ Portable export ready: ${fileName}`);
+        } catch (error) {
+            setStatus(`❌ Portable export failed: ${String(error)}`);
+        }
+    }
+
     function openCollectionsModal() {
         const selected =
             collections.find((collection) => collection.id === (current?.meta.id ?? "")) ??
@@ -2455,10 +2530,20 @@ export default function App() {
                 onSaveDraft={saveDraft}
                 onOpenRawJson={() => setTab("json")}
                 onOpenCollectionRunner={() => setRunnerModalOpen(true)}
+                onImportPostman={openPostmanImportPicker}
+                onExportPortable={() => void onExportPortableCollection()}
                 canSaveDraft={!!current && !!draft && isDirty}
                 hasDraft={!!draft}
                 canOpenCollectionRunner={!!current}
+                canExportCollection={!!current}
                 isCollectionRunning={collectionRunPending}
+            />
+            <input
+                ref={postmanImportInputRef}
+                type="file"
+                accept=".json,application/json"
+                style={{ display: "none" }}
+                onChange={(event) => void onPostmanImportFileSelected(event)}
             />
 
             <div

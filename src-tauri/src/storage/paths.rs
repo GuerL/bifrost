@@ -16,11 +16,11 @@ pub fn collection_dir(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
 }
 
 pub fn collection_meta_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
-  Ok(collection_dir(app, id)?.join("collection.json"))
+    Ok(collection_dir(app, id)?.join("collection.json"))
 }
 
 pub fn collections_index_path(app: &AppHandle) -> Result<PathBuf, String> {
-  Ok(collections_dir(app)?.join("index.json"))
+    Ok(collections_dir(app)?.join("index.json"))
 }
 
 pub fn requests_dir(app: &AppHandle, id: &str) -> Result<PathBuf, String> {

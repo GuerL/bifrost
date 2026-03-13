@@ -54,7 +54,9 @@ fn flatten_request_ids_into(
                     out.push(request_id.clone());
                 }
             }
-            CollectionNode::Folder { children, .. } => flatten_request_ids_into(children, out, seen),
+            CollectionNode::Folder { children, .. } => {
+                flatten_request_ids_into(children, out, seen)
+            }
         }
     }
 }
@@ -98,7 +100,11 @@ fn remove_request_refs(items: &mut Vec<CollectionNode>, request_id: &str) -> usi
     removed
 }
 
-fn replace_request_ref_ids(items: &mut Vec<CollectionNode>, source_id: &str, target_id: &str) -> usize {
+fn replace_request_ref_ids(
+    items: &mut Vec<CollectionNode>,
+    source_id: &str,
+    target_id: &str,
+) -> usize {
     let mut replaced = 0usize;
     for item in items.iter_mut() {
         match item {
@@ -213,7 +219,10 @@ fn node_at_path<'a>(items: &'a [CollectionNode], path: &[usize]) -> Option<&'a C
     }
 }
 
-fn node_mut_at_path<'a>(items: &'a mut Vec<CollectionNode>, path: &[usize]) -> Option<&'a mut CollectionNode> {
+fn node_mut_at_path<'a>(
+    items: &'a mut Vec<CollectionNode>,
+    path: &[usize],
+) -> Option<&'a mut CollectionNode> {
     let (first, rest) = path.split_first()?;
     let node = items.get_mut(*first)?;
     if rest.is_empty() {
@@ -672,10 +681,10 @@ pub fn rename_folder(
     }
 
     let mut meta = load_collection_meta_and_migrate(&app, &collection_id)?;
-    let path =
-        find_folder_path(&meta.items, &folder_id).ok_or_else(|| format!("Folder not found: {}", folder_id))?;
-    let node =
-        node_mut_at_path(&mut meta.items, &path).ok_or_else(|| format!("Folder not found: {}", folder_id))?;
+    let path = find_folder_path(&meta.items, &folder_id)
+        .ok_or_else(|| format!("Folder not found: {}", folder_id))?;
+    let node = node_mut_at_path(&mut meta.items, &path)
+        .ok_or_else(|| format!("Folder not found: {}", folder_id))?;
     match node {
         CollectionNode::Folder { name, .. } => {
             *name = trimmed;
@@ -695,11 +704,11 @@ pub fn delete_folder(
     folder_id: String,
 ) -> Result<(), String> {
     let mut meta = load_collection_meta_and_migrate(&app, &collection_id)?;
-    let path =
-        find_folder_path(&meta.items, &folder_id).ok_or_else(|| format!("Folder not found: {}", folder_id))?;
+    let path = find_folder_path(&meta.items, &folder_id)
+        .ok_or_else(|| format!("Folder not found: {}", folder_id))?;
 
-    let removed =
-        remove_node_at_path(&mut meta.items, &path).ok_or_else(|| format!("Folder not found: {}", folder_id))?;
+    let removed = remove_node_at_path(&mut meta.items, &path)
+        .ok_or_else(|| format!("Folder not found: {}", folder_id))?;
     let mut request_ids = vec![];
     collect_request_ids(&[removed], &mut request_ids);
 
@@ -723,11 +732,11 @@ pub fn move_node(
     target_index: usize,
 ) -> Result<(), String> {
     let mut meta = load_collection_meta_and_migrate(&app, &collection_id)?;
-    let source_path =
-        find_node_path(&meta.items, &node_id).ok_or_else(|| format!("Node not found: {}", node_id))?;
+    let source_path = find_node_path(&meta.items, &node_id)
+        .ok_or_else(|| format!("Node not found: {}", node_id))?;
 
-    let source_node =
-        node_at_path(&meta.items, &source_path).ok_or_else(|| format!("Node not found: {}", node_id))?;
+    let source_node = node_at_path(&meta.items, &source_path)
+        .ok_or_else(|| format!("Node not found: {}", node_id))?;
     let source_is_folder = matches!(source_node, CollectionNode::Folder { .. });
     let source_parent_path = if source_path.len() > 1 {
         source_path[..source_path.len() - 1].to_vec()
@@ -756,8 +765,8 @@ pub fn move_node(
         adjusted_target_index -= 1;
     }
 
-    let removed =
-        remove_node_at_path(&mut meta.items, &source_path).ok_or_else(|| format!("Node not found: {}", node_id))?;
+    let removed = remove_node_at_path(&mut meta.items, &source_path)
+        .ok_or_else(|| format!("Node not found: {}", node_id))?;
 
     let destination_children = parent_children_mut(&mut meta.items, target_folder_id.as_deref())?;
     let insert_index = adjusted_target_index.min(destination_children.len());
@@ -849,7 +858,10 @@ pub fn rename_request(
 
     let mut meta = load_collection_meta_and_migrate(&app, &collection_id)?;
     if find_request_ref_path(&meta.items, &request_id).is_none() {
-        return Err(format!("Request not found in collection tree: {}", request_id));
+        return Err(format!(
+            "Request not found in collection tree: {}",
+            request_id
+        ));
     }
 
     let source_path = request_path(&app, &collection_id, &request_id)?;
@@ -865,7 +877,10 @@ pub fn rename_request(
     if target_request_id != request_id {
         let target_path = request_path(&app, &collection_id, &target_request_id)?;
         if target_path.exists() {
-            return Err(format!("Target request already exists: {}", target_request_id));
+            return Err(format!(
+                "Target request already exists: {}",
+                target_request_id
+            ));
         }
     }
 
@@ -892,7 +907,9 @@ pub fn reorder_requests(
 ) -> Result<(), String> {
     let mut meta = load_collection_meta_and_migrate(&app, &collection_id)?;
     if !is_root_flat_request_list(&meta.items) {
-        return Err("Flat request reorder is not supported for nested folders. Use move_node.".into());
+        return Err(
+            "Flat request reorder is not supported for nested folders. Use move_node.".into(),
+        );
     }
 
     let current_order = flatten_request_ids(&meta.items);
@@ -956,7 +973,8 @@ pub fn duplicate_request(
         if let Some(folder_id) = target_folder_id {
             let children = parent_children_mut(&mut meta.items, Some(folder_id.as_str()))?;
             children.push(request_ref(new_request_id));
-        } else if let Some(source_ref_path) = find_request_ref_path(&meta.items, &source_request_id) {
+        } else if let Some(source_ref_path) = find_request_ref_path(&meta.items, &source_request_id)
+        {
             let parent_path = if source_ref_path.len() > 1 {
                 source_ref_path[..source_ref_path.len() - 1].to_vec()
             } else {
@@ -984,7 +1002,10 @@ pub fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-pub fn load_drafts(app: AppHandle, collection_id: String) -> Result<HashMap<String, Request>, String> {
+pub fn load_drafts(
+    app: AppHandle,
+    collection_id: String,
+) -> Result<HashMap<String, Request>, String> {
     let path = draft_collection_path(&app, &collection_id)?;
     if !path.exists() {
         return Ok(HashMap::new());
@@ -1037,10 +1058,7 @@ pub fn get_active_collection(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-pub fn set_active_collection(
-    app: AppHandle,
-    collection_id: Option<String>,
-) -> Result<(), String> {
+pub fn set_active_collection(app: AppHandle, collection_id: Option<String>) -> Result<(), String> {
     let mut idx = load_or_init_collections_index(&app)?;
 
     if let Some(id) = collection_id {

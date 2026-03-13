@@ -184,10 +184,7 @@ fn resolve_dynamic_variable(name: &str) -> Option<String> {
             Some(now.to_string())
         }
         "$timestampseconds" | "$timestamp_s" => {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .ok()?
-                .as_secs();
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
             Some(now.to_string())
         }
         "$uuid" => Some(Uuid::new_v4().to_string()),

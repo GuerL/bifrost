@@ -78,3 +78,12 @@ export type Environment = {
     name: string;
     variables: EnvironmentVariable[];
 };
+
+export type ImportPostmanResult = {
+    collection_id: string;
+    collection_name: string;
+    imported_requests: number;
+    imported_folders: number;
+    imported_environment_id: string | null;
+    warnings: string[];
+};
