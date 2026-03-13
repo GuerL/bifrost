@@ -33,6 +33,8 @@ pub struct PostmanItemDto {
     pub item: Vec<PostmanItemDto>,
     #[serde(default)]
     pub request: Option<PostmanRequestUnionDto>,
+    #[serde(default)]
+    pub event: Vec<PostmanEventDto>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -182,6 +184,29 @@ pub struct PostmanVariableDto {
     pub disabled: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct PostmanEventDto {
+    #[serde(default)]
+    pub listen: Option<String>,
+    #[serde(default)]
+    pub script: Option<PostmanScriptDto>,
+    #[serde(default)]
+    pub disabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct PostmanScriptDto {
+    #[serde(default)]
+    pub exec: Option<PostmanScriptExecDto>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum PostmanScriptExecDto {
+    Lines(Vec<String>),
+    Single(String),
+}
+
 #[derive(Debug)]
 pub struct MappedPostmanCollection {
     pub name: String,
@@ -261,6 +286,7 @@ fn map_item_recursive(
             item.request.as_ref()?,
             &request_name,
             default_auth,
+            &item.event,
             warnings,
         );
         let request_id = request.id.clone();
@@ -304,6 +330,7 @@ fn map_request(
     postman_request: &PostmanRequestUnionDto,
     request_name: &str,
     default_auth: Option<&PostmanAuthDto>,
+    events: &[PostmanEventDto],
     warnings: &mut Vec<String>,
 ) -> Request {
     let request_id = Uuid::new_v4().to_string();
@@ -346,7 +373,7 @@ fn map_request(
         body,
         auth,
         extractors: vec![],
-        scripts: RequestScripts::default(),
+        scripts: map_scripts(events),
     }
 }
 
@@ -655,6 +682,52 @@ fn auth_attr_value(attrs: &[PostmanAuthAttributeDto], key: &str) -> Option<Strin
         }
         Some(json_value_to_string(entry.value.as_ref()))
     })
+}
+
+fn map_scripts(events: &[PostmanEventDto]) -> RequestScripts {
+    let mut pre_request_parts = vec![];
+    let mut post_response_parts = vec![];
+
+    for event in events {
+        if event.disabled.unwrap_or(false) {
+            continue;
+        }
+
+        let listen = event
+            .listen
+            .as_ref()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        let script_text = event
+            .script
+            .as_ref()
+            .and_then(script_exec_to_text)
+            .unwrap_or_default();
+        if script_text.trim().is_empty() {
+            continue;
+        }
+
+        if listen == "test" {
+            post_response_parts.push(script_text);
+            continue;
+        }
+        if listen == "prerequest" {
+            pre_request_parts.push(script_text);
+        }
+    }
+
+    RequestScripts {
+        pre_request: pre_request_parts.join("\n\n"),
+        post_response: post_response_parts.join("\n\n"),
+    }
+}
+
+fn script_exec_to_text(script: &PostmanScriptDto) -> Option<String> {
+    let exec = script.exec.as_ref()?;
+    match exec {
+        PostmanScriptExecDto::Single(text) => Some(text.clone()),
+        PostmanScriptExecDto::Lines(lines) => Some(lines.join("\n")),
+    }
 }
 
 fn json_value_to_string(value: Option<&serde_json::Value>) -> String {
