@@ -13,6 +13,7 @@ import {
 import {
     buildSidebarRows,
     folderOptions,
+    requestIdsInTreeOrder,
     requestsInTreeOrder,
     type FolderOption,
     type SidebarTreeRow,
@@ -55,6 +56,7 @@ import type {
 import type {
     CollectionLoaded,
     CollectionMeta,
+    CollectionNode,
     Environment,
     HttpResponseDto,
     ImportPostmanResult,
@@ -126,6 +128,12 @@ type RequestScriptExecutionReport = {
     preRequestError: string | null;
     postResponseError: string | null;
     tests: ScriptTestResult[];
+};
+
+type RunnerFolderSelectionGroup = {
+    folderId: string;
+    label: string;
+    requestIds: string[];
 };
 
 const OPEN_TABS_STORAGE_KEY = "postguerl:open-tabs:v1";
@@ -326,6 +334,26 @@ function safeFileName(value: string): string {
         .toLowerCase();
 }
 
+function buildRunnerFolderSelectionGroups(
+    items: CollectionNode[],
+    path: string[] = []
+): RunnerFolderSelectionGroup[] {
+    const out: RunnerFolderSelectionGroup[] = [];
+
+    for (const item of items) {
+        if (item.type !== "folder") continue;
+        const nextPath = [...path, item.name];
+        out.push({
+            folderId: item.id,
+            label: nextPath.join(" / "),
+            requestIds: requestIdsInTreeOrder(item.children),
+        });
+        out.push(...buildRunnerFolderSelectionGroups(item.children, nextPath));
+    }
+
+    return out;
+}
+
 export default function App() {
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
@@ -508,6 +536,11 @@ export default function App() {
         if (!current) return [];
         return requestsInTreeOrder(current);
     }, [current]);
+
+    const runnerFolderSelectionGroups = useMemo<RunnerFolderSelectionGroup[]>(
+        () => (current ? buildRunnerFolderSelectionGroups(current.meta.items) : []),
+        [current?.meta.items]
+    );
 
     const openTabs = useMemo(() => {
         if (!current) return [];
@@ -1441,6 +1474,23 @@ export default function App() {
         });
     }
 
+    function toggleRunnerFolderSelection(requestIds: string[], selected: boolean) {
+        if (collectionRunPending) return;
+        setRunnerSelectedRequestIds((previous) => {
+            const nextSet = new Set(previous);
+            for (const requestId of requestIds) {
+                if (selected) {
+                    nextSet.add(requestId);
+                } else {
+                    nextSet.delete(requestId);
+                }
+            }
+            return orderedRequests
+                .map((request) => request.id)
+                .filter((id) => nextSet.has(id));
+        });
+    }
+
     function selectAllRunnerRequests() {
         if (collectionRunPending) return;
         setRunnerSelectedRequestIds(orderedRequests.map((request) => request.id));
@@ -1650,17 +1700,22 @@ export default function App() {
                     totalScriptTests > 0
                         ? ` • tests ${totalScriptTests - failedScriptTests}/${totalScriptTests}`
                         : "";
-                const statusText = `✅ ${response.status} in ${response.duration_ms}ms${scriptErrorsSuffix}${scriptTestsSuffix}`;
+                const isHttpFailure = response.status >= 400;
+                const statusText = isHttpFailure
+                    ? `❌ HTTP ${response.status} in ${response.duration_ms}ms${scriptErrorsSuffix}${scriptTestsSuffix}`
+                    : `✅ ${response.status} in ${response.duration_ms}ms${scriptErrorsSuffix}${scriptTestsSuffix}`;
                 commitRun(
                     updateExecutionAt(planItem.planIndex, {
-                        status: "success",
+                        status: isHttpFailure ? "failed" : "success",
                         statusText,
                         wasSent: true,
                         finishedAt: new Date().toISOString(),
                         durationMs: response.duration_ms,
                         httpStatus: response.status,
-                        errorCode: null,
-                        errorMessage: null,
+                        errorCode: isHttpFailure ? "http_status" : null,
+                        errorMessage: isHttpFailure
+                            ? `Request returned HTTP ${response.status}`
+                            : null,
                         response: toResponseSnapshot(response),
                         extractedVariables: [],
                         extractionErrors: [],
@@ -1686,6 +1741,13 @@ export default function App() {
                         tests: [...preRequestScriptTests, ...postResponseScriptTests],
                     },
                 }));
+
+                if (isHttpFailure && collectionRunStopOnFailure) {
+                    commitRun(
+                        skipRemainingFrom(planItem.planIndex, "Skipped (stopped on failure)")
+                    );
+                    break;
+                }
             } catch (error) {
                 const parsed = parseRunnerHttpError(error);
                 const requestWasCancelled = parsed.code === "cancelled" || collectionRunCancelRef.current;
@@ -3819,6 +3881,7 @@ export default function App() {
                 onClose={() => setRunnerModalOpen(false)}
                 collectionName={current?.meta.name ?? null}
                 orderedRequests={orderedRequests}
+                folderSelectionGroups={runnerFolderSelectionGroups}
                 selectedRequestIds={runnerSelectedRequestIds}
                 runMode={runnerIterationMode}
                 iterations={runnerIterations}
@@ -3829,6 +3892,7 @@ export default function App() {
                 onIterationsChange={setRunnerIterations}
                 onStopOnFailureChange={setCollectionRunStopOnFailure}
                 onToggleRequestSelection={toggleRunnerRequestSelection}
+                onToggleFolderSelection={toggleRunnerFolderSelection}
                 onSelectAll={selectAllRunnerRequests}
                 onClearSelection={clearRunnerRequestSelection}
                 onRun={() => void runCollection(runnerSelectedRequestIds)}

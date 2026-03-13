@@ -13,11 +13,18 @@ import type {
 type RunResultFilter = "all" | "failed" | "success";
 type RunnerPanelTab = "executions" | "averages";
 
+type RunnerFolderSelectionGroup = {
+    folderId: string;
+    label: string;
+    requestIds: string[];
+};
+
 type CollectionRunnerModalProps = {
     open: boolean;
     onClose: () => void;
     collectionName: string | null;
     orderedRequests: Request[];
+    folderSelectionGroups: RunnerFolderSelectionGroup[];
     selectedRequestIds: string[];
     runMode: RunnerIterationMode;
     iterations: number;
@@ -28,6 +35,7 @@ type CollectionRunnerModalProps = {
     onIterationsChange: (next: number) => void;
     onStopOnFailureChange: (next: boolean) => void;
     onToggleRequestSelection: (requestId: string, selected: boolean) => void;
+    onToggleFolderSelection: (requestIds: string[], selected: boolean) => void;
     onSelectAll: () => void;
     onClearSelection: () => void;
     onRun: () => void;
@@ -39,6 +47,7 @@ export default function CollectionRunnerModal({
     onClose,
     collectionName,
     orderedRequests,
+    folderSelectionGroups,
     selectedRequestIds,
     runMode,
     iterations,
@@ -49,6 +58,7 @@ export default function CollectionRunnerModal({
     onIterationsChange,
     onStopOnFailureChange,
     onToggleRequestSelection,
+    onToggleFolderSelection,
     onSelectAll,
     onClearSelection,
     onRun,
@@ -264,6 +274,59 @@ export default function CollectionRunnerModal({
                             </button>
                         </div>
                     </div>
+
+                    {folderSelectionGroups.length > 0 && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                Toggle by folder
+                            </div>
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexWrap: "wrap",
+                                    gap: 8,
+                                    maxHeight: 96,
+                                    overflowY: "auto",
+                                    paddingRight: 4,
+                                }}
+                            >
+                                {folderSelectionGroups.map((group) => {
+                                    const total = group.requestIds.length;
+                                    const selectedInGroup = group.requestIds.filter((id) =>
+                                        selectedSet.has(id)
+                                    ).length;
+                                    const allSelected = total > 0 && selectedInGroup === total;
+                                    const partiallySelected =
+                                        selectedInGroup > 0 && selectedInGroup < total;
+
+                                    return (
+                                        <button
+                                            key={group.folderId}
+                                            disabled={isRunning || total === 0}
+                                            onClick={() =>
+                                                onToggleFolderSelection(group.requestIds, !allSelected)
+                                            }
+                                            style={{
+                                                ...buttonStyle(isRunning || total === 0),
+                                                fontSize: 12,
+                                                borderColor: allSelected
+                                                    ? "var(--pg-primary)"
+                                                    : partiallySelected
+                                                        ? "var(--pg-primary-soft)"
+                                                        : "var(--pg-border)",
+                                                background: allSelected
+                                                    ? "rgba(var(--pg-primary-rgb), 0.12)"
+                                                    : "var(--pg-surface-1)",
+                                            }}
+                                            title={group.label}
+                                        >
+                                            {allSelected ? "☑" : partiallySelected ? "◪" : "☐"} {group.label} ({selectedInGroup}/{total})
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
 
                     {!hasRequests && (
                         <div style={{ color: "var(--pg-text-muted)", fontSize: 13 }}>
