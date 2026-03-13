@@ -2634,7 +2634,7 @@ export default function App() {
                                                     width: "100%",
                                                     textAlign: "left",
                                                     flexShrink: 0,
-                                                    cursor: draggedRequestId === row.nodeId ? "grabbing" : "grab",
+                                                    cursor: draggedRequestId === row.nodeId ? "grabbing" : "pointer",
                                                     userSelect: "none",
                                                     paddingLeft: 10,
                                                     opacity: missingRequest ? 0.75 : 1,
