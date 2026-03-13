@@ -884,13 +884,20 @@ function formatDuration(durationMs: number): string {
 function formatDateTime(value: string): string {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString();
+    return date.toUTCString();
 }
 
 function formatTime(value: string): string {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleTimeString();
+    const time = new Intl.DateTimeFormat("en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZone: "UTC",
+    }).format(date);
+    return `${time} GMT`;
 }
 
 function labelColStyle(): React.CSSProperties {
