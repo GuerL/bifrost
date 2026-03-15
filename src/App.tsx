@@ -3929,15 +3929,18 @@ export default function App() {
 function requestListItemStyle(active: boolean, hasLocalDraft: boolean): React.CSSProperties {
     return {
         ...buttonStyle(false),
+        height: 30,
+        padding: "0 10px",
         borderColor: active
             ? "var(--pg-primary)"
             : hasLocalDraft
                 ? "var(--pg-primary-soft)"
                 : "var(--pg-border)",
         background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
-        boxShadow: active ? "0 12px 24px rgba(var(--pg-primary-rgb), 0.35)" : "none",
+        boxShadow: active ? "0 8px 16px rgba(var(--pg-primary-rgb), 0.28)" : "none",
         color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
         fontWeight: active ? 700 : 500,
+        fontSize: 12,
     };
 }
 
@@ -4004,12 +4007,12 @@ function draftTabContainerStyle(active: boolean): React.CSSProperties {
     return {
         display: "flex",
         alignItems: "center",
-        borderRadius: 10,
+        borderRadius: 9,
         overflow: "hidden",
         border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
         background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
-        minWidth: 200,
-        boxShadow: active ? "0 12px 24px rgba(var(--pg-primary-rgb), 0.35)" : "none",
+        minWidth: 160,
+        boxShadow: active ? "0 8px 16px rgba(var(--pg-primary-rgb), 0.28)" : "none",
     };
 }
 
@@ -4018,8 +4021,10 @@ function draftTabButtonStyle(active: boolean): React.CSSProperties {
         border: "none",
         background: "transparent",
         color: active ? "var(--pg-primary-ink)" : "var(--pg-text-dim)",
-        padding: "8px 12px",
+        padding: "6px 10px",
         fontWeight: 600,
+        fontSize: 12,
+        lineHeight: 1.2,
         textAlign: "left",
         flex: 1,
         whiteSpace: "nowrap",
@@ -4032,8 +4037,8 @@ function draftTabButtonStyle(active: boolean): React.CSSProperties {
 
 function draftTabCloseButtonStyle(): React.CSSProperties {
     return {
-        width: 34,
-        height: 34,
+        width: 28,
+        height: 28,
         border: "none",
         borderLeft: "1px solid rgba(var(--pg-primary-rgb), 0.3)",
         background: "transparent",
@@ -4042,7 +4047,7 @@ function draftTabCloseButtonStyle(): React.CSSProperties {
         borderRadius: 0,
         boxShadow: "none",
         lineHeight: 1,
-        fontSize: 16,
+        fontSize: 14,
     };
 }
 
@@ -4052,8 +4057,8 @@ function openTabDropWrapStyle(dropBefore: boolean, dropAfter: boolean): React.CS
         display: "flex",
         alignItems: "stretch",
         borderRadius: 10,
-        paddingLeft: 2,
-        paddingRight: 2,
+        paddingLeft: 1,
+        paddingRight: 1,
         background: dropBefore || dropAfter ? "rgba(var(--pg-primary-rgb), 0.08)" : "transparent",
         flexShrink: 0,
     };
