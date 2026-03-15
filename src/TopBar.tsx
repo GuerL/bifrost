@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { CollectionMeta, Environment } from "./types.ts";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -37,13 +38,13 @@ type TopBarProps = {
 };
 
 export default function TopBar({
-                                   collections,
-                                   currentCollectionId,
-                                   environments,
-                                   currentEnvironmentId,
-                                   onSelectCollection,
-                                   onSelectEnvironment,
-                                   onManageCollections,
+    collections,
+    currentCollectionId,
+    environments,
+    currentEnvironmentId,
+    onSelectCollection,
+    onSelectEnvironment,
+    onManageCollections,
     onManageEnvironments,
     onSaveDraft,
     onOpenRawJson,
@@ -56,7 +57,40 @@ export default function TopBar({
     canOpenCollectionRunner,
     canExportCollection,
     isCollectionRunning,
-                               }: TopBarProps) {
+}: TopBarProps) {
+    const [isTransferMenuOpen, setIsTransferMenuOpen] = useState(false);
+    const transferMenuRef = useRef<HTMLDivElement | null>(null);
+
+    useEffect(() => {
+        if (!isTransferMenuOpen) {
+            return;
+        }
+
+        function onPointerDown(event: MouseEvent) {
+            if (!transferMenuRef.current) {
+                return;
+            }
+            if (event.target instanceof Node && transferMenuRef.current.contains(event.target)) {
+                return;
+            }
+            setIsTransferMenuOpen(false);
+        }
+
+        function onKeyDown(event: KeyboardEvent) {
+            if (event.key === "Escape") {
+                setIsTransferMenuOpen(false);
+            }
+        }
+
+        window.addEventListener("mousedown", onPointerDown);
+        window.addEventListener("keydown", onKeyDown);
+
+        return () => {
+            window.removeEventListener("mousedown", onPointerDown);
+            window.removeEventListener("keydown", onKeyDown);
+        };
+    }, [isTransferMenuOpen]);
+
     async function runWindowAction(action: "minimize" | "toggleMaximize" | "close") {
         try {
             const win = getCurrentWindow();
@@ -72,6 +106,36 @@ export default function TopBar({
         } catch (error) {
             console.error(`Window action failed: ${action}`, error);
         }
+    }
+
+    function runTransferAction(action: "importPostman" | "importPortable" | "exportPortable") {
+        setIsTransferMenuOpen(false);
+        if (action === "importPostman") {
+            onImportPostman();
+            return;
+        }
+        if (action === "importPortable") {
+            onImportPortable();
+            return;
+        }
+        if (!canExportCollection) {
+            return;
+        }
+        onExportPortable();
+    }
+
+    function transferMenuItemStyle(disabled = false) {
+        return {
+            width: "100%",
+            border: "none",
+            background: "transparent",
+            color: disabled ? "var(--pg-text-muted)" : "var(--pg-text)",
+            textAlign: "left" as const,
+            padding: "8px 10px",
+            borderRadius: 8,
+            cursor: disabled ? "not-allowed" : "pointer",
+            fontSize: 13,
+        };
     }
 
     return (
@@ -98,7 +162,6 @@ export default function TopBar({
                     minWidth: 0,
                 }}
             >
-
                 <select
                     value={currentCollectionId ?? ""}
                     onChange={(e) => onSelectCollection(e.target.value)}
@@ -124,8 +187,6 @@ export default function TopBar({
                         </option>
                     ))}
                 </select>
-
-
             </div>
 
             <div
@@ -171,19 +232,62 @@ export default function TopBar({
                 <button onClick={onManageEnvironments} style={buttonStyle(false)}>
                     Environments
                 </button>
-                <button onClick={onImportPostman} style={buttonStyle(false)}>
-                    Import Postman
-                </button>
-                <button onClick={onImportPortable} style={buttonStyle(false)}>
-                    Import Postguerl
-                </button>
-                <button
-                    onClick={onExportPortable}
-                    disabled={!canExportCollection}
-                    style={buttonStyle(!canExportCollection)}
-                >
-                    Export
-                </button>
+                <div ref={transferMenuRef} style={{ position: "relative" }}>
+                    <button
+                        onClick={() => setIsTransferMenuOpen((open) => !open)}
+                        style={buttonStyle(false)}
+                        aria-haspopup="menu"
+                        aria-expanded={isTransferMenuOpen}
+                    >
+                        Import/Export ▾
+                    </button>
+                    {isTransferMenuOpen && (
+                        <div
+                            role="menu"
+                            style={{
+                                position: "absolute",
+                                top: "calc(100% + 6px)",
+                                right: 0,
+                                minWidth: 190,
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 2,
+                                border: "1px solid var(--pg-border)",
+                                borderRadius: 10,
+                                padding: 6,
+                                background: "var(--pg-surface-0)",
+                                boxShadow: "0 8px 24px rgba(0, 0, 0, 0.2)",
+                                zIndex: 40,
+                            }}
+                        >
+                            <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => runTransferAction("importPostman")}
+                                style={transferMenuItemStyle()}
+                            >
+                                Import Postman
+                            </button>
+                            <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => runTransferAction("importPortable")}
+                                style={transferMenuItemStyle()}
+                            >
+                                Import Postguerl
+                            </button>
+                            <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => runTransferAction("exportPortable")}
+                                disabled={!canExportCollection}
+                                style={transferMenuItemStyle(!canExportCollection)}
+                            >
+                                Export Postguerl
+                            </button>
+                        </div>
+                    )}
+                </div>
                 <button
                     onClick={onSaveDraft}
                     disabled={!canSaveDraft}
