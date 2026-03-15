@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CollectionMeta, Environment } from "./types.ts";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import bifrostLogo from "./assets/bifrost_logo.svg";
 import {
     buttonStyle,
     primaryButtonStyle,
@@ -162,6 +163,36 @@ export default function TopBar({
                     minWidth: 0,
                 }}
             >
+                <div
+                    data-tauri-drag-region
+                    style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        marginRight: 2,
+                    }}
+                >
+                    <img
+                        src={bifrostLogo}
+                        alt="Bifrost logo"
+                        style={{
+                            width: 26,
+                            height: 26,
+                            objectFit: "contain",
+                            display: "block",
+                        }}
+                    />
+                    <span
+                        style={{
+                            fontSize: 14,
+                            fontWeight: 700,
+                            color: "var(--pg-text)",
+                            letterSpacing: 0.2,
+                        }}
+                    >
+                        Bifrost
+                    </span>
+                </div>
                 <select
                     value={currentCollectionId ?? ""}
                     onChange={(e) => onSelectCollection(e.target.value)}
