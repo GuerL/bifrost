@@ -981,6 +981,7 @@ function renderRunnerSelectionTreeNodes({
                     gridTemplateColumns: "18px 44px 64px minmax(0, 1fr)",
                     alignItems: "center",
                     gap: 10,
+                    paddingLeft : 10,
                     marginLeft: depth * RUNNER_TREE_INDENT_PX,
                     width: `calc(100% - ${depth * RUNNER_TREE_INDENT_PX}px)`,
                     border: "1px solid var(--pg-border)",
