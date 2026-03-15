@@ -13,7 +13,6 @@ import {
 import {
     buildSidebarRows,
     folderOptions,
-    requestIdsInTreeOrder,
     requestsInTreeOrder,
     type FolderOption,
     type SidebarTreeRow,
@@ -56,7 +55,6 @@ import type {
 import type {
     CollectionLoaded,
     CollectionMeta,
-    CollectionNode,
     Environment,
     HttpResponseDto,
     ImportPostmanResult,
@@ -128,12 +126,6 @@ type RequestScriptExecutionReport = {
     preRequestError: string | null;
     postResponseError: string | null;
     tests: ScriptTestResult[];
-};
-
-type RunnerFolderSelectionGroup = {
-    folderId: string;
-    label: string;
-    requestIds: string[];
 };
 
 const OPEN_TABS_STORAGE_KEY = "postguerl:open-tabs:v1";
@@ -334,26 +326,6 @@ function safeFileName(value: string): string {
         .toLowerCase();
 }
 
-function buildRunnerFolderSelectionGroups(
-    items: CollectionNode[],
-    path: string[] = []
-): RunnerFolderSelectionGroup[] {
-    const out: RunnerFolderSelectionGroup[] = [];
-
-    for (const item of items) {
-        if (item.type !== "folder") continue;
-        const nextPath = [...path, item.name];
-        out.push({
-            folderId: item.id,
-            label: nextPath.join(" / "),
-            requestIds: requestIdsInTreeOrder(item.children),
-        });
-        out.push(...buildRunnerFolderSelectionGroups(item.children, nextPath));
-    }
-
-    return out;
-}
-
 export default function App() {
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
@@ -536,11 +508,6 @@ export default function App() {
         if (!current) return [];
         return requestsInTreeOrder(current);
     }, [current]);
-
-    const runnerFolderSelectionGroups = useMemo<RunnerFolderSelectionGroup[]>(
-        () => (current ? buildRunnerFolderSelectionGroups(current.meta.items) : []),
-        [current?.meta.items]
-    );
 
     const openTabs = useMemo(() => {
         if (!current) return [];
@@ -3888,8 +3855,8 @@ export default function App() {
                 open={runnerModalOpen}
                 onClose={() => setRunnerModalOpen(false)}
                 collectionName={current?.meta.name ?? null}
+                collectionItems={current?.meta.items ?? []}
                 orderedRequests={orderedRequests}
-                folderSelectionGroups={runnerFolderSelectionGroups}
                 selectedRequestIds={runnerSelectedRequestIds}
                 runMode={runnerIterationMode}
                 iterations={runnerIterations}

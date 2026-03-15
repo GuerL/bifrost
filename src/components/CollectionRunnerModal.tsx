@@ -1,6 +1,6 @@
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { buttonStyle, dangerButtonStyle, primaryButtonStyle, selectStyle } from "../helpers/UiStyles.ts";
-import type { Request } from "../types.ts";
+import type { CollectionNode, Request } from "../types.ts";
 import { groupRunnerExecutionsForDisplay } from "../runner/grouping.ts";
 import { calculateRunnerAverages } from "../runner/stats.ts";
 import type {
@@ -14,26 +14,28 @@ type RunResultFilter = "all" | "failed" | "success";
 type RunnerPanelTab = "executions" | "averages";
 type RunnerMainTab = "setup" | "results";
 
-type RunnerFolderSelectionGroup = {
+type RunnerSelectionFolderNode = {
+    kind: "folder";
     folderId: string;
-    label: string;
+    name: string;
+    children: RunnerSelectionTreeNode[];
     requestIds: string[];
 };
 
-type RunnerFolderSelectionTreeNode = {
-    folderId: string;
-    name: string;
-    label: string;
-    requestIds: string[];
-    children: RunnerFolderSelectionTreeNode[];
+type RunnerSelectionRequestNode = {
+    kind: "request";
+    requestId: string;
+    request: Request | null;
 };
+
+type RunnerSelectionTreeNode = RunnerSelectionFolderNode | RunnerSelectionRequestNode;
 
 type CollectionRunnerModalProps = {
     open: boolean;
     onClose: () => void;
     collectionName: string | null;
+    collectionItems: CollectionNode[];
     orderedRequests: Request[];
-    folderSelectionGroups: RunnerFolderSelectionGroup[];
     selectedRequestIds: string[];
     runMode: RunnerIterationMode;
     iterations: number;
@@ -55,8 +57,8 @@ export default function CollectionRunnerModal({
     open,
     onClose,
     collectionName,
+    collectionItems,
     orderedRequests,
-    folderSelectionGroups,
     selectedRequestIds,
     runMode,
     iterations,
@@ -129,23 +131,21 @@ export default function CollectionRunnerModal({
         () => groupRunnerExecutionsForDisplay(visibleExecutions, run?.mode ?? runMode),
         [visibleExecutions, run?.mode, runMode]
     );
-    const folderSelectionTree = useMemo(
-        () => buildRunnerFolderSelectionTree(folderSelectionGroups),
-        [folderSelectionGroups]
+    const requestById = useMemo(
+        () => new Map(orderedRequests.map((request) => [request.id, request])),
+        [orderedRequests]
     );
-    const requestPathById = useMemo(() => {
-        const map = new Map<string, string>();
-        for (const group of folderSelectionGroups) {
-            const depth = group.label.split(" / ").length;
-            for (const requestId of group.requestIds) {
-                const previous = map.get(requestId);
-                if (!previous || depth >= previous.split(" / ").length) {
-                    map.set(requestId, group.label);
-                }
-            }
-        }
+    const requestOrderIndexById = useMemo(() => {
+        const map = new Map<string, number>();
+        orderedRequests.forEach((request, index) => {
+            map.set(request.id, index + 1);
+        });
         return map;
-    }, [folderSelectionGroups]);
+    }, [orderedRequests]);
+    const selectionTree = useMemo(
+        () => buildRunnerSelectionTree(collectionItems, requestById),
+        [collectionItems, requestById]
+    );
 
     if (!open) return null;
 
@@ -369,130 +369,29 @@ export default function CollectionRunnerModal({
                             {hasRequests && (
                                 <div
                                     style={{
-                                        display: "grid",
-                                        gridTemplateColumns: folderSelectionGroups.length > 0 ? "300px minmax(0, 1fr)" : "1fr",
-                                        gap: 10,
+                                        border: "1px solid var(--pg-border)",
+                                        borderRadius: 10,
+                                        background: "var(--pg-surface-1)",
+                                        overflowY: "auto",
+                                        padding: 8,
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        gap: 6,
                                         minHeight: 0,
                                         flex: 1,
                                     }}
                                 >
-                                    {folderSelectionGroups.length > 0 && (
-                                        <div
-                                            style={{
-                                                border: "1px solid var(--pg-border)",
-                                                borderRadius: 10,
-                                                background: "var(--pg-surface-1)",
-                                                padding: 8,
-                                                overflowY: "auto",
-                                            }}
-                                        >
-                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)", marginBottom: 8, fontWeight: 700 }}>
-                                                Folders
-                                            </div>
-                                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                                {renderFolderTreeNodes({
-                                                    nodes: folderSelectionTree,
-                                                    depth: 0,
-                                                    selectedSet,
-                                                    isRunning,
-                                                    expandedFolderTreeById,
-                                                    onToggleExpanded: toggleFolderTreeExpanded,
-                                                    onToggleFolderSelection,
-                                                })}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    <div
-                                        style={{
-                                            border: "1px solid var(--pg-border)",
-                                            borderRadius: 10,
-                                            background: "var(--pg-surface-1)",
-                                            overflowY: "auto",
-                                            padding: 8,
-                                            display: "flex",
-                                            flexDirection: "column",
-                                            gap: 6,
-                                        }}
-                                    >
-                                        {orderedRequests.map((request, index) => {
-                                            const selected = selectedSet.has(request.id);
-                                            const folderPath = requestPathById.get(request.id);
-                                            return (
-                                                <label
-                                                    key={request.id}
-                                                    style={{
-                                                        display: "grid",
-                                                        gridTemplateColumns: "20px 44px 68px minmax(0, 1fr)",
-                                                        alignItems: "center",
-                                                        gap: 10,
-                                                        border: "1px solid var(--pg-border)",
-                                                        borderRadius: 10,
-                                                        padding: "8px 10px",
-                                                        background: selected ? "rgba(var(--pg-primary-rgb), 0.1)" : "var(--pg-surface-0)",
-                                                        opacity: selected ? 1 : 0.8,
-                                                    }}
-                                                >
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={selected}
-                                                        disabled={isRunning}
-                                                        onChange={(event) =>
-                                                            onToggleRequestSelection(request.id, event.target.checked)
-                                                        }
-                                                        style={{
-                                                            width: 14,
-                                                            height: 14,
-                                                            accentColor: "var(--pg-primary)",
-                                                            cursor: isRunning ? "not-allowed" : "pointer",
-                                                        }}
-                                                    />
-                                                    <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
-                                                        #{index + 1}
-                                                    </span>
-                                                    <span
-                                                        style={{
-                                                            fontSize: 11,
-                                                            fontWeight: 700,
-                                                            color: "var(--pg-text)",
-                                                            border: "1px solid var(--pg-border)",
-                                                            borderRadius: 999,
-                                                            padding: "3px 8px",
-                                                            textAlign: "center",
-                                                            background: "var(--pg-surface-1)",
-                                                        }}
-                                                    >
-                                                        {request.method.toUpperCase()}
-                                                    </span>
-                                                    <div style={{ minWidth: 0 }}>
-                                                        <div
-                                                            style={{
-                                                                fontSize: 13,
-                                                                color: "var(--pg-text)",
-                                                                whiteSpace: "nowrap",
-                                                                overflow: "hidden",
-                                                                textOverflow: "ellipsis",
-                                                            }}
-                                                        >
-                                                            {request.name}
-                                                        </div>
-                                                        <div
-                                                            style={{
-                                                                marginTop: 2,
-                                                                fontSize: 11,
-                                                                color: "var(--pg-text-muted)",
-                                                                whiteSpace: "nowrap",
-                                                                overflow: "hidden",
-                                                                textOverflow: "ellipsis",
-                                                            }}
-                                                        >
-                                                            {folderPath ?? "Root"}
-                                                        </div>
-                                                    </div>
-                                                </label>
-                                            );
-                                        })}
-                                    </div>
+                                    {renderRunnerSelectionTreeNodes({
+                                        nodes: selectionTree,
+                                        depth: 0,
+                                        selectedSet,
+                                        isRunning,
+                                        expandedFolderTreeById,
+                                        requestOrderIndexById,
+                                        onToggleExpanded: toggleFolderTreeExpanded,
+                                        onToggleFolderSelection,
+                                        onToggleRequestSelection,
+                                    })}
                                 </div>
                             )}
                         </div>
@@ -906,151 +805,235 @@ function ExecutionRow({
     );
 }
 
-function buildRunnerFolderSelectionTree(
-    groups: RunnerFolderSelectionGroup[]
-): RunnerFolderSelectionTreeNode[] {
-    const roots: RunnerFolderSelectionTreeNode[] = [];
-    const byLabel = new Map<string, RunnerFolderSelectionTreeNode>();
-
-    for (const group of groups) {
-        const segments = group.label
-            .split(" / ")
-            .map((segment) => segment.trim())
-            .filter((segment) => segment.length > 0);
-        if (segments.length === 0) continue;
-
-        const parentLabel = segments.slice(0, -1).join(" / ");
-        const name = segments[segments.length - 1];
-        const node: RunnerFolderSelectionTreeNode = {
-            folderId: group.folderId,
-            name,
-            label: group.label,
-            requestIds: group.requestIds,
-            children: [],
-        };
-
-        if (!parentLabel) {
-            roots.push(node);
-        } else {
-            const parent = byLabel.get(parentLabel);
-            if (parent) {
-                parent.children.push(node);
-            } else {
-                roots.push(node);
+function buildRunnerSelectionTree(
+    items: CollectionNode[],
+    requestById: Map<string, Request>
+): RunnerSelectionTreeNode[] {
+    const toNodes = (nodes: CollectionNode[]): RunnerSelectionTreeNode[] =>
+        nodes.map((node) => {
+            if (node.type === "request_ref") {
+                return {
+                    kind: "request",
+                    requestId: node.request_id,
+                    request: requestById.get(node.request_id) ?? null,
+                };
             }
-        }
 
-        byLabel.set(group.label, node);
-    }
+            const children = toNodes(node.children);
+            const requestIds: string[] = [];
+            for (const child of children) {
+                if (child.kind === "request") {
+                    requestIds.push(child.requestId);
+                    continue;
+                }
+                requestIds.push(...child.requestIds);
+            }
 
-    return roots;
+            return {
+                kind: "folder",
+                folderId: node.id,
+                name: node.name,
+                children,
+                requestIds,
+            };
+        });
+
+    return toNodes(items);
 }
 
-function renderFolderTreeNodes({
+function renderRunnerSelectionTreeNodes({
     nodes,
     depth,
     selectedSet,
     isRunning,
     expandedFolderTreeById,
+    requestOrderIndexById,
     onToggleExpanded,
     onToggleFolderSelection,
+    onToggleRequestSelection,
 }: {
-    nodes: RunnerFolderSelectionTreeNode[];
+    nodes: RunnerSelectionTreeNode[];
     depth: number;
     selectedSet: Set<string>;
     isRunning: boolean;
     expandedFolderTreeById: Record<string, boolean>;
+    requestOrderIndexById: Map<string, number>;
     onToggleExpanded: (folderId: string) => void;
     onToggleFolderSelection: (requestIds: string[], selected: boolean) => void;
+    onToggleRequestSelection: (requestId: string, selected: boolean) => void;
 }): ReactElement[] {
     const out: ReactElement[] = [];
 
     for (const node of nodes) {
-        const total = node.requestIds.length;
-        const selectedInGroup = node.requestIds.filter((id) => selectedSet.has(id)).length;
-        const allSelected = total > 0 && selectedInGroup === total;
-        const partiallySelected = selectedInGroup > 0 && selectedInGroup < total;
-        const hasChildren = node.children.length > 0;
-        const expanded = expandedFolderTreeById[node.folderId] ?? true;
+        if (node.kind === "folder") {
+            const total = node.requestIds.length;
+            const selectedInGroup = node.requestIds.filter((id) => selectedSet.has(id)).length;
+            const allSelected = total > 0 && selectedInGroup === total;
+            const partiallySelected = selectedInGroup > 0 && selectedInGroup < total;
+            const expanded = expandedFolderTreeById[node.folderId] ?? true;
 
-        out.push(
-            <div key={node.folderId} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <div
-                    style={{
-                        display: "grid",
-                        gridTemplateColumns: "18px minmax(0, 1fr)",
-                        alignItems: "center",
-                        gap: 6,
-                        paddingLeft: depth * 14,
-                    }}
-                >
-                    <button
-                        onClick={() => hasChildren && onToggleExpanded(node.folderId)}
+            out.push(
+                <div key={node.folderId} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div
                         style={{
-                            border: "none",
-                            background: "transparent",
-                            color: "var(--pg-text-muted)",
-                            cursor: hasChildren ? "pointer" : "default",
-                            padding: 0,
-                            fontSize: 12,
-                            width: 16,
-                            height: 16,
                             display: "grid",
-                            placeItems: "center",
-                            opacity: hasChildren ? 1 : 0.35,
+                            gridTemplateColumns: "18px minmax(0, 1fr) auto",
+                            alignItems: "center",
+                            gap: 8,
+                            paddingLeft: depth * 14,
                         }}
-                        disabled={!hasChildren}
                     >
-                        {hasChildren ? (expanded ? "▾" : "▸") : "•"}
-                    </button>
-                    <button
-                        disabled={isRunning || total === 0}
-                        onClick={() => onToggleFolderSelection(node.requestIds, !allSelected)}
-                        style={{
-                            ...buttonStyle(isRunning || total === 0),
-                            fontSize: 12,
-                            justifyContent: "space-between",
-                            borderColor: allSelected
-                                ? "var(--pg-primary)"
-                                : partiallySelected
-                                    ? "var(--pg-primary-soft)"
-                                    : "var(--pg-border)",
-                            background: allSelected
-                                ? "rgba(var(--pg-primary-rgb), 0.12)"
-                                : "var(--pg-surface-0)",
-                        }}
-                        title={node.label}
-                    >
-                        <span
-                            style={{
-                                minWidth: 0,
-                                textAlign: "left",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
+                        <input
+                            type="checkbox"
+                            checked={allSelected}
+                            disabled={isRunning || total === 0}
+                            onChange={(event) =>
+                                onToggleFolderSelection(node.requestIds, event.target.checked)
+                            }
+                            ref={(input) => {
+                                if (!input) return;
+                                input.indeterminate = partiallySelected && !allSelected;
                             }}
+                            style={{
+                                width: 14,
+                                height: 14,
+                                accentColor: "var(--pg-primary)",
+                                cursor: isRunning || total === 0 ? "not-allowed" : "pointer",
+                            }}
+                            title={`Select folder ${node.name}`}
+                        />
+
+                        <button
+                            onClick={() => onToggleExpanded(node.folderId)}
+                            style={{
+                                border: "1px solid var(--pg-border)",
+                                borderRadius: 8,
+                                background: expanded
+                                    ? "rgba(var(--pg-primary-rgb), 0.08)"
+                                    : "var(--pg-surface-0)",
+                                color: "var(--pg-text)",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                width: "100%",
+                                minWidth: 0,
+                                cursor: "pointer",
+                                padding: "6px 8px",
+                                boxShadow: "none",
+                                fontSize: 12,
+                                textAlign: "left",
+                            }}
+                            title={node.name}
                         >
-                            {allSelected ? "☑" : partiallySelected ? "◪" : "☐"} {node.name}
-                        </span>
-                        <span style={{ fontSize: 11, color: "var(--pg-text-muted)" }}>
+                            <span style={{ color: "var(--pg-text-muted)", width: 10, textAlign: "center" }}>
+                                {expanded ? "▾" : "▸"}
+                            </span>
+                            <span
+                                style={{
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                    minWidth: 0,
+                                    flex: 1,
+                                }}
+                            >
+                                {node.name}
+                            </span>
+                        </button>
+
+                        <span style={{ fontSize: 11, color: "var(--pg-text-muted)", fontWeight: 700 }}>
                             {selectedInGroup}/{total}
                         </span>
-                    </button>
-                </div>
-                {hasChildren && expanded && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        {renderFolderTreeNodes({
-                            nodes: node.children,
-                            depth: depth + 1,
-                            selectedSet,
-                            isRunning,
-                            expandedFolderTreeById,
-                            onToggleExpanded,
-                            onToggleFolderSelection,
-                        })}
                     </div>
-                )}
-            </div>
+
+                    {expanded && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            {renderRunnerSelectionTreeNodes({
+                                nodes: node.children,
+                                depth: depth + 1,
+                                selectedSet,
+                                isRunning,
+                                expandedFolderTreeById,
+                                requestOrderIndexById,
+                                onToggleExpanded,
+                                onToggleFolderSelection,
+                                onToggleRequestSelection,
+                            })}
+                        </div>
+                    )}
+                </div>
+            );
+            continue;
+        }
+
+        const selected = selectedSet.has(node.requestId);
+        const request = node.request;
+        const requestNumber = requestOrderIndexById.get(node.requestId);
+        const disabled = isRunning || !request;
+
+        out.push(
+            <label
+                key={node.requestId}
+                style={{
+                    display: "grid",
+                    gridTemplateColumns: "18px 44px 64px minmax(0, 1fr)",
+                    alignItems: "center",
+                    gap: 10,
+                    paddingLeft: depth * 14,
+                    border: "1px solid var(--pg-border)",
+                    borderRadius: 10,
+                    paddingTop: 7,
+                    paddingBottom: 7,
+                    paddingRight: 10,
+                    background: selected
+                        ? "rgba(var(--pg-primary-rgb), 0.12)"
+                        : "var(--pg-surface-0)",
+                    opacity: selected ? 1 : 0.85,
+                }}
+            >
+                <input
+                    type="checkbox"
+                    checked={selected}
+                    disabled={disabled}
+                    onChange={(event) => onToggleRequestSelection(node.requestId, event.target.checked)}
+                    style={{
+                        width: 14,
+                        height: 14,
+                        accentColor: "var(--pg-primary)",
+                        cursor: disabled ? "not-allowed" : "pointer",
+                    }}
+                />
+                <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
+                    #{requestNumber ?? "?"}
+                </span>
+                <span
+                    style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: request ? "var(--pg-text)" : "var(--pg-text-muted)",
+                        border: "1px solid var(--pg-border)",
+                        borderRadius: 999,
+                        padding: "3px 8px",
+                        textAlign: "center",
+                        background: "var(--pg-surface-1)",
+                    }}
+                >
+                    {request ? request.method.toUpperCase() : "MISSING"}
+                </span>
+                <span
+                    style={{
+                        minWidth: 0,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        fontSize: 13,
+                        color: request ? "var(--pg-text)" : "var(--pg-danger)",
+                    }}
+                    title={request?.name ?? `Missing request (${node.requestId})`}
+                >
+                    {request?.name ?? `Missing request (${node.requestId})`}
+                </span>
+            </label>
         );
     }
 
