@@ -48,7 +48,7 @@ pub fn export_collection_portable_json_impl(
         .as_millis();
 
     let portable = PortableCollectionExportDto {
-        format: "postguerl_portable".to_string(),
+        format: "bifrost_portable".to_string(),
         version: 1,
         exported_at_unix_ms,
         collection: loaded.meta,
@@ -79,8 +79,8 @@ pub fn import_collection_portable_from_json_impl(
         .map_err(|error| format!("Invalid portable JSON: {}", error))?;
 
     let mut warnings = vec![];
-    if imported.format.trim() != "postguerl_portable" {
-        return Err("Invalid portable file format. Expected 'postguerl_portable'.".to_string());
+    if imported.format.trim() != "bifrost_portable" {
+        return Err("Invalid portable file format. Expected 'bifrost_portable'.".to_string());
     }
     if imported.version != 1 {
         warnings.push(format!(

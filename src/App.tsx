@@ -128,8 +128,8 @@ type RequestScriptExecutionReport = {
     tests: ScriptTestResult[];
 };
 
-const OPEN_TABS_STORAGE_KEY = "postguerl:open-tabs:v1";
-const RESPONSES_STORAGE_KEY = "postguerl:last-responses:v1";
+const OPEN_TABS_STORAGE_KEY = "bifrost:open-tabs:v1";
+const RESPONSES_STORAGE_KEY = "bifrost:last-responses:v1";
 const DYNAMIC_VARIABLE_NAMES = [
     "$timestamp",
     "$timestampSeconds",
@@ -2289,7 +2289,7 @@ export default function App() {
         if (!file) return;
 
         try {
-            setStatus(`Importing Postguerl portable file: ${file.name}...`);
+            setStatus(`Importing Bifrost portable file: ${file.name}...`);
             const jsonText = await file.text();
             const imported = await invoke<ImportPortableResult>(
                 "import_collection_portable_from_json",
@@ -2318,13 +2318,13 @@ export default function App() {
 
         try {
             const appDataDir = await invoke<string>("app_data_dir");
-            const suggestedFilePath = `${appDataDir}/${safeFileName(current.meta.name)}.postguerl.portable.json`;
+            const suggestedFilePath = `${appDataDir}/${safeFileName(current.meta.name)}.bifrost.portable.json`;
             const userPath = await invoke<string | null>("plugin:dialog|save", {
                 options: {
                     defaultPath: suggestedFilePath,
                     filters: [
                         {
-                            name: "Postguerl Portable JSON",
+                            name: "Bifrost Portable JSON",
                             extensions: ["json"],
                         },
                     ],
@@ -3373,8 +3373,8 @@ export default function App() {
                                             key={`request-json-${selectedRequestId ?? "none"}`}
                                             height="100%"
                                             language="json"
-                                            path={`/postguerl-dev/${selectedRequestId ?? "none"}.json`}
-                                            theme="postguerl-midnight"
+                                            path={`/bifrost-dev/${selectedRequestId ?? "none"}.json`}
+                                            theme="bifrost-midnight"
                                             beforeMount={beforeMountMonaco}
                                             defaultValue={editorText}
                                             onMount={(editor) => {

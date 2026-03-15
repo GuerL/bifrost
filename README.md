@@ -1,6 +1,6 @@
-# Postguerl
+# Bifrost
 
-Postguerl est un client HTTP desktop inspiré de Postman, construit avec **Tauri**, **React**, **TypeScript** et **Rust**.
+Bifrost est un client HTTP desktop inspiré de Postman, construit avec **Tauri**, **React**, **TypeScript** et **Rust**.
 
 L'objectif est de fournir un outil rapide et local pour tester des APIs avec :
 

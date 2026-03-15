@@ -77,8 +77,8 @@ pg.environment.set("accessToken", response?.token ?? "");`}
                             key={`script-${showingPre ? "pre" : "post"}-${selectedRequestId ?? "none"}`}
                             height="100%"
                             language="javascript"
-                            path={`/postguerl-script/${selectedRequestId ?? "none"}.${showingPre ? "pre" : "post"}.js`}
-                            theme="postguerl-midnight"
+                            path={`/bifrost-script/${selectedRequestId ?? "none"}.${showingPre ? "pre" : "post"}.js`}
+                            theme="bifrost-midnight"
                             beforeMount={beforeMountMonaco}
                             value={showingPre ? scripts.pre_request : scripts.post_response}
                             onChange={(value) =>

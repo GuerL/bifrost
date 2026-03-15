@@ -305,7 +305,7 @@ export default function TopBar({
                                 onClick={() => runTransferAction("importPortable")}
                                 style={transferMenuItemStyle()}
                             >
-                                Import Postguerl
+                                Import Bifrost
                             </button>
                             <button
                                 type="button"
@@ -314,7 +314,7 @@ export default function TopBar({
                                 disabled={!canExportCollection}
                                 style={transferMenuItemStyle(!canExportCollection)}
                             >
-                                Export Postguerl
+                                Export Bifrost
                             </button>
                         </div>
                     )}

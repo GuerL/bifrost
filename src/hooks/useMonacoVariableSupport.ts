@@ -3,8 +3,8 @@ import type { BeforeMount } from "@monaco-editor/react";
 import type * as MonacoApi from "monaco-editor";
 
 const TEMPLATE_VARIABLE_PATTERN = /{{\s*([^{}]+?)\s*}}/g;
-const BODY_MODEL_PATH_SEGMENT = "/postguerl-body/";
-const SCRIPT_MODEL_PATH_SEGMENT = "/postguerl-script/";
+const BODY_MODEL_PATH_SEGMENT = "/bifrost-body/";
+const SCRIPT_MODEL_PATH_SEGMENT = "/bifrost-script/";
 
 type TemplateVariableMatch = {
     name: string;
@@ -188,7 +188,7 @@ export function useMonacoVariableSupport({
     );
 
     const beforeMountMonaco = useCallback<BeforeMount>((monaco) => {
-        monaco.editor.defineTheme("postguerl-midnight", {
+        monaco.editor.defineTheme("bifrost-midnight", {
             base: "vs-dark",
             inherit: true,
             rules: [
@@ -258,11 +258,11 @@ declare const pg: {
 };`;
         monaco.languages.typescript.javascriptDefaults.addExtraLib(
             scriptApiDts,
-            "file:///postguerl/pg-scripting.d.ts"
+            "file:///bifrost/pg-scripting.d.ts"
         );
         monaco.languages.typescript.typescriptDefaults.addExtraLib(
             scriptApiDts,
-            "file:///postguerl/pg-scripting.d.ts"
+            "file:///bifrost/pg-scripting.d.ts"
         );
 
         const languagesWithTemplateSupport = [

@@ -4,7 +4,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "postguerl",
+        "title": "Bifrost",
         "decorations": false,
         "shadow": true,
         "height": 800,

@@ -1,6 +1,6 @@
 import type { RunnerRun } from "./types.ts";
 
-const RUNNER_RUNS_STORAGE_KEY = "postguerl:runner-runs:v1";
+const RUNNER_RUNS_STORAGE_KEY = "bifrost:runner-runs:v1";
 
 type RunnerRunsState = Record<string, RunnerRun>;
 

@@ -153,8 +153,8 @@ export default function RequestBodyEditor({
                             key={`body-json-${selectedRequestId ?? "none"}`}
                             height="100%"
                             language="json"
-                            path={`/postguerl-body/${selectedRequestId ?? "none"}.json`}
-                            theme="postguerl-midnight"
+                            path={`/bifrost-body/${selectedRequestId ?? "none"}.json`}
+                            theme="bifrost-midnight"
                             beforeMount={beforeMountMonaco}
                             onMount={onMountBodyJsonEditor}
                             defaultValue={
@@ -213,8 +213,8 @@ export default function RequestBodyEditor({
                                 key={`body-raw-${selectedRequestId ?? "none"}`}
                                 height="100%"
                                 language={languageFromContentType(rawBody.content_type)}
-                                path={`/postguerl-body/${selectedRequestId ?? "none"}.raw`}
-                                theme="postguerl-midnight"
+                                path={`/bifrost-body/${selectedRequestId ?? "none"}.raw`}
+                                theme="bifrost-midnight"
                                 beforeMount={beforeMountMonaco}
                                 onMount={onMountBodyRawEditor}
                                 defaultValue={rawBody.text}
