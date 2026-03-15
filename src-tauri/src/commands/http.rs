@@ -326,14 +326,16 @@ fn apply_auth_to_request(req: &mut Request) {
 
 pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpErrorDto> {
     apply_auth_to_request(&mut req);
+    const REQUEST_TIMEOUT_SECONDS: u64 = 120;
 
     // 1) validate URL early
     let url = reqwest::Url::parse(&req.url)
         .map_err(|e| err("invalid_url", "Invalid URL", Some(e.to_string()), None))?;
 
-    // 2) client with timeout
+    // 2) client with explicit 60s timeout budget
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(59998)) // max 1 minute (timeout is handled in JS; this just avoids reqwest automatic timeouts)
+        .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
+        .connect_timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
         .build()
         .map_err(|e| {
             err(
