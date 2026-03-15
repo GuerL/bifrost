@@ -61,6 +61,7 @@ export default function TopBar({
 }: TopBarProps) {
     const [isTransferMenuOpen, setIsTransferMenuOpen] = useState(false);
     const transferMenuRef = useRef<HTMLDivElement | null>(null);
+    const saveDraftShortcutLabel = isMacOS ? "CMD + S" : "CTRL + S";
 
     useEffect(() => {
         if (!isTransferMenuOpen) {
@@ -323,6 +324,7 @@ export default function TopBar({
                     onClick={onSaveDraft}
                     disabled={!canSaveDraft}
                     style={primaryButtonStyle(!canSaveDraft)}
+                    title={`Save draft (${saveDraftShortcutLabel})`}
                 >
                     Save draft
                 </button>

@@ -130,6 +130,17 @@ type RequestScriptExecutionReport = {
 
 const OPEN_TABS_STORAGE_KEY = "bifrost:open-tabs:v1";
 const RESPONSES_STORAGE_KEY = "bifrost:last-responses:v1";
+const IS_MACOS =
+    typeof navigator !== "undefined" &&
+    /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
+const PRIMARY_SHORTCUT_MODIFIER = IS_MACOS ? "CMD" : "CTRL";
+const SHORTCUT_LABELS = {
+    saveDraft: `${PRIMARY_SHORTCUT_MODIFIER} + S`,
+    newRequest: `${PRIMARY_SHORTCUT_MODIFIER} + T`,
+    duplicateRequest: `${PRIMARY_SHORTCUT_MODIFIER} + D`,
+    closeTab: `${PRIMARY_SHORTCUT_MODIFIER} + W`,
+    renameRequest: `${PRIMARY_SHORTCUT_MODIFIER} + E`,
+} as const;
 const DYNAMIC_VARIABLE_NAMES = [
     "$timestamp",
     "$timestampSeconds",
@@ -3033,7 +3044,7 @@ export default function App() {
                                                 requestCloseTab(openTab.requestId)
                                             }
                                             style={draftTabCloseButtonStyle()}
-                                            title="Close draft tab"
+                                            title={`Close tab (${SHORTCUT_LABELS.closeTab})`}
                                         >
                                             ×
                                         </button>
@@ -3463,8 +3474,28 @@ export default function App() {
                                 setRootAddMenu(null);
                                 onNewRequest(null);
                             }}
+                            title={`Add request (${SHORTCUT_LABELS.newRequest})`}
                         >
-                            Add request
+                            <span
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    gap: 12,
+                                    width: "100%",
+                                }}
+                            >
+                                <span>Add request</span>
+                                <span
+                                    style={{
+                                        fontSize: 11,
+                                        color: "var(--pg-text-muted)",
+                                        fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
+                                    }}
+                                >
+                                    {SHORTCUT_LABELS.newRequest}
+                                </span>
+                            </span>
                         </button>
                         <button
                             style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
@@ -3508,8 +3539,34 @@ export default function App() {
                         <button
                             style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
                             onClick={() => openRenameModal(contextMenu.row)}
+                            title={
+                                contextMenu.row.kind === "request"
+                                    ? `Rename (${SHORTCUT_LABELS.renameRequest})`
+                                    : "Rename"
+                            }
                         >
-                            Rename
+                            <span
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    gap: 12,
+                                    width: "100%",
+                                }}
+                            >
+                                <span>Rename</span>
+                                {contextMenu.row.kind === "request" && (
+                                    <span
+                                        style={{
+                                            fontSize: 11,
+                                            color: "var(--pg-text-muted)",
+                                            fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
+                                        }}
+                                    >
+                                        {SHORTCUT_LABELS.renameRequest}
+                                    </span>
+                                )}
+                            </span>
                         </button>
 
                         {contextMenu.row.kind === "request" && (
@@ -3520,8 +3577,28 @@ export default function App() {
                                     setContextMenu(null);
                                     onDuplicateRequest(row.requestId, row.parentFolderId);
                                 }}
+                                title={`Duplicate (${SHORTCUT_LABELS.duplicateRequest})`}
                             >
-                                Duplicate
+                                <span
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "space-between",
+                                        gap: 12,
+                                        width: "100%",
+                                    }}
+                                >
+                                    <span>Duplicate</span>
+                                    <span
+                                        style={{
+                                            fontSize: 11,
+                                            color: "var(--pg-text-muted)",
+                                            fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
+                                        }}
+                                    >
+                                        {SHORTCUT_LABELS.duplicateRequest}
+                                    </span>
+                                </span>
                             </button>
                         )}
 
