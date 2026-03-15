@@ -79,8 +79,7 @@ export default function EnvironmentsModal({
                         style={{
                             width: "100%",
                             maxWidth: 900,
-                            height: "78vh",
-                            maxHeight: 700,
+                            height: "70vh",
                             border: "1px solid var(--pg-border)",
                             borderRadius: 12,
                             background: "var(--pg-surface-1)",

@@ -81,7 +81,7 @@ export default function CollectionsModal({
                         style={{
                             width: "100%",
                             maxWidth: 880,
-                            maxHeight: "82vh",
+                            height: "70vh",
                             border: "1px solid var(--pg-border)",
                             borderRadius: 12,
                             background: "var(--pg-surface-1)",
@@ -108,7 +108,9 @@ export default function CollectionsModal({
                                 display: "grid",
                                 gridTemplateColumns: "minmax(260px, 320px) minmax(0, 1fr)",
                                 gap: 10,
+                                flex: 1,
                                 minHeight: 0,
+                                overflow: "hidden",
                             }}
                         >
                             <section
@@ -121,6 +123,7 @@ export default function CollectionsModal({
                                     flexDirection: "column",
                                     gap: 8,
                                     minHeight: 0,
+                                    overflow: "hidden",
                                 }}
                             >
                                 <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
@@ -141,8 +144,8 @@ export default function CollectionsModal({
 
                                 <div
                                     style={{
-                                        minHeight: 160,
-                                        maxHeight: "52vh",
+                                        minHeight: 0,
+                                        flex: 1,
                                         overflowY: "auto",
                                         paddingRight: 2,
                                         display: "flex",
