@@ -88,7 +88,7 @@ button,
 textarea {
   border-radius: 10px;
   border: 1px solid var(--pg-border);
-  padding: 0.55em 0.85em;
+  padding: 5px 10px;
   font-size: 0.92em;
   font-weight: 500;
   font-family: inherit;
@@ -97,6 +97,10 @@ textarea {
   transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
   box-shadow: 0 8px 20px rgba(2, 6, 23, 0.2);
   outline: none;
+}
+
+select{
+  height: 30px;
 }
 
 button {
