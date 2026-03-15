@@ -374,6 +374,7 @@ export default function CollectionRunnerModal({
                                         borderRadius: 10,
                                         background: "var(--pg-surface-1)",
                                         overflowY: "auto",
+                                        overflowX: "hidden",
                                         padding: 8,
                                         display: "flex",
                                         flexDirection: "column",
@@ -877,75 +878,82 @@ function renderRunnerSelectionTreeNodes({
                 <div key={node.folderId} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <div
                         style={{
-                            display: "grid",
-                            gridTemplateColumns: "18px minmax(0, 1fr) auto",
-                            alignItems: "center",
-                            gap: 8,
-                            marginLeft: depth * RUNNER_TREE_INDENT_PX,
-                            width: `calc(100% - ${depth * RUNNER_TREE_INDENT_PX}px)`,
+                            paddingLeft: depth * RUNNER_TREE_INDENT_PX,
+                            minWidth: 0,
+                            boxSizing: "border-box",
                         }}
                     >
-                        <input
-                            type="checkbox"
-                            checked={allSelected}
-                            disabled={isRunning || total === 0}
-                            onChange={(event) =>
-                                onToggleFolderSelection(node.requestIds, event.target.checked)
-                            }
-                            ref={(input) => {
-                                if (!input) return;
-                                input.indeterminate = partiallySelected && !allSelected;
-                            }}
+                        <div
                             style={{
-                                width: 14,
-                                height: 14,
-                                accentColor: "var(--pg-primary)",
-                                cursor: isRunning || total === 0 ? "not-allowed" : "pointer",
-                            }}
-                            title={`Select folder ${node.name}`}
-                        />
-
-                        <button
-                            onClick={() => onToggleExpanded(node.folderId)}
-                            style={{
-                                border: "1px solid var(--pg-border)",
-                                borderRadius: 8,
-                                background: expanded
-                                    ? "rgba(var(--pg-primary-rgb), 0.08)"
-                                    : "var(--pg-surface-0)",
-                                color: "var(--pg-text)",
-                                display: "flex",
+                                display: "grid",
+                                gridTemplateColumns: "18px minmax(0, 1fr) auto",
                                 alignItems: "center",
                                 gap: 8,
-                                width: "100%",
                                 minWidth: 0,
-                                cursor: "pointer",
-                                padding: "6px 8px",
-                                boxShadow: "none",
-                                fontSize: 12,
-                                textAlign: "left",
                             }}
-                            title={node.name}
                         >
-                            <span style={{ color: "var(--pg-text-muted)", width: 10, textAlign: "center" }}>
-                                {expanded ? "▾" : "▸"}
-                            </span>
-                            <span
-                                style={{
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap",
-                                    minWidth: 0,
-                                    flex: 1,
+                            <input
+                                type="checkbox"
+                                checked={allSelected}
+                                disabled={isRunning || total === 0}
+                                onChange={(event) =>
+                                    onToggleFolderSelection(node.requestIds, event.target.checked)
+                                }
+                                ref={(input) => {
+                                    if (!input) return;
+                                    input.indeterminate = partiallySelected && !allSelected;
                                 }}
-                            >
-                                {node.name}
-                            </span>
-                        </button>
+                                style={{
+                                    width: 14,
+                                    height: 14,
+                                    accentColor: "var(--pg-primary)",
+                                    cursor: isRunning || total === 0 ? "not-allowed" : "pointer",
+                                }}
+                                title={`Select folder ${node.name}`}
+                            />
 
-                        <span style={{ fontSize: 11, color: "var(--pg-text-muted)", fontWeight: 700 }}>
-                            {selectedInGroup}/{total}
-                        </span>
+                            <button
+                                onClick={() => onToggleExpanded(node.folderId)}
+                                style={{
+                                    border: "1px solid var(--pg-border)",
+                                    borderRadius: 8,
+                                    background: expanded
+                                        ? "rgba(var(--pg-primary-rgb), 0.08)"
+                                        : "var(--pg-surface-0)",
+                                    color: "var(--pg-text)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    width: "100%",
+                                    minWidth: 0,
+                                    cursor: "pointer",
+                                    padding: "6px 8px",
+                                    boxShadow: "none",
+                                    fontSize: 12,
+                                    textAlign: "left",
+                                }}
+                                title={node.name}
+                            >
+                                <span style={{ color: "var(--pg-text-muted)", width: 10, textAlign: "center" }}>
+                                    {expanded ? "▾" : "▸"}
+                                </span>
+                                <span
+                                    style={{
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                        minWidth: 0,
+                                        flex: 1,
+                                    }}
+                                >
+                                    {node.name}
+                                </span>
+                            </button>
+
+                            <span style={{ fontSize: 11, color: "var(--pg-text-muted)", fontWeight: 700 }}>
+                                {selectedInGroup}/{total}
+                            </span>
+                        </div>
                     </div>
 
                     {expanded && (
@@ -974,70 +982,79 @@ function renderRunnerSelectionTreeNodes({
         const disabled = isRunning || !request;
 
         out.push(
-            <label
+            <div
                 key={node.requestId}
                 style={{
-                    display: "grid",
-                    gridTemplateColumns: "18px 44px 64px minmax(0, 1fr)",
-                    alignItems: "center",
-                    gap: 10,
-                    paddingLeft : 10,
-                    marginLeft: depth * RUNNER_TREE_INDENT_PX,
-                    width: `calc(100% - ${depth * RUNNER_TREE_INDENT_PX}px)`,
-                    border: "1px solid var(--pg-border)",
-                    borderRadius: 10,
-                    paddingTop: 7,
-                    paddingBottom: 7,
-                    paddingRight: 10,
-                    background: selected
-                        ? "rgba(var(--pg-primary-rgb), 0.12)"
-                        : "var(--pg-surface-0)",
-                    opacity: selected ? 1 : 0.85,
+                    paddingLeft: depth * RUNNER_TREE_INDENT_PX,
+                    minWidth: 0,
+                    boxSizing: "border-box",
                 }}
             >
-                <input
-                    type="checkbox"
-                    checked={selected}
-                    disabled={disabled}
-                    onChange={(event) => onToggleRequestSelection(node.requestId, event.target.checked)}
+                <label
                     style={{
-                        width: 14,
-                        height: 14,
-                        accentColor: "var(--pg-primary)",
-                        cursor: disabled ? "not-allowed" : "pointer",
-                    }}
-                />
-                <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
-                    #{requestNumber ?? "?"}
-                </span>
-                <span
-                    style={{
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: request ? "var(--pg-text)" : "var(--pg-text-muted)",
-                        border: "1px solid var(--pg-border)",
-                        borderRadius: 999,
-                        padding: "3px 8px",
-                        textAlign: "center",
-                        background: "var(--pg-surface-1)",
-                    }}
-                >
-                    {request ? request.method.toUpperCase() : "MISSING"}
-                </span>
-                <span
-                    style={{
+                        display: "grid",
+                        gridTemplateColumns: "18px 38px minmax(52px, auto) minmax(0, 1fr)",
+                        alignItems: "center",
+                        gap: 10,
+                        width: "100%",
                         minWidth: 0,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        fontSize: 13,
-                        color: request ? "var(--pg-text)" : "var(--pg-danger)",
+                        boxSizing: "border-box",
+                        border: "1px solid var(--pg-border)",
+                        borderRadius: 10,
+                        paddingTop: 7,
+                        paddingBottom: 7,
+                        paddingLeft: 10,
+                        paddingRight: 10,
+                        background: selected
+                            ? "rgba(var(--pg-primary-rgb), 0.12)"
+                            : "var(--pg-surface-0)",
+                        opacity: selected ? 1 : 0.85,
                     }}
-                    title={request?.name ?? `Missing request (${node.requestId})`}
                 >
-                    {request?.name ?? `Missing request (${node.requestId})`}
-                </span>
-            </label>
+                    <input
+                        type="checkbox"
+                        checked={selected}
+                        disabled={disabled}
+                        onChange={(event) => onToggleRequestSelection(node.requestId, event.target.checked)}
+                        style={{
+                            width: 14,
+                            height: 14,
+                            accentColor: "var(--pg-primary)",
+                            cursor: disabled ? "not-allowed" : "pointer",
+                        }}
+                    />
+                    <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
+                        #{requestNumber ?? "?"}
+                    </span>
+                    <span
+                        style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: request ? "var(--pg-text)" : "var(--pg-text-muted)",
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 999,
+                            padding: "3px 8px",
+                            textAlign: "center",
+                            background: "var(--pg-surface-1)",
+                        }}
+                    >
+                        {request ? request.method.toUpperCase() : "MISSING"}
+                    </span>
+                    <span
+                        style={{
+                            minWidth: 0,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            fontSize: 13,
+                            color: request ? "var(--pg-text)" : "var(--pg-danger)",
+                        }}
+                        title={request?.name ?? `Missing request (${node.requestId})`}
+                    >
+                        {request?.name ?? `Missing request (${node.requestId})`}
+                    </span>
+                </label>
+            </div>
         );
     }
 
