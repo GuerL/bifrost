@@ -29,6 +29,7 @@ type RunnerSelectionRequestNode = {
 };
 
 type RunnerSelectionTreeNode = RunnerSelectionFolderNode | RunnerSelectionRequestNode;
+const RUNNER_TREE_INDENT_PX = 24;
 
 type CollectionRunnerModalProps = {
     open: boolean;
@@ -880,7 +881,8 @@ function renderRunnerSelectionTreeNodes({
                             gridTemplateColumns: "18px minmax(0, 1fr) auto",
                             alignItems: "center",
                             gap: 8,
-                            paddingLeft: depth * 14,
+                            marginLeft: depth * RUNNER_TREE_INDENT_PX,
+                            width: `calc(100% - ${depth * RUNNER_TREE_INDENT_PX}px)`,
                         }}
                     >
                         <input
@@ -979,7 +981,8 @@ function renderRunnerSelectionTreeNodes({
                     gridTemplateColumns: "18px 44px 64px minmax(0, 1fr)",
                     alignItems: "center",
                     gap: 10,
-                    paddingLeft: depth * 14,
+                    marginLeft: depth * RUNNER_TREE_INDENT_PX,
+                    width: `calc(100% - ${depth * RUNNER_TREE_INDENT_PX}px)`,
                     border: "1px solid var(--pg-border)",
                     borderRadius: 10,
                     paddingTop: 7,
