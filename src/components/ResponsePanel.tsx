@@ -298,14 +298,16 @@ function parseSetCookieHeader(value: string): CookieItem | null {
 
 function responseTabStyle(active: boolean): React.CSSProperties {
     return {
-        height: 32,
-        padding: "0 12px",
-        borderRadius: 10,
+        height: 28,
+        padding: "0 10px",
+        borderRadius: 9,
         border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
         background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
         color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
         cursor: "pointer",
         fontWeight: 600,
+        fontSize: 12,
+        boxShadow: "none",
     };
 }
 

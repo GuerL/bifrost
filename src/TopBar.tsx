@@ -132,10 +132,10 @@ export default function TopBar({
             background: "transparent",
             color: disabled ? "var(--pg-text-muted)" : "var(--pg-text)",
             textAlign: "left" as const,
-            padding: "8px 10px",
+            padding: "6px 9px",
             borderRadius: 8,
             cursor: disabled ? "not-allowed" : "pointer",
-            fontSize: 13,
+            fontSize: 12,
         };
     }
 

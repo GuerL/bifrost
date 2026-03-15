@@ -3997,6 +3997,9 @@ function dropInsideOutlineStyle(): React.CSSProperties {
 function editorTabStyle(active: boolean): React.CSSProperties {
     return {
         ...buttonStyle(false),
+        height: 28,
+        padding: "0 9px",
+        fontSize: 12,
         borderColor: active ? "var(--pg-primary)" : "var(--pg-border)",
         background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
         color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
