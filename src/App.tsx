@@ -2696,12 +2696,7 @@ export default function App() {
                     {/*    >*/}
                     {/*        Overwrite default*/}
                     {/*    </button>*/}
-                    {/*    <button*/}
-                    {/*        style={{ ...buttonStyle(false), width: "100%" }}*/}
-                    {/*        onClick={() => invoke("open_app_data_dir")}*/}
-                    {/*    >*/}
-                    {/*        Open data folder*/}
-                    {/*    </button>*/}
+
                     {/*</div>*/}
 
                     <div
@@ -3505,6 +3500,12 @@ export default function App() {
                             }}
                         >
                             Add folder
+                        </button>
+                        <button
+                            style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                            onClick={() => invoke("open_app_data_dir")}
+                        >
+                            Open data folder
                         </button>
                     </div>
                 </div>
