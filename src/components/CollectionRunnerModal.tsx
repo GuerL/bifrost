@@ -1,8 +1,12 @@
-import { type ReactElement, useEffect, useMemo, useState } from "react";
+import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
 import { buttonStyle, dangerButtonStyle, primaryButtonStyle, selectStyle } from "../helpers/UiStyles.ts";
 import type { CollectionNode, Request } from "../types.ts";
 import { groupRunnerExecutionsForDisplay } from "../runner/grouping.ts";
 import { calculateRunnerAverages } from "../runner/stats.ts";
+import {
+    readRunnerCollapsedFolderIdsForCollection,
+    writeRunnerCollapsedFolderIdsForCollection,
+} from "../runner/storage.ts";
 import type {
     RunnerExecutionResult,
     RunnerExecutionStatus,
@@ -34,6 +38,7 @@ const RUNNER_TREE_INDENT_PX = 24;
 type CollectionRunnerModalProps = {
     open: boolean;
     onClose: () => void;
+    collectionId: string | null;
     collectionName: string | null;
     collectionItems: CollectionNode[];
     orderedRequests: Request[];
@@ -57,6 +62,7 @@ type CollectionRunnerModalProps = {
 export default function CollectionRunnerModal({
     open,
     onClose,
+    collectionId,
     collectionName,
     collectionItems,
     orderedRequests,
@@ -82,6 +88,7 @@ export default function CollectionRunnerModal({
     const [expandedByGroupId, setExpandedByGroupId] = useState<Record<string, boolean>>({});
     const [expandedByExecutionId, setExpandedByExecutionId] = useState<Record<string, boolean>>({});
     const [expandedFolderTreeById, setExpandedFolderTreeById] = useState<Record<string, boolean>>({});
+    const hydratedCollapsedFoldersCollectionIdRef = useRef<string | null>(null);
 
     useEffect(() => {
         if (!open) return;
@@ -90,7 +97,6 @@ export default function CollectionRunnerModal({
         setResultTab("executions");
         setExpandedByGroupId({});
         setExpandedByExecutionId({});
-        setExpandedFolderTreeById({});
     }, [open]);
 
     useEffect(() => {
@@ -147,6 +153,46 @@ export default function CollectionRunnerModal({
         () => buildRunnerSelectionTree(collectionItems, requestById),
         [collectionItems, requestById]
     );
+    const folderIdsInSelectionTree = useMemo(
+        () => collectRunnerFolderIds(selectionTree),
+        [selectionTree]
+    );
+
+    useEffect(() => {
+        if (!open) return;
+        if (!collectionId) {
+            setExpandedFolderTreeById({});
+            hydratedCollapsedFoldersCollectionIdRef.current = null;
+            return;
+        }
+
+        const validFolderIds = new Set(folderIdsInSelectionTree);
+        const collapsedFolderIds = readRunnerCollapsedFolderIdsForCollection(collectionId).filter(
+            (folderId) => validFolderIds.has(folderId)
+        );
+        const nextExpandedFolderTreeById = collapsedFolderIds.reduce<Record<string, boolean>>(
+            (map, folderId) => {
+                map[folderId] = false;
+                return map;
+            },
+            {}
+        );
+        setExpandedFolderTreeById(nextExpandedFolderTreeById);
+        hydratedCollapsedFoldersCollectionIdRef.current = collectionId;
+    }, [open, collectionId, folderIdsInSelectionTree]);
+
+    useEffect(() => {
+        if (!open || !collectionId) return;
+        if (hydratedCollapsedFoldersCollectionIdRef.current !== collectionId) return;
+        const validFolderIds = new Set(folderIdsInSelectionTree);
+        const collapsedFolderIds = Object.entries(expandedFolderTreeById)
+            .filter(
+                ([folderId, isExpanded]) =>
+                    isExpanded === false && validFolderIds.has(folderId)
+            )
+            .map(([folderId]) => folderId);
+        writeRunnerCollapsedFolderIdsForCollection(collectionId, collapsedFolderIds);
+    }, [open, collectionId, folderIdsInSelectionTree, expandedFolderTreeById]);
 
     if (!open) return null;
 
@@ -170,10 +216,14 @@ export default function CollectionRunnerModal({
     }
 
     function toggleFolderTreeExpanded(folderId: string) {
-        setExpandedFolderTreeById((previous) => ({
-            ...previous,
-            [folderId]: !(previous[folderId] ?? true),
-        }));
+        setExpandedFolderTreeById((previous) => {
+            if (previous[folderId] === false) {
+                const next = { ...previous };
+                delete next[folderId];
+                return next;
+            }
+            return { ...previous, [folderId]: false };
+        });
     }
 
     return (
@@ -841,6 +891,19 @@ function buildRunnerSelectionTree(
         });
 
     return toNodes(items);
+}
+
+function collectRunnerFolderIds(nodes: RunnerSelectionTreeNode[]): string[] {
+    const out: string[] = [];
+    const visit = (entry: RunnerSelectionTreeNode[]) => {
+        for (const node of entry) {
+            if (node.kind !== "folder") continue;
+            out.push(node.folderId);
+            visit(node.children);
+        }
+    };
+    visit(nodes);
+    return out;
 }
 
 function renderRunnerSelectionTreeNodes({

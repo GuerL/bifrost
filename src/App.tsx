@@ -121,6 +121,7 @@ type PersistedResponseEntry = {
 
 type PersistedResponsesCollection = Record<string, PersistedResponseEntry>;
 type PersistedResponsesState = Record<string, PersistedResponsesCollection>;
+type PersistedCollapsedFoldersState = Record<string, string[]>;
 
 type RequestScriptExecutionReport = {
     preRequestError: string | null;
@@ -130,6 +131,7 @@ type RequestScriptExecutionReport = {
 
 const OPEN_TABS_STORAGE_KEY = "bifrost:open-tabs:v1";
 const RESPONSES_STORAGE_KEY = "bifrost:last-responses:v1";
+const SAVED_REQUESTS_COLLAPSED_FOLDERS_STORAGE_KEY = "bifrost:saved-requests:collapsed-folders:v1";
 const IS_MACOS =
     typeof navigator !== "undefined" &&
     /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
@@ -246,6 +248,69 @@ function writePersistedTabsState(state: PersistedTabsState) {
     } catch {
         // ignore storage write failures
     }
+}
+
+function sanitizeCollapsedFolderIds(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    const next = new Set<string>();
+    for (const entry of value) {
+        if (typeof entry !== "string") continue;
+        const folderId = entry.trim();
+        if (!folderId) continue;
+        next.add(folderId);
+    }
+    return Array.from(next);
+}
+
+function readPersistedCollapsedSavedRequestsFoldersState(): PersistedCollapsedFoldersState {
+    if (typeof window === "undefined") return {};
+    try {
+        const raw = window.localStorage.getItem(SAVED_REQUESTS_COLLAPSED_FOLDERS_STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw) as unknown;
+        if (!parsed || typeof parsed !== "object") return {};
+
+        const next: PersistedCollapsedFoldersState = {};
+        for (const [collectionId, value] of Object.entries(parsed as Record<string, unknown>)) {
+            const collapsedFolderIds = sanitizeCollapsedFolderIds(value);
+            if (collapsedFolderIds.length === 0) continue;
+            next[collectionId] = collapsedFolderIds;
+        }
+        return next;
+    } catch {
+        return {};
+    }
+}
+
+function writePersistedCollapsedSavedRequestsFoldersState(state: PersistedCollapsedFoldersState) {
+    if (typeof window === "undefined") return;
+    try {
+        window.localStorage.setItem(
+            SAVED_REQUESTS_COLLAPSED_FOLDERS_STORAGE_KEY,
+            JSON.stringify(state)
+        );
+    } catch {
+        // ignore storage write failures
+    }
+}
+
+function readCollapsedSavedRequestsFolderIdsForCollection(collectionId: string): string[] {
+    const state = readPersistedCollapsedSavedRequestsFoldersState();
+    return state[collectionId] ?? [];
+}
+
+function writeCollapsedSavedRequestsFolderIdsForCollection(
+    collectionId: string,
+    collapsedFolderIds: string[]
+) {
+    const state = readPersistedCollapsedSavedRequestsFoldersState();
+    const normalized = sanitizeCollapsedFolderIds(collapsedFolderIds);
+    if (normalized.length === 0) {
+        delete state[collectionId];
+    } else {
+        state[collectionId] = normalized;
+    }
+    writePersistedCollapsedSavedRequestsFoldersState(state);
 }
 
 function sanitizeHttpResponse(input: unknown): HttpResponseDto | null {
@@ -405,6 +470,7 @@ export default function App() {
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
     const hydratedTabsCollectionIdRef = useRef<string | null>(null);
+    const hydratedCollapsedFoldersCollectionIdRef = useRef<string | null>(null);
     const hydratedRunnerCollectionIdRef = useRef<string | null>(null);
     const collectionRunCancelRef = useRef(false);
     const collectionRunActiveRequestIdRef = useRef<string | null>(null);
@@ -443,6 +509,7 @@ export default function App() {
         setCloseDraftBusy(false);
         setRenameTarget(null);
         hydratedTabsCollectionIdRef.current = null;
+        hydratedCollapsedFoldersCollectionIdRef.current = null;
         hydratedRunnerCollectionIdRef.current = null;
     }
 
@@ -880,9 +947,69 @@ export default function App() {
     }, [current?.meta.id]);
 
     useEffect(() => {
+        if (!current) {
+            setExpandedFolders({});
+            hydratedCollapsedFoldersCollectionIdRef.current = null;
+            return;
+        }
+
+        const validFolderIds = new Set(
+            folderOptions(current.meta.items).map((folder) => folder.folderId)
+        );
+        const collapsedFolderIds = readCollapsedSavedRequestsFolderIdsForCollection(
+            current.meta.id
+        ).filter((folderId) => validFolderIds.has(folderId));
+        const nextExpandedFolders = collapsedFolderIds.reduce<Record<string, boolean>>(
+            (map, folderId) => {
+                map[folderId] = false;
+                return map;
+            },
+            {}
+        );
+        setExpandedFolders(nextExpandedFolders);
+        hydratedCollapsedFoldersCollectionIdRef.current = current.meta.id;
+    }, [current?.meta.id]);
+
+    useEffect(() => {
+        if (!current) return;
+        const validFolderIds = new Set(collectionFolderOptions.map((folder) => folder.folderId));
+        setExpandedFolders((previous) => {
+            const next = Object.fromEntries(
+                Object.entries(previous).filter(
+                    ([folderId, isExpanded]) =>
+                        isExpanded === false && validFolderIds.has(folderId)
+                )
+            ) as Record<string, boolean>;
+            const previousKeys = Object.keys(previous);
+            const nextKeys = Object.keys(next);
+            if (previousKeys.length !== nextKeys.length) {
+                return next;
+            }
+            for (const key of previousKeys) {
+                if (previous[key] !== next[key]) {
+                    return next;
+                }
+            }
+            return previous;
+        });
+    }, [current?.meta.id, collectionFolderOptions]);
+
+    useEffect(() => {
+        if (!current) return;
+        if (hydratedCollapsedFoldersCollectionIdRef.current !== current.meta.id) return;
+        const validFolderIds = new Set(collectionFolderOptions.map((folder) => folder.folderId));
+        const collapsedFolderIds = Object.entries(expandedFolders)
+            .filter(
+                ([folderId, isExpanded]) =>
+                    isExpanded === false && validFolderIds.has(folderId)
+            )
+            .map(([folderId]) => folderId);
+        writeCollapsedSavedRequestsFolderIdsForCollection(current.meta.id, collapsedFolderIds);
+    }, [current?.meta.id, expandedFolders, collectionFolderOptions]);
+
+    useEffect(() => {
         setDraggedRequestId(null);
         setDropIndicator(null);
-        setExpandedFolders({});
         setDraggedOpenTabRequestId(null);
         setOpenTabDropIndicator(null);
     }, [current?.meta.id]);
@@ -2844,11 +2971,14 @@ export default function App() {
                                                 onMouseDown={(e) => beginRequestDrag(e, row.nodeId)}
                                                 onClick={() => {
                                                     if (row.kind === "folder") {
-                                                        setExpandedFolders((previous) => ({
-                                                            ...previous,
-                                                            [row.folderId]:
-                                                                previous[row.folderId] === false ? true : false,
-                                                        }));
+                                                        setExpandedFolders((previous) => {
+                                                            if (previous[row.folderId] === false) {
+                                                                const next = { ...previous };
+                                                                delete next[row.folderId];
+                                                                return next;
+                                                            }
+                                                            return { ...previous, [row.folderId]: false };
+                                                        });
                                                         return;
                                                     }
                                                     if (row.request) {
@@ -3932,6 +4062,7 @@ export default function App() {
             <CollectionRunnerModal
                 open={runnerModalOpen}
                 onClose={() => setRunnerModalOpen(false)}
+                collectionId={current?.meta.id ?? null}
                 collectionName={current?.meta.name ?? null}
                 collectionItems={current?.meta.items ?? []}
                 orderedRequests={orderedRequests}
