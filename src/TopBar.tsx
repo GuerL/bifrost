@@ -206,7 +206,9 @@ export default function TopBar({
                     icon={<FolderGlyph />}
                     value={currentCollectionId}
                     items={collectionSelectorItems}
-                    onChange={(collectionId) => onSelectCollection(collectionId ?? "")}
+                    onSelect={(collectionId) => onSelectCollection(collectionId ?? "")}
+                    onManage={onManageCollections}
+                    manageLabel="Manage Collections"
                     placeholder="No collection"
                     emptyOptionLabel="No collection"
                     width={224}
@@ -217,7 +219,9 @@ export default function TopBar({
                     icon={<GlobeGlyph />}
                     value={currentEnvironmentId}
                     items={environmentSelectorItems}
-                    onChange={onSelectEnvironment}
+                    onSelect={onSelectEnvironment}
+                    onManage={onManageEnvironments}
+                    manageLabel="Manage Environments"
                     placeholder="No environment"
                     emptyOptionLabel="No environment"
                     width={210}
@@ -258,15 +262,6 @@ export default function TopBar({
                     }
                 >
                     {isCollectionRunning ? "Runner • Running" : "Runner"}
-                </button>
-                <button
-                    onClick={onManageCollections}
-                    style={buttonStyle(false)}
-                >
-                    Collections
-                </button>
-                <button onClick={onManageEnvironments} style={buttonStyle(false)}>
-                    Environments
                 </button>
                 <div ref={transferMenuRef} style={{ position: "relative" }}>
                     <button

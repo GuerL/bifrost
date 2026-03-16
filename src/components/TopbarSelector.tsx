@@ -11,28 +11,34 @@ type TopbarSelectorProps = {
     icon: ReactNode;
     value: string | null;
     items: TopbarSelectorItem[];
-    onChange: (nextValue: string | null) => void;
+    onSelect: (nextValue: string | null) => void;
     placeholder: string;
     emptyOptionLabel?: string;
     width?: number;
     ariaLabel: string;
-    footerActionLabel?: string;
-    onFooterAction?: () => void;
+    onCreate?: () => void;
+    onManage?: () => void;
+    createLabel?: string;
+    manageLabel?: string;
 };
 
 const EMPTY_OPTION_VALUE = "__bifrost-topbar-empty__";
+const ACTION_CREATE_VALUE = "__bifrost-topbar-action-create__";
+const ACTION_MANAGE_VALUE = "__bifrost-topbar-action-manage__";
 
 export default function TopbarSelector({
     icon,
     value,
     items,
-    onChange,
+    onSelect,
     placeholder,
     emptyOptionLabel,
     width,
     ariaLabel,
-    footerActionLabel,
-    onFooterAction,
+    onCreate,
+    onManage,
+    createLabel,
+    manageLabel,
 }: TopbarSelectorProps) {
     const [open, setOpen] = useState(false);
     const normalizedValue =
@@ -51,9 +57,19 @@ export default function TopbarSelector({
             open={open}
             onOpenChange={setOpen}
             value={normalizedValue}
-            onValueChange={(nextValue) =>
-                onChange(nextValue === EMPTY_OPTION_VALUE ? null : nextValue)
-            }
+            onValueChange={(nextValue) => {
+                if (nextValue === ACTION_CREATE_VALUE) {
+                    setOpen(false);
+                    onCreate?.();
+                    return;
+                }
+                if (nextValue === ACTION_MANAGE_VALUE) {
+                    setOpen(false);
+                    onManage?.();
+                    return;
+                }
+                onSelect(nextValue === EMPTY_OPTION_VALUE ? null : nextValue);
+            }}
         >
             <Select.Trigger
                 className="pg-topbar-selector-trigger"
@@ -115,19 +131,28 @@ export default function TopbarSelector({
                                 </Select.ItemIndicator>
                             </Select.Item>
                         ))}
-                        {footerActionLabel && onFooterAction && (
-                            <div className="pg-topbar-selector-footer-wrap">
-                                <button
-                                    type="button"
-                                    className="pg-topbar-selector-footer-action"
-                                    onClick={() => {
-                                        setOpen(false);
-                                        onFooterAction();
-                                    }}
-                                >
-                                    {footerActionLabel}
-                                </button>
-                            </div>
+                        {(onCreate || onManage) && (
+                            <div className="pg-topbar-selector-separator" aria-hidden />
+                        )}
+                        {onCreate && createLabel && (
+                            <Select.Item
+                                value={ACTION_CREATE_VALUE}
+                                className="pg-topbar-selector-item pg-topbar-selector-item-action"
+                            >
+                                <Select.ItemText>
+                                    <span className="pg-topbar-selector-item-label">{createLabel}</span>
+                                </Select.ItemText>
+                            </Select.Item>
+                        )}
+                        {onManage && manageLabel && (
+                            <Select.Item
+                                value={ACTION_MANAGE_VALUE}
+                                className="pg-topbar-selector-item pg-topbar-selector-item-action"
+                            >
+                                <Select.ItemText>
+                                    <span className="pg-topbar-selector-item-label">{manageLabel}</span>
+                                </Select.ItemText>
+                            </Select.Item>
                         )}
                     </Select.Viewport>
                 </Select.Content>

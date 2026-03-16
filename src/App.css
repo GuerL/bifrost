@@ -302,30 +302,24 @@ button.pg-topbar-selector-trigger:hover:not(:disabled) {
   font-weight: 700;
 }
 
-.pg-topbar-selector-footer-wrap {
-  border-top: 1px solid rgba(71, 85, 105, 0.45);
-  margin-top: 4px;
-  padding-top: 6px;
+.pg-topbar-selector-separator {
+  height: 1px;
+  margin: 4px 2px 2px;
+  background: rgba(71, 85, 105, 0.45);
 }
 
-button.pg-topbar-selector-footer-action {
-  width: 100%;
-  min-height: 28px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--pg-text-dim);
-  font-size: 12px;
+.pg-topbar-selector-item-action {
+  color: var(--pg-text-muted);
   font-weight: 600;
-  text-align: left;
-  padding: 5px 9px;
-  cursor: pointer;
-  box-shadow: none;
 }
 
-button.pg-topbar-selector-footer-action:hover:not(:disabled) {
-  border-color: rgba(var(--pg-primary-rgb), 0.35);
-  background: rgba(var(--pg-primary-rgb), 0.14);
+.pg-topbar-selector-item-action[data-highlighted] {
+  color: var(--pg-text);
+  background: rgba(var(--pg-primary-rgb), 0.16);
+}
+
+.pg-topbar-selector-item-action[data-state="checked"] {
+  background: rgba(var(--pg-primary-rgb), 0.16);
   color: var(--pg-text);
 }
 
