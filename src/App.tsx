@@ -2787,7 +2787,8 @@ export default function App() {
                     style={{
                         display: "flex",
                         flexDirection: "column",
-                        width: 240,
+                        width: 280,
+                        minWidth: 280,
                         height: "100%",
                         minHeight: 0,
                         flexShrink: 0,
