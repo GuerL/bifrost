@@ -1357,6 +1357,15 @@ export default function App() {
                 return;
             }
 
+            if (key === "enter") {
+                if (!selectedRequestId || collectionRunPending) return;
+                e.preventDefault();
+                setContextMenu(null);
+                setRootAddMenu(null);
+                void sendSelected();
+                return;
+            }
+
             if (key === "t") {
                 if (!current || collectionRunPending) return;
                 e.preventDefault();
@@ -1418,6 +1427,7 @@ export default function App() {
         openRequestIds,
         collectionRunPending,
         sidebarRows,
+        sendSelected,
     ]);
 
     async function sendSelected() {
@@ -1504,7 +1514,10 @@ export default function App() {
             const environmentErrorSuffix = environmentPersistError
                 ? " • environment save issue"
                 : "";
-            const statusText = `✅ ${r.status} in ${r.duration_ms}ms${scriptErrorSuffix}${scriptTestsSuffix}${environmentErrorSuffix}`;
+            const isHttpFailure = r.status >= 400;
+            const statusText = isHttpFailure
+                ? `❌ HTTP ${r.status} in ${r.duration_ms}ms${scriptErrorSuffix}${scriptTestsSuffix}${environmentErrorSuffix}`
+                : `✅ ${r.status} in ${r.duration_ms}ms${scriptErrorSuffix}${scriptTestsSuffix}${environmentErrorSuffix}`;
             setResp(r);
             setStatus(statusText);
             setResponsesByRequestId((previous) => ({
