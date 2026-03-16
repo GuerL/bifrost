@@ -3003,6 +3003,7 @@ export default function App() {
                                                         hasLocalDraft
                                                     ),
                                                     width: "100%",
+                                                    minWidth: 0,
                                                     textAlign: "left",
                                                     flexShrink: 0,
                                                     cursor: draggedRequestId === row.nodeId ? "grabbing" : "pointer",
@@ -3014,11 +3015,13 @@ export default function App() {
                                                 {row.kind === "folder" ? (
                                                     <span
                                                         style={{
-                                                            display: "inline-flex",
+                                                            display: "flex",
                                                             alignItems: "center",
                                                             gap: 8,
+                                                            width: "100%",
                                                             minWidth: 0,
                                                         }}
+                                                        title={row.name}
                                                     >
                                                         <span
                                                             style={{
@@ -3048,6 +3051,7 @@ export default function App() {
                                                         </svg>
                                                         <span
                                                             style={{
+                                                                flex: 1,
                                                                 minWidth: 0,
                                                                 overflow: "hidden",
                                                                 textOverflow: "ellipsis",
@@ -3058,11 +3062,35 @@ export default function App() {
                                                         </span>
                                                     </span>
                                                 ) : row.request ? (
-                                                    `${row.request.method.toUpperCase()} ${row.request.name} ${
-                                                        hasLocalDraft ? "●" : ""
-                                                    }`
+                                                    <span
+                                                        style={{
+                                                            display: "block",
+                                                            width: "100%",
+                                                            minWidth: 0,
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                            whiteSpace: "nowrap",
+                                                        }}
+                                                        title={`${row.request.method.toUpperCase()} ${row.request.name}`}
+                                                    >
+                                                        {`${row.request.method.toUpperCase()} ${row.request.name}${
+                                                            hasLocalDraft ? " ●" : ""
+                                                        }`}
+                                                    </span>
                                                 ) : (
-                                                    `[Missing] ${row.requestId}`
+                                                    <span
+                                                        style={{
+                                                            display: "block",
+                                                            width: "100%",
+                                                            minWidth: 0,
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                            whiteSpace: "nowrap",
+                                                        }}
+                                                        title={`[Missing] ${row.requestId}`}
+                                                    >
+                                                        {`[Missing] ${row.requestId}`}
+                                                    </span>
                                                 )}
                                             </button>
                                             {showDropInside && row.kind === "folder" && !isFolderCollapsed && (
