@@ -163,3 +163,190 @@ h3 {
   border-bottom: 1px solid rgba(248, 113, 113, 0.82);
   border-radius: 3px;
 }
+
+.pg-topbar-selector-trigger {
+  height: 30px;
+  min-width: 170px;
+  max-width: 260px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--pg-border);
+  background: linear-gradient(180deg, #1a2437 0%, #111a2d 100%);
+  color: var(--pg-text);
+  padding: 0 10px;
+  box-shadow: 0 7px 14px rgba(2, 6, 23, 0.2);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 130ms ease, box-shadow 130ms ease, background 130ms ease;
+}
+
+button.pg-topbar-selector-trigger:hover:not(:disabled) {
+  border-color: var(--pg-border-muted);
+  background: linear-gradient(180deg, #1d2940 0%, #131f34 100%);
+  box-shadow: 0 8px 16px rgba(2, 6, 23, 0.26);
+}
+
+.pg-topbar-selector-trigger:focus-visible,
+.pg-topbar-selector-trigger[data-state="open"] {
+  border-color: rgba(var(--pg-primary-rgb), 0.9);
+  box-shadow: 0 0 0 3px rgba(var(--pg-primary-rgb), 0.22), 0 12px 26px rgba(2, 6, 23, 0.28);
+}
+
+.pg-topbar-selector-trigger[data-placeholder] {
+  color: var(--pg-text-muted);
+}
+
+.pg-topbar-selector-icon {
+  color: var(--pg-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pg-topbar-selector-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.pg-topbar-selector-chevron {
+  color: var(--pg-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pg-topbar-selector-content {
+  min-width: var(--radix-select-trigger-width);
+  max-width: min(420px, calc(100vw - 32px));
+  border-radius: 10px;
+  border: 1px solid var(--pg-border);
+  background: rgba(15, 23, 42, 0.98);
+  box-shadow: 0 16px 40px rgba(2, 6, 23, 0.45);
+  overflow: hidden;
+  z-index: 1600;
+  animation: pg-topbar-select-enter 140ms ease;
+}
+
+.pg-topbar-selector-content[data-state="closed"] {
+  animation: pg-topbar-select-leave 110ms ease;
+}
+
+.pg-topbar-selector-viewport {
+  padding: 6px;
+  max-height: min(360px, 60vh);
+}
+
+.pg-topbar-selector-item {
+  position: relative;
+  min-height: 30px;
+  border-radius: 8px;
+  padding: 6px 30px 6px 10px;
+  color: var(--pg-text-dim);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+  outline: none;
+  user-select: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.pg-topbar-selector-item-empty {
+  color: var(--pg-text-muted);
+  border-bottom: 1px solid rgba(71, 85, 105, 0.45);
+  margin-bottom: 4px;
+  padding-bottom: 8px;
+}
+
+.pg-topbar-selector-item[data-highlighted] {
+  background: rgba(var(--pg-primary-rgb), 0.17);
+  color: var(--pg-text);
+}
+
+.pg-topbar-selector-item[data-state="checked"] {
+  background: rgba(var(--pg-primary-rgb), 0.24);
+  color: var(--pg-text);
+}
+
+.pg-topbar-selector-item[data-disabled] {
+  color: var(--pg-disabled);
+  cursor: not-allowed;
+}
+
+.pg-topbar-selector-item-label {
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pg-topbar-selector-item-indicator {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: rgba(var(--pg-primary-rgb), 1);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pg-topbar-selector-footer-wrap {
+  border-top: 1px solid rgba(71, 85, 105, 0.45);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+button.pg-topbar-selector-footer-action {
+  width: 100%;
+  min-height: 28px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--pg-text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  padding: 5px 9px;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+button.pg-topbar-selector-footer-action:hover:not(:disabled) {
+  border-color: rgba(var(--pg-primary-rgb), 0.35);
+  background: rgba(var(--pg-primary-rgb), 0.14);
+  color: var(--pg-text);
+}
+
+@keyframes pg-topbar-select-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes pg-topbar-select-leave {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.99);
+  }
+}

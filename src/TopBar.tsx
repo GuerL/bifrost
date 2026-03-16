@@ -5,9 +5,9 @@ import bifrostLogo from "./assets/bifrost_logo.svg";
 import {
     buttonStyle,
     primaryButtonStyle,
-    topbarSelectStyle,
     windowButtonStyle,
 } from "./helpers/UiStyles.ts";
+import TopbarSelector, { type TopbarSelectorItem } from "./components/TopbarSelector.tsx";
 
 const isMacOS =
     typeof navigator !== "undefined" &&
@@ -62,6 +62,14 @@ export default function TopBar({
     const [isTransferMenuOpen, setIsTransferMenuOpen] = useState(false);
     const transferMenuRef = useRef<HTMLDivElement | null>(null);
     const saveDraftShortcutLabel = isMacOS ? "CMD + S" : "CTRL + S";
+    const collectionSelectorItems: TopbarSelectorItem[] = collections.map((collection) => ({
+        value: collection.id,
+        label: collection.name,
+    }));
+    const environmentSelectorItems: TopbarSelectorItem[] = environments.map((environment) => ({
+        value: environment.id,
+        label: environment.name,
+    }));
 
     useEffect(() => {
         if (!isTransferMenuOpen) {
@@ -194,31 +202,27 @@ export default function TopBar({
                         Bifrost
                     </span>
                 </div>
-                <select
-                    value={currentCollectionId ?? ""}
-                    onChange={(e) => onSelectCollection(e.target.value)}
-                    style={topbarSelectStyle()}
-                >
-                    <option value="">No collection</option>
-                    {collections.map((collection) => (
-                        <option key={collection.id} value={collection.id}>
-                            {collection.name}
-                        </option>
-                    ))}
-                </select>
+                <TopbarSelector
+                    icon={<FolderGlyph />}
+                    value={currentCollectionId}
+                    items={collectionSelectorItems}
+                    onChange={(collectionId) => onSelectCollection(collectionId ?? "")}
+                    placeholder="No collection"
+                    emptyOptionLabel="No collection"
+                    width={224}
+                    ariaLabel="Select collection"
+                />
 
-                <select
-                    value={currentEnvironmentId ?? ""}
-                    onChange={(e) => onSelectEnvironment(e.target.value ? e.target.value : null)}
-                    style={topbarSelectStyle()}
-                >
-                    {!currentEnvironmentId && <option value="">No environment</option>}
-                    {environments.map((env) => (
-                        <option key={env.id} value={env.id}>
-                            {env.name}
-                        </option>
-                    ))}
-                </select>
+                <TopbarSelector
+                    icon={<GlobeGlyph />}
+                    value={currentEnvironmentId}
+                    items={environmentSelectorItems}
+                    onChange={onSelectEnvironment}
+                    placeholder="No environment"
+                    emptyOptionLabel="No environment"
+                    width={210}
+                    ariaLabel="Select environment"
+                />
             </div>
 
             <div
@@ -346,5 +350,32 @@ export default function TopBar({
                 )}
             </div>
         </div>
+    );
+}
+
+function FolderGlyph() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path
+                d="M3.75 7.75C3.75 6.7835 4.5335 6 5.5 6H9.513C10.0824 6 10.6164 6.2717 10.95 6.7315L11.75 7.8333C12.0836 8.2931 12.6176 8.5648 13.187 8.5648H18.5C19.4665 8.5648 20.25 9.3483 20.25 10.3148V16.5C20.25 17.4665 19.4665 18.25 18.5 18.25H5.5C4.5335 18.25 3.75 17.4665 3.75 16.5V7.75Z"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinejoin="round"
+            />
+        </svg>
+    );
+}
+
+function GlobeGlyph() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="8.25" stroke="currentColor" strokeWidth="1.7" />
+            <path
+                d="M3.75 12H20.25M12 3.75C14.2792 6.2292 14.2792 17.7708 12 20.25M12 3.75C9.7208 6.2292 9.7208 17.7708 12 20.25"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+            />
+        </svg>
     );
 }
