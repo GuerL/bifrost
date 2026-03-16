@@ -165,6 +165,12 @@ export default function CollectionRunnerModal({
             hydratedCollapsedFoldersCollectionIdRef.current = null;
             return;
         }
+        if (hydratedCollapsedFoldersCollectionIdRef.current === collectionId) {
+            return;
+        }
+        if (folderIdsInSelectionTree.length === 0) {
+            return;
+        }
 
         const validFolderIds = new Set(folderIdsInSelectionTree);
         const collapsedFolderIds = readRunnerCollapsedFolderIdsForCollection(collectionId).filter(
@@ -184,6 +190,7 @@ export default function CollectionRunnerModal({
     useEffect(() => {
         if (!open || !collectionId) return;
         if (hydratedCollapsedFoldersCollectionIdRef.current !== collectionId) return;
+        if (folderIdsInSelectionTree.length === 0) return;
         const validFolderIds = new Set(folderIdsInSelectionTree);
         const collapsedFolderIds = Object.entries(expandedFolderTreeById)
             .filter(

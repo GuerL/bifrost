@@ -952,10 +952,14 @@ export default function App() {
             hydratedCollapsedFoldersCollectionIdRef.current = null;
             return;
         }
+        if (hydratedCollapsedFoldersCollectionIdRef.current === current.meta.id) {
+            return;
+        }
+        if (collectionFolderOptions.length === 0) {
+            return;
+        }
 
-        const validFolderIds = new Set(
-            folderOptions(current.meta.items).map((folder) => folder.folderId)
-        );
+        const validFolderIds = new Set(collectionFolderOptions.map((folder) => folder.folderId));
         const collapsedFolderIds = readCollapsedSavedRequestsFolderIdsForCollection(
             current.meta.id
         ).filter((folderId) => validFolderIds.has(folderId));
@@ -968,7 +972,7 @@ export default function App() {
         );
         setExpandedFolders(nextExpandedFolders);
         hydratedCollapsedFoldersCollectionIdRef.current = current.meta.id;
-    }, [current?.meta.id]);
+    }, [current?.meta.id, collectionFolderOptions]);
 
     useEffect(() => {
         if (!current) return;
@@ -997,6 +1001,7 @@ export default function App() {
     useEffect(() => {
         if (!current) return;
         if (hydratedCollapsedFoldersCollectionIdRef.current !== current.meta.id) return;
+        if (collectionFolderOptions.length === 0) return;
         const validFolderIds = new Set(collectionFolderOptions.map((folder) => folder.folderId));
         const collapsedFolderIds = Object.entries(expandedFolders)
             .filter(
