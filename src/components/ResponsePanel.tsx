@@ -63,6 +63,7 @@ export default function ResponsePanel({
     );
     const [copyState, setCopyState] = useState<CopyState>("idle");
     const [bodyMode, setBodyMode] = useState<BodyMode>("raw");
+    const [bodyControlsHovered, setBodyControlsHovered] = useState(false);
     const copyResetTimerRef = useRef<number | null>(null);
 
     useEffect(() => {
@@ -137,33 +138,15 @@ export default function ResponsePanel({
                     Runtime
                 </button>
                 {activeTab === "body" && (
-                    <>
-                        {bodyView.canPreview && (
-                            <div style={{ display: "flex", gap: 6 }}>
-                                <button
-                                    onClick={() => setBodyMode("raw")}
-                                    style={responseTabStyle(bodyMode === "raw")}
-                                >
-                                    Raw
-                                </button>
-                                <button
-                                    onClick={() => setBodyMode("preview")}
-                                    style={responseTabStyle(bodyMode === "preview")}
-                                >
-                                    Preview
-                                </button>
-                            </div>
-                        )}
-                        <button
-                            onClick={() => void handleCopyBody()}
-                            disabled={!bodyView.copyText}
-                            style={copyBodyButtonStyle(!bodyView.copyText, copyState)}
-                            title={copyButtonTitle(copyState)}
-                            aria-label={copyButtonTitle(copyState)}
-                        >
-                            <CopyStatusIcon state={copyState} />
-                        </button>
-                    </>
+                    <button
+                        onClick={() => void handleCopyBody()}
+                        disabled={!bodyView.copyText}
+                        style={copyBodyButtonStyle(!bodyView.copyText, copyState)}
+                        title={copyButtonTitle(copyState)}
+                        aria-label={copyButtonTitle(copyState)}
+                    >
+                        <CopyStatusIcon state={copyState} />
+                    </button>
                 )}
             </div>
 
@@ -208,26 +191,50 @@ export default function ResponsePanel({
             )}
 
             {activeTab === "body" && (
-                bodyMode === "preview" && bodyView.canPreview ? (
-                    <div style={responsePreviewWrapStyle()}>
-                        <iframe
-                            title="Response preview"
-                            srcDoc={bodyView.previewHtml ?? ""}
-                            sandbox=""
-                            style={responsePreviewFrameStyle()}
-                        />
-                    </div>
-                ) : (
-                    <pre style={responsePreStyle(bodyView.isJson)}>
-                        {bodyView.isJson
-                            ? jsonTokens.map((token, index) => (
-                                <span key={`${token.type}-${index}`} style={jsonTokenStyle(token.type)}>
-                                    {token.text}
-                                </span>
-                            ))
-                            : bodyView.displayText}
-                    </pre>
-                )
+                <div
+                    style={responseBodyContainerStyle()}
+                    onMouseEnter={() => setBodyControlsHovered(true)}
+                    onMouseLeave={() => setBodyControlsHovered(false)}
+                >
+                    {bodyView.canPreview && (
+                        <div style={bodyModeControlsStyle(bodyControlsHovered)}>
+                            <button
+                                onClick={() => setBodyMode("raw")}
+                                style={bodyModeButtonStyle(bodyMode === "raw")}
+                            >
+                                Raw
+                            </button>
+                            <button
+                                onClick={() => setBodyMode("preview")}
+                                style={bodyModeButtonStyle(bodyMode === "preview")}
+                            >
+                                Preview
+                            </button>
+                        </div>
+                    )}
+                    {bodyMode === "preview" && bodyView.canPreview ? (
+                        <div style={responsePreviewWrapStyle()}>
+                            <iframe
+                                title="Response preview"
+                                srcDoc={bodyView.previewHtml ?? ""}
+                                sandbox=""
+                                style={responsePreviewFrameStyle()}
+                            />
+                        </div>
+                    ) : (
+                        <pre
+                            style={responsePreStyle(bodyView.isJson, bodyView.canPreview)}
+                        >
+                            {bodyView.isJson
+                                ? jsonTokens.map((token, index) => (
+                                    <span key={`${token.type}-${index}`} style={jsonTokenStyle(token.type)}>
+                                        {token.text}
+                                    </span>
+                                ))
+                                : bodyView.displayText}
+                        </pre>
+                    )}
+                </div>
             )}
 
             {activeTab === "headers" && (
@@ -482,6 +489,47 @@ function responseTabStyle(active: boolean): React.CSSProperties {
     };
 }
 
+function responseBodyContainerStyle(): React.CSSProperties {
+    return {
+        width: "100%",
+        minWidth: 0,
+        minHeight: 0,
+        flex: 1,
+        display: "flex",
+        position: "relative",
+    };
+}
+
+function bodyModeControlsStyle(visible: boolean): React.CSSProperties {
+    return {
+        position: "absolute",
+        top: 10,
+        right: 10,
+        zIndex: 4,
+        display: "flex",
+        gap: 6,
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0)" : "translateY(-4px)",
+        pointerEvents: visible ? "auto" : "none",
+        transition: "opacity 120ms ease, transform 120ms ease",
+    };
+}
+
+function bodyModeButtonStyle(active: boolean): React.CSSProperties {
+    return {
+        height: 24,
+        padding: "0 8px",
+        borderRadius: 8,
+        border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
+        background: active ? "var(--pg-primary)" : "rgba(15, 23, 42, 0.88)",
+        color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
+        cursor: "pointer",
+        fontWeight: 600,
+        fontSize: 11,
+        boxShadow: "none",
+    };
+}
+
 function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSSProperties {
     const baseStyle: React.CSSProperties = {
         width: 38,
@@ -577,7 +625,7 @@ function CopyStatusIcon({ state }: { state: CopyState }) {
     );
 }
 
-function responsePreStyle(isJson: boolean): React.CSSProperties {
+function responsePreStyle(isJson: boolean, hasBodyModeControls: boolean): React.CSSProperties {
     return {
         margin: 0,
         background: isJson
@@ -591,7 +639,7 @@ function responsePreStyle(isJson: boolean): React.CSSProperties {
         overflow: "auto",
         borderRadius: 12,
         border: isJson ? "1px solid rgba(var(--pg-primary-rgb), 0.38)" : "1px solid var(--pg-border)",
-        padding: 12,
+        padding: hasBodyModeControls ? "42px 12px 12px" : 12,
         boxSizing: "border-box",
         fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
         fontSize: 13,
