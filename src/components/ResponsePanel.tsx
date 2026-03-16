@@ -4,6 +4,7 @@ import type { HttpResponseDto } from "../types.ts";
 export type ResponseTabId = "body" | "cookies" | "headers" | "runtime";
 
 type CopyState = "idle" | "copied" | "error";
+type BodyMode = "raw" | "preview";
 
 type CookieItem = {
     name: string;
@@ -15,6 +16,8 @@ type ResponseBodyView = {
     displayText: string;
     copyText: string;
     isJson: boolean;
+    canPreview: boolean;
+    previewHtml: string | null;
 };
 
 type JsonTokenType = "plain" | "key" | "string" | "number" | "boolean" | "null";
@@ -59,11 +62,18 @@ export default function ResponsePanel({
         scriptReport.tests.length > 0
     );
     const [copyState, setCopyState] = useState<CopyState>("idle");
+    const [bodyMode, setBodyMode] = useState<BodyMode>("raw");
     const copyResetTimerRef = useRef<number | null>(null);
 
     useEffect(() => {
         setCopyState("idle");
     }, [bodyView.copyText]);
+
+    useEffect(() => {
+        if (!bodyView.canPreview && bodyMode === "preview") {
+            setBodyMode("raw");
+        }
+    }, [bodyMode, bodyView.canPreview]);
 
     useEffect(() => {
         return () => {
@@ -127,13 +137,33 @@ export default function ResponsePanel({
                     Runtime
                 </button>
                 {activeTab === "body" && (
-                    <button
-                        onClick={() => void handleCopyBody()}
-                        disabled={!bodyView.copyText}
-                        style={copyBodyButtonStyle(!bodyView.copyText, copyState)}
-                    >
-                        {copyState === "copied" ? "Copied" : copyState === "error" ? "Copy failed" : "Copy body"}
-                    </button>
+                    <>
+                        {bodyView.canPreview && (
+                            <div style={{ display: "flex", gap: 6 }}>
+                                <button
+                                    onClick={() => setBodyMode("raw")}
+                                    style={responseTabStyle(bodyMode === "raw")}
+                                >
+                                    Raw
+                                </button>
+                                <button
+                                    onClick={() => setBodyMode("preview")}
+                                    style={responseTabStyle(bodyMode === "preview")}
+                                >
+                                    Preview
+                                </button>
+                            </div>
+                        )}
+                        <button
+                            onClick={() => void handleCopyBody()}
+                            disabled={!bodyView.copyText}
+                            style={copyBodyButtonStyle(!bodyView.copyText, copyState)}
+                            title={copyButtonTitle(copyState)}
+                            aria-label={copyButtonTitle(copyState)}
+                        >
+                            <CopyStatusIcon state={copyState} />
+                        </button>
+                    </>
                 )}
             </div>
 
@@ -178,15 +208,26 @@ export default function ResponsePanel({
             )}
 
             {activeTab === "body" && (
-                <pre style={responsePreStyle(bodyView.isJson)}>
-                    {bodyView.isJson
-                        ? jsonTokens.map((token, index) => (
-                            <span key={`${token.type}-${index}`} style={jsonTokenStyle(token.type)}>
-                                {token.text}
-                            </span>
-                        ))
-                        : bodyView.displayText}
-                </pre>
+                bodyMode === "preview" && bodyView.canPreview ? (
+                    <div style={responsePreviewWrapStyle()}>
+                        <iframe
+                            title="Response preview"
+                            srcDoc={bodyView.previewHtml ?? ""}
+                            sandbox=""
+                            style={responsePreviewFrameStyle()}
+                        />
+                    </div>
+                ) : (
+                    <pre style={responsePreStyle(bodyView.isJson)}>
+                        {bodyView.isJson
+                            ? jsonTokens.map((token, index) => (
+                                <span key={`${token.type}-${index}`} style={jsonTokenStyle(token.type)}>
+                                    {token.text}
+                                </span>
+                            ))
+                            : bodyView.displayText}
+                    </pre>
+                )
             )}
 
             {activeTab === "headers" && (
@@ -299,30 +340,55 @@ export default function ResponsePanel({
 
 function formatResponseBody(response: HttpResponseDto | null): ResponseBodyView {
     if (!response) {
-        return { displayText: "No response yet.", copyText: "", isJson: false };
+        return { displayText: "No response yet.", copyText: "", isJson: false, canPreview: false, previewHtml: null };
     }
     if (!response.body_text) {
-        return { displayText: "(empty body)", copyText: "", isJson: false };
+        return { displayText: "(empty body)", copyText: "", isJson: false, canPreview: false, previewHtml: null };
     }
 
     const contentType = findHeaderValue(response, "content-type")?.toLowerCase() ?? "";
     const raw = response.body_text;
+    const looksLikeHtml = isHtmlContent(contentType, raw);
     const looksLikeJson =
         contentType.includes("application/json") ||
         contentType.includes("+json") ||
         raw.trim().startsWith("{") ||
         raw.trim().startsWith("[");
 
+    if (looksLikeHtml) {
+        return {
+            displayText: raw,
+            copyText: raw,
+            isJson: false,
+            canPreview: true,
+            previewHtml: raw,
+        };
+    }
+
     if (!looksLikeJson) {
-        return { displayText: raw, copyText: raw, isJson: false };
+        return { displayText: raw, copyText: raw, isJson: false, canPreview: false, previewHtml: null };
     }
 
     try {
         const pretty = JSON.stringify(JSON.parse(raw), null, 2);
-        return { displayText: pretty, copyText: pretty, isJson: true };
+        return { displayText: pretty, copyText: pretty, isJson: true, canPreview: false, previewHtml: null };
     } catch {
-        return { displayText: raw, copyText: raw, isJson: false };
+        return { displayText: raw, copyText: raw, isJson: false, canPreview: false, previewHtml: null };
     }
+}
+
+function isHtmlContent(contentType: string, body: string): boolean {
+    if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml")) {
+        return true;
+    }
+
+    const trimmed = body.trimStart().toLowerCase();
+    return (
+        trimmed.startsWith("<!doctype html") ||
+        trimmed.startsWith("<html") ||
+        trimmed.startsWith("<head") ||
+        trimmed.startsWith("<body")
+    );
 }
 
 function tokenizeJson(json: string): JsonToken[] {
@@ -417,17 +483,30 @@ function responseTabStyle(active: boolean): React.CSSProperties {
 }
 
 function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSSProperties {
+    const baseStyle: React.CSSProperties = {
+        width: 38,
+        height: 38,
+        marginLeft: "auto",
+        padding: 0,
+        borderRadius: 9,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        boxShadow: "none",
+    };
+
     if (disabled) {
         return {
+            ...baseStyle,
             ...responseTabStyle(false),
-            marginLeft: "auto",
+            cursor: "not-allowed",
         };
     }
 
     if (copyState === "copied") {
         return {
+            ...baseStyle,
             ...responseTabStyle(false),
-            marginLeft: "auto",
             border: "1px solid rgba(34, 197, 94, 0.7)",
             background: "rgba(22, 163, 74, 0.16)",
             color: "#bbf7d0",
@@ -436,8 +515,8 @@ function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSS
 
     if (copyState === "error") {
         return {
+            ...baseStyle,
             ...responseTabStyle(false),
-            marginLeft: "auto",
             border: "1px solid rgba(239, 68, 68, 0.75)",
             background: "rgba(239, 68, 68, 0.14)",
             color: "#fecaca",
@@ -445,9 +524,57 @@ function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSS
     }
 
     return {
+        ...baseStyle,
         ...responseTabStyle(false),
-        marginLeft: "auto",
     };
+}
+
+function copyButtonTitle(copyState: CopyState): string {
+    if (copyState === "copied") return "Body copied";
+    if (copyState === "error") return "Copy failed";
+    return "Copy body";
+}
+
+function CopyStatusIcon({ state }: { state: CopyState }) {
+    if (state === "copied") {
+        return (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                    d="M20 6L9 17L4 12"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+            </svg>
+        );
+    }
+
+    if (state === "error") {
+        return (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                    d="M12 8V12M12 16H12.01M22 12C22 17.523 17.523 22 12 22C6.477 22 2 17.523 2 12C2 6.477 6.477 2 12 2C17.523 2 22 6.477 22 12Z"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+            </svg>
+        );
+    }
+
+    return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+                d="M9 5H8C6.895 5 6 5.895 6 7V19C6 20.105 6.895 21 8 21H16C17.105 21 18 20.105 18 19V7C18 5.895 17.105 5 16 5H15M9 5C9 3.895 9.895 3 11 3H13C14.105 3 15 3.895 15 5M9 5C9 6.105 9.895 7 11 7H13C14.105 7 15 6.105 15 5"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+        </svg>
+    );
 }
 
 function responsePreStyle(isJson: boolean): React.CSSProperties {
@@ -472,6 +599,28 @@ function responsePreStyle(isJson: boolean): React.CSSProperties {
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
         boxShadow: isJson ? "inset 0 0 0 1px rgba(var(--pg-primary-rgb), 0.12)" : "none",
+    };
+}
+
+function responsePreviewWrapStyle(): React.CSSProperties {
+    return {
+        width: "100%",
+        minWidth: 0,
+        minHeight: 0,
+        flex: 1,
+        borderRadius: 12,
+        border: "1px solid var(--pg-border)",
+        background: "#ffffff",
+        overflow: "hidden",
+    };
+}
+
+function responsePreviewFrameStyle(): React.CSSProperties {
+    return {
+        width: "100%",
+        height: "100%",
+        border: "none",
+        display: "block",
     };
 }
 
