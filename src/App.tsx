@@ -28,6 +28,13 @@ import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.ts
 import CollectionRunnerModal from "./components/CollectionRunnerModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
 import {
+    getRunnerSelectedRequestsForCollection,
+    loadRunnerSelectedRequests,
+    saveRunnerSelectedRequests,
+    setRunnerSelectedRequestsForCollection,
+    type RunnerSelectedRequestsState,
+} from "./helpers/RunnerSelectionStorage.ts";
+import {
     buttonStyle,
     dangerButtonStyle,
     primaryButtonStyle,
@@ -472,6 +479,10 @@ export default function App() {
     const hydratedTabsCollectionIdRef = useRef<string | null>(null);
     const hydratedCollapsedFoldersCollectionIdRef = useRef<string | null>(null);
     const hydratedRunnerCollectionIdRef = useRef<string | null>(null);
+    const hydratedRunnerSelectionCollectionIdRef = useRef<string | null>(null);
+    const runnerSelectedRequestsStateRef = useRef<RunnerSelectedRequestsState>(
+        loadRunnerSelectedRequests()
+    );
     const collectionRunCancelRef = useRef(false);
     const collectionRunActiveRequestIdRef = useRef<string | null>(null);
     const collectionRunPending = runnerRun?.status === "running";
@@ -511,6 +522,7 @@ export default function App() {
         hydratedTabsCollectionIdRef.current = null;
         hydratedCollapsedFoldersCollectionIdRef.current = null;
         hydratedRunnerCollectionIdRef.current = null;
+        hydratedRunnerSelectionCollectionIdRef.current = null;
     }
 
     async function reloadCollectionsAndRestoreActive(preferredCollectionId?: string | null) {
@@ -1022,7 +1034,20 @@ export default function App() {
     useEffect(() => {
         collectionRunCancelRef.current = false;
         collectionRunActiveRequestIdRef.current = null;
-        setRunnerSelectedRequestIds(orderedRequests.map((request) => request.id));
+        if (!current) {
+            setRunnerSelectedRequestIds([]);
+            hydratedRunnerSelectionCollectionIdRef.current = null;
+            return;
+        }
+
+        const allRequestIds = requestsInTreeOrder(current).map((request) => request.id);
+        const restoredSelection = getRunnerSelectedRequestsForCollection(
+            current.meta.id,
+            allRequestIds,
+            runnerSelectedRequestsStateRef.current
+        );
+        setRunnerSelectedRequestIds(restoredSelection);
+        hydratedRunnerSelectionCollectionIdRef.current = current.meta.id;
     }, [current?.meta.id]);
 
     useEffect(() => {
@@ -1031,9 +1056,30 @@ export default function App() {
             return;
         }
 
-        const validIds = new Set(orderedRequests.map((request) => request.id));
-        setRunnerSelectedRequestIds((previous) => previous.filter((requestId) => validIds.has(requestId)));
+        const orderedRequestIds = orderedRequests.map((request) => request.id);
+        const validIds = new Set(orderedRequestIds);
+        setRunnerSelectedRequestIds((previous) => {
+            const previousSet = new Set(previous.filter((requestId) => validIds.has(requestId)));
+            const next = orderedRequestIds.filter((requestId) => previousSet.has(requestId));
+            if (next.length === previous.length && next.every((requestId, index) => requestId === previous[index])) {
+                return previous;
+            }
+            return next;
+        });
     }, [current?.requests, orderedRequests]);
+
+    useEffect(() => {
+        if (!current) return;
+        if (hydratedRunnerSelectionCollectionIdRef.current !== current.meta.id) return;
+        const nextState = setRunnerSelectedRequestsForCollection(
+            current.meta.id,
+            runnerSelectedRequestIds,
+            runnerSelectedRequestsStateRef.current
+        );
+        if (nextState === runnerSelectedRequestsStateRef.current) return;
+        runnerSelectedRequestsStateRef.current = nextState;
+        saveRunnerSelectedRequests(nextState);
+    }, [current?.meta.id, runnerSelectedRequestIds]);
 
     useEffect(() => {
         if (!current) return;
