@@ -1,12 +1,27 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { HttpResponseDto } from "../types.ts";
 
 export type ResponseTabId = "body" | "cookies" | "headers" | "runtime";
+
+type CopyState = "idle" | "copied" | "error";
 
 type CookieItem = {
     name: string;
     value: string;
     attributes: string;
+};
+
+type ResponseBodyView = {
+    displayText: string;
+    copyText: string;
+    isJson: boolean;
+};
+
+type JsonTokenType = "plain" | "key" | "string" | "number" | "boolean" | "null";
+
+type JsonToken = {
+    text: string;
+    type: JsonTokenType;
 };
 
 type ResponsePanelProps = {
@@ -32,13 +47,44 @@ export default function ResponsePanel({
     activeTab,
     onTabChange,
 }: ResponsePanelProps) {
-    const parsedBody = useMemo(() => formatResponseBody(response), [response]);
+    const bodyView = useMemo(() => formatResponseBody(response), [response]);
+    const jsonTokens = useMemo(
+        () => (bodyView.isJson ? tokenizeJson(bodyView.displayText) : []),
+        [bodyView.displayText, bodyView.isJson]
+    );
     const cookies = useMemo(() => extractCookies(response), [response]);
     const hasScriptInfo = !!scriptReport && (
         !!scriptReport.preRequestError ||
         !!scriptReport.postResponseError ||
         scriptReport.tests.length > 0
     );
+    const [copyState, setCopyState] = useState<CopyState>("idle");
+    const copyResetTimerRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        setCopyState("idle");
+    }, [bodyView.copyText]);
+
+    useEffect(() => {
+        return () => {
+            if (copyResetTimerRef.current !== null) {
+                window.clearTimeout(copyResetTimerRef.current);
+            }
+        };
+    }, []);
+
+    const handleCopyBody = async () => {
+        if (!bodyView.copyText) return;
+        const copied = await copyTextToClipboard(bodyView.copyText);
+        setCopyState(copied ? "copied" : "error");
+        if (copyResetTimerRef.current !== null) {
+            window.clearTimeout(copyResetTimerRef.current);
+        }
+        copyResetTimerRef.current = window.setTimeout(() => {
+            setCopyState("idle");
+            copyResetTimerRef.current = null;
+        }, 1600);
+    };
 
     return (
         <div
@@ -67,7 +113,7 @@ export default function ResponsePanel({
                 </div>
             </div>
 
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flexShrink: 0, alignItems: "center" }}>
                 <button onClick={() => onTabChange("body")} style={responseTabStyle(activeTab === "body")}>
                     Body
                 </button>
@@ -80,6 +126,15 @@ export default function ResponsePanel({
                 <button onClick={() => onTabChange("runtime")} style={responseTabStyle(activeTab === "runtime")}>
                     Runtime
                 </button>
+                {activeTab === "body" && (
+                    <button
+                        onClick={() => void handleCopyBody()}
+                        disabled={!bodyView.copyText}
+                        style={copyBodyButtonStyle(!bodyView.copyText, copyState)}
+                    >
+                        {copyState === "copied" ? "Copied" : copyState === "error" ? "Copy failed" : "Copy body"}
+                    </button>
+                )}
             </div>
 
             {hasScriptInfo && scriptReport && (
@@ -123,8 +178,14 @@ export default function ResponsePanel({
             )}
 
             {activeTab === "body" && (
-                <pre style={responsePreStyle()}>
-                    {parsedBody}
+                <pre style={responsePreStyle(bodyView.isJson)}>
+                    {bodyView.isJson
+                        ? jsonTokens.map((token, index) => (
+                            <span key={`${token.type}-${index}`} style={jsonTokenStyle(token.type)}>
+                                {token.text}
+                            </span>
+                        ))
+                        : bodyView.displayText}
                 </pre>
             )}
 
@@ -236,9 +297,13 @@ export default function ResponsePanel({
     );
 }
 
-function formatResponseBody(response: HttpResponseDto | null): string {
-    if (!response) return "No response yet.";
-    if (!response.body_text) return "(empty body)";
+function formatResponseBody(response: HttpResponseDto | null): ResponseBodyView {
+    if (!response) {
+        return { displayText: "No response yet.", copyText: "", isJson: false };
+    }
+    if (!response.body_text) {
+        return { displayText: "(empty body)", copyText: "", isJson: false };
+    }
 
     const contentType = findHeaderValue(response, "content-type")?.toLowerCase() ?? "";
     const raw = response.body_text;
@@ -248,13 +313,53 @@ function formatResponseBody(response: HttpResponseDto | null): string {
         raw.trim().startsWith("{") ||
         raw.trim().startsWith("[");
 
-    if (!looksLikeJson) return raw;
+    if (!looksLikeJson) {
+        return { displayText: raw, copyText: raw, isJson: false };
+    }
 
     try {
-        return JSON.stringify(JSON.parse(raw), null, 2);
+        const pretty = JSON.stringify(JSON.parse(raw), null, 2);
+        return { displayText: pretty, copyText: pretty, isJson: true };
     } catch {
-        return raw;
+        return { displayText: raw, copyText: raw, isJson: false };
     }
+}
+
+function tokenizeJson(json: string): JsonToken[] {
+    const tokenRegex = /("(?:\\u[a-fA-F\d]{4}|\\[^u]|[^\\"])*")(\s*:)?|\btrue\b|\bfalse\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+    const tokens: JsonToken[] = [];
+    let lastIndex = 0;
+
+    for (const match of json.matchAll(tokenRegex)) {
+        const full = match[0];
+        const index = match.index ?? 0;
+        if (index > lastIndex) {
+            tokens.push({ text: json.slice(lastIndex, index), type: "plain" });
+        }
+
+        const hasQuotedString = typeof match[1] === "string";
+        const hasKeySeparator = typeof match[2] === "string";
+
+        let type: JsonTokenType;
+        if (hasQuotedString) {
+            type = hasKeySeparator ? "key" : "string";
+        } else if (full === "true" || full === "false") {
+            type = "boolean";
+        } else if (full === "null") {
+            type = "null";
+        } else {
+            type = "number";
+        }
+
+        tokens.push({ text: full, type });
+        lastIndex = index + full.length;
+    }
+
+    if (lastIndex < json.length) {
+        tokens.push({ text: json.slice(lastIndex), type: "plain" });
+    }
+
+    return tokens;
 }
 
 function findHeaderValue(response: HttpResponseDto, key: string): string | undefined {
@@ -311,10 +416,46 @@ function responseTabStyle(active: boolean): React.CSSProperties {
     };
 }
 
-function responsePreStyle(): React.CSSProperties {
+function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSSProperties {
+    if (disabled) {
+        return {
+            ...responseTabStyle(false),
+            marginLeft: "auto",
+        };
+    }
+
+    if (copyState === "copied") {
+        return {
+            ...responseTabStyle(false),
+            marginLeft: "auto",
+            border: "1px solid rgba(34, 197, 94, 0.7)",
+            background: "rgba(22, 163, 74, 0.16)",
+            color: "#bbf7d0",
+        };
+    }
+
+    if (copyState === "error") {
+        return {
+            ...responseTabStyle(false),
+            marginLeft: "auto",
+            border: "1px solid rgba(239, 68, 68, 0.75)",
+            background: "rgba(239, 68, 68, 0.14)",
+            color: "#fecaca",
+        };
+    }
+
+    return {
+        ...responseTabStyle(false),
+        marginLeft: "auto",
+    };
+}
+
+function responsePreStyle(isJson: boolean): React.CSSProperties {
     return {
         margin: 0,
-        background: "var(--pg-surface-1)",
+        background: isJson
+            ? "linear-gradient(180deg, rgba(13, 28, 40, 0.98) 0%, rgba(10, 20, 35, 0.98) 100%)"
+            : "var(--pg-surface-1)",
         color: "var(--pg-text-dim)",
         width: "100%",
         minWidth: 0,
@@ -322,12 +463,71 @@ function responsePreStyle(): React.CSSProperties {
         flex: 1,
         overflow: "auto",
         borderRadius: 12,
-        border: "1px solid var(--pg-border)",
+        border: isJson ? "1px solid rgba(var(--pg-primary-rgb), 0.38)" : "1px solid var(--pg-border)",
         padding: 12,
         boxSizing: "border-box",
+        fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
+        fontSize: 13,
+        lineHeight: 1.5,
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
+        boxShadow: isJson ? "inset 0 0 0 1px rgba(var(--pg-primary-rgb), 0.12)" : "none",
     };
+}
+
+function jsonTokenStyle(type: JsonTokenType): React.CSSProperties {
+    if (type === "key") {
+        return { color: "#7dd3fc" };
+    }
+    if (type === "string") {
+        return { color: "#6ee7b7" };
+    }
+    if (type === "number") {
+        return { color: "#fbbf24" };
+    }
+    if (type === "boolean") {
+        return { color: "#f97316" };
+    }
+    if (type === "null") {
+        return { color: "var(--pg-text-muted)" };
+    }
+    return { color: "var(--pg-text-dim)" };
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+    if (!text) return false;
+
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch {
+            // Fallback below for unsupported environments.
+        }
+    }
+
+    if (typeof document === "undefined" || !document.body) {
+        return false;
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+
+    try {
+        return document.execCommand("copy");
+    } catch {
+        return false;
+    } finally {
+        document.body.removeChild(textarea);
+    }
 }
 
 function responsePanelStyle(): React.CSSProperties {
