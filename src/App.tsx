@@ -71,7 +71,11 @@ import type {
     Request,
     RequestScripts,
 } from "./types.ts";
-import { checkForUpdate, restartAfterUpdate } from "./helpers/TauriUpdaterHelper.ts";
+import {
+    checkForUpdate,
+    downloadAndInstallPendingUpdate,
+    restartAfterUpdate,
+} from "./helpers/TauriUpdaterHelper.ts";
 
 type SidebarContextMenu = {
     x: number;
@@ -115,6 +119,10 @@ type DeleteEnvironmentModal = {
 };
 
 type UpdateRestartModal = {
+    version: string;
+};
+
+type UpdateDownloadModal = {
     version: string;
 };
 
@@ -473,6 +481,8 @@ export default function App() {
     const [collectionError, setCollectionError] = useState("");
     const [runnerModalOpen, setRunnerModalOpen] = useState(false);
     const [runnerSelectedRequestIds, setRunnerSelectedRequestIds] = useState<string[]>([]);
+    const [updateDownloadModal, setUpdateDownloadModal] = useState<UpdateDownloadModal | null>(null);
+    const [updateDownloadBusy, setUpdateDownloadBusy] = useState(false);
     const [updateRestartModal, setUpdateRestartModal] = useState<UpdateRestartModal | null>(null);
     const [updateRestartBusy, setUpdateRestartBusy] = useState(false);
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
@@ -829,16 +839,37 @@ export default function App() {
         let cancelled = false;
 
         (async () => {
-            const installedUpdate = await checkForUpdate();
-            if (cancelled || !installedUpdate) return;
-            setUpdateRestartModal({ version: installedUpdate.version });
-            setStatus(`✅ Update ${installedUpdate.version} installed. Restart required.`);
+            const availableUpdate = await checkForUpdate();
+            if (cancelled || !availableUpdate) return;
+            setUpdateDownloadModal({ version: availableUpdate.version });
+            setStatus(`⬇️ Update ${availableUpdate.version} available.`);
         })();
 
         return () => {
             cancelled = true;
         };
     }, []);
+
+    async function onConfirmDownloadAndInstallUpdate() {
+        setUpdateDownloadBusy(true);
+
+        try {
+            const installedUpdate = await downloadAndInstallPendingUpdate();
+            if (!installedUpdate) {
+                setStatus("❌ Update install failed.");
+                setUpdateDownloadBusy(false);
+                return;
+            }
+
+            setUpdateDownloadModal(null);
+            setUpdateRestartModal({ version: installedUpdate.version });
+            setStatus(`✅ Update ${installedUpdate.version} installed. Restart required.`);
+            setUpdateDownloadBusy(false);
+        } catch (error) {
+            setStatus(`❌ Update install failed: ${String(error)}`);
+            setUpdateDownloadBusy(false);
+        }
+    }
 
     async function onConfirmRestartAfterUpdate() {
         setUpdateRestartBusy(true);
@@ -4179,6 +4210,63 @@ export default function App() {
                                 style={primaryButtonStyle(closeDraftBusy)}
                             >
                                 {closeDraftBusy ? "Saving..." : "Save & Close"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {updateDownloadModal && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1365,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={() => {
+                        if (!updateDownloadBusy) {
+                            setUpdateDownloadModal(null);
+                        }
+                    }}
+                >
+                    <div
+                        onMouseDown={(event) => event.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 500,
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 12,
+                            background: "var(--pg-surface-1)",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <h3 style={{ margin: 0 }}>Update available</h3>
+                        <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.5 }}>
+                            Bifrost v{updateDownloadModal.version} is available.
+                            Download and install now?
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <button
+                                onClick={() => setUpdateDownloadModal(null)}
+                                disabled={updateDownloadBusy}
+                                style={buttonStyle(updateDownloadBusy)}
+                            >
+                                Later
+                            </button>
+                            <button
+                                onClick={() => void onConfirmDownloadAndInstallUpdate()}
+                                disabled={updateDownloadBusy}
+                                style={primaryButtonStyle(updateDownloadBusy)}
+                            >
+                                {updateDownloadBusy ? "Installing..." : "Download & Install"}
                             </button>
                         </div>
                     </div>
