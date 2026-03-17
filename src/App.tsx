@@ -71,6 +71,7 @@ import type {
     Request,
     RequestScripts,
 } from "./types.ts";
+import { checkForUpdate, restartAfterUpdate } from "./helpers/TauriUpdaterHelper.ts";
 
 type SidebarContextMenu = {
     x: number;
@@ -111,6 +112,10 @@ type DeleteCollectionModal = {
 type DeleteEnvironmentModal = {
     id: string;
     name: string;
+};
+
+type UpdateRestartModal = {
+    version: string;
 };
 
 type PersistedTabsEntry = {
@@ -468,6 +473,8 @@ export default function App() {
     const [collectionError, setCollectionError] = useState("");
     const [runnerModalOpen, setRunnerModalOpen] = useState(false);
     const [runnerSelectedRequestIds, setRunnerSelectedRequestIds] = useState<string[]>([]);
+    const [updateRestartModal, setUpdateRestartModal] = useState<UpdateRestartModal | null>(null);
+    const [updateRestartBusy, setUpdateRestartBusy] = useState(false);
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
@@ -816,6 +823,32 @@ export default function App() {
         },
         [activeEnvironmentId, environments, envSelectedId]
     );
+
+
+    useEffect(() => {
+        let cancelled = false;
+
+        (async () => {
+            const installedUpdate = await checkForUpdate();
+            if (cancelled || !installedUpdate) return;
+            setUpdateRestartModal({ version: installedUpdate.version });
+            setStatus(`✅ Update ${installedUpdate.version} installed. Restart required.`);
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    async function onConfirmRestartAfterUpdate() {
+        setUpdateRestartBusy(true);
+        try {
+            await restartAfterUpdate();
+        } catch (error) {
+            setStatus(`❌ Restart failed: ${String(error)}`);
+            setUpdateRestartBusy(false);
+        }
+    }
 
     useEffect(() => {
         (async () => {
@@ -4146,6 +4179,63 @@ export default function App() {
                                 style={primaryButtonStyle(closeDraftBusy)}
                             >
                                 {closeDraftBusy ? "Saving..." : "Save & Close"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {updateRestartModal && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1370,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={() => {
+                        if (!updateRestartBusy) {
+                            setUpdateRestartModal(null);
+                        }
+                    }}
+                >
+                    <div
+                        onMouseDown={(event) => event.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 500,
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 12,
+                            background: "var(--pg-surface-1)",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <h3 style={{ margin: 0 }}>Update ready</h3>
+                        <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.5 }}>
+                            Bifrost v{updateRestartModal.version} has been installed.
+                            Restart now to apply the update?
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <button
+                                onClick={() => setUpdateRestartModal(null)}
+                                disabled={updateRestartBusy}
+                                style={buttonStyle(updateRestartBusy)}
+                            >
+                                Later
+                            </button>
+                            <button
+                                onClick={() => void onConfirmRestartAfterUpdate()}
+                                disabled={updateRestartBusy}
+                                style={primaryButtonStyle(updateRestartBusy)}
+                            >
+                                {updateRestartBusy ? "Restarting..." : "Restart now"}
                             </button>
                         </div>
                     </div>

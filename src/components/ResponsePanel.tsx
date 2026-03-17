@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import type { HttpResponseDto } from "../types.ts";
 
 export type ResponseTabId = "body" | "cookies" | "headers" | "runtime";
@@ -64,6 +65,7 @@ export default function ResponsePanel({
     const [copyState, setCopyState] = useState<CopyState>("idle");
     const [bodyMode, setBodyMode] = useState<BodyMode>("raw");
     const [bodyControlsHovered, setBodyControlsHovered] = useState(false);
+    const [appVersion, setAppVersion] = useState<string | null>(null);
     const copyResetTimerRef = useRef<number | null>(null);
 
     useEffect(() => {
@@ -81,6 +83,25 @@ export default function ResponsePanel({
             if (copyResetTimerRef.current !== null) {
                 window.clearTimeout(copyResetTimerRef.current);
             }
+        };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        void getVersion()
+            .then((version) => {
+                if (!cancelled) {
+                    setAppVersion(version);
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setAppVersion(null);
+                }
+            });
+
+        return () => {
+            cancelled = true;
         };
     }, []);
 
@@ -191,50 +212,57 @@ export default function ResponsePanel({
             )}
 
             {activeTab === "body" && (
-                <div
-                    style={responseBodyContainerStyle()}
-                    onMouseEnter={() => setBodyControlsHovered(true)}
-                    onMouseLeave={() => setBodyControlsHovered(false)}
-                >
-                    {bodyView.canPreview && (
-                        <div style={bodyModeControlsStyle(bodyControlsHovered)}>
-                            <button
-                                onClick={() => setBodyMode("raw")}
-                                style={bodyModeButtonStyle(bodyMode === "raw")}
+                <>
+                    <div
+                        style={responseBodyContainerStyle()}
+                        onMouseEnter={() => setBodyControlsHovered(true)}
+                        onMouseLeave={() => setBodyControlsHovered(false)}
+                    >
+                        {bodyView.canPreview && (
+                            <div style={bodyModeControlsStyle(bodyControlsHovered)}>
+                                <button
+                                    onClick={() => setBodyMode("raw")}
+                                    style={bodyModeButtonStyle(bodyMode === "raw")}
+                                >
+                                    Raw
+                                </button>
+                                <button
+                                    onClick={() => setBodyMode("preview")}
+                                    style={bodyModeButtonStyle(bodyMode === "preview")}
+                                >
+                                    Preview
+                                </button>
+                            </div>
+                        )}
+                        {bodyMode === "preview" && bodyView.canPreview ? (
+                            <div style={responsePreviewWrapStyle()}>
+                                <iframe
+                                    title="Response preview"
+                                    srcDoc={bodyView.previewHtml ?? ""}
+                                    sandbox=""
+                                    style={responsePreviewFrameStyle()}
+                                />
+                            </div>
+                        ) : (
+                            <pre
+                                style={responsePreStyle(bodyView.isJson, bodyView.canPreview)}
                             >
-                                Raw
-                            </button>
-                            <button
-                                onClick={() => setBodyMode("preview")}
-                                style={bodyModeButtonStyle(bodyMode === "preview")}
-                            >
-                                Preview
-                            </button>
+                                {bodyView.isJson
+                                    ? jsonTokens.map((token, index) => (
+                                        <span key={`${token.type}-${index}`} style={jsonTokenStyle(token.type)}>
+                                            {token.text}
+                                        </span>
+                                    ))
+                                    : bodyView.displayText}
+                            </pre>
+                        )}
+                    </div>
+                    {appVersion && (
+                        <div style={responseVersionStyle()}>
+                            v{appVersion}
                         </div>
                     )}
-                    {bodyMode === "preview" && bodyView.canPreview ? (
-                        <div style={responsePreviewWrapStyle()}>
-                            <iframe
-                                title="Response preview"
-                                srcDoc={bodyView.previewHtml ?? ""}
-                                sandbox=""
-                                style={responsePreviewFrameStyle()}
-                            />
-                        </div>
-                    ) : (
-                        <pre
-                            style={responsePreStyle(bodyView.isJson, bodyView.canPreview)}
-                        >
-                            {bodyView.isJson
-                                ? jsonTokens.map((token, index) => (
-                                    <span key={`${token.type}-${index}`} style={jsonTokenStyle(token.type)}>
-                                        {token.text}
-                                    </span>
-                                ))
-                                : bodyView.displayText}
-                        </pre>
-                    )}
-                </div>
+                </>
             )}
 
             {activeTab === "headers" && (
@@ -669,6 +697,17 @@ function responsePreviewFrameStyle(): React.CSSProperties {
         height: "100%",
         border: "none",
         display: "block",
+    };
+}
+
+function responseVersionStyle(): React.CSSProperties {
+    return {
+        alignSelf: "flex-end",
+        marginTop: 2,
+        marginRight: 2,
+        fontSize: 11,
+        color: "var(--pg-text-muted)",
+        letterSpacing: 0.2,
     };
 }
 
