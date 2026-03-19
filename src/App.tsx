@@ -24,6 +24,7 @@ import RequestBodyEditor from "./components/RequestBodyEditor.tsx";
 import RequestScriptsEditor from "./components/RequestScriptsEditor.tsx";
 import CollectionsModal from "./components/CollectionsModal.tsx";
 import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
+import ConfirmationModal from "./components/ConfirmationModal.tsx";
 import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.tsx";
 import CollectionRunnerModal from "./components/CollectionRunnerModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
@@ -118,6 +119,11 @@ type DeleteEnvironmentModal = {
     name: string;
 };
 
+type DeleteRequestModal = {
+    id: string;
+    name: string;
+};
+
 type UpdateRestartModal = {
     version: string;
 };
@@ -162,6 +168,7 @@ const SHORTCUT_LABELS = {
     duplicateRequest: `${PRIMARY_SHORTCUT_MODIFIER} + D`,
     closeTab: `${PRIMARY_SHORTCUT_MODIFIER} + W`,
     renameRequest: `${PRIMARY_SHORTCUT_MODIFIER} + E`,
+    deleteRequest: IS_MACOS ? "CMD + Backspace" : "CTRL + Delete",
 } as const;
 const DYNAMIC_VARIABLE_NAMES = [
     "$timestamp",
@@ -485,6 +492,8 @@ export default function App() {
     const [updateDownloadBusy, setUpdateDownloadBusy] = useState(false);
     const [updateRestartModal, setUpdateRestartModal] = useState<UpdateRestartModal | null>(null);
     const [updateRestartBusy, setUpdateRestartBusy] = useState(false);
+    const [deleteRequestModal, setDeleteRequestModal] = useState<DeleteRequestModal | null>(null);
+    const [deleteRequestBusy, setDeleteRequestBusy] = useState(false);
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
@@ -531,6 +540,8 @@ export default function App() {
         collectionRunActiveRequestIdRef.current = null;
         setRunnerModalOpen(false);
         setRunnerSelectedRequestIds([]);
+        setDeleteRequestModal(null);
+        setDeleteRequestBusy(false);
         setDeleteEnvironmentModal(null);
         setDraftsById({});
         setCloseDraftModal(null);
@@ -1529,6 +1540,15 @@ export default function App() {
                 setRenameError("");
                 setContextMenu(null);
                 setRootAddMenu(null);
+                return;
+            }
+
+            if (key === "backspace" || key === "delete") {
+                if (!selectedRequestId || collectionRunPending) return;
+                e.preventDefault();
+                setContextMenu(null);
+                setRootAddMenu(null);
+                requestDeleteRequest(selectedRequestId);
             }
         }
 
@@ -2204,6 +2224,13 @@ export default function App() {
         });
     }
 
+    function requestDeleteRequest(requestId: string) {
+        if (!current) return;
+        const request = current.requests.find((entry) => entry.id === requestId);
+        if (!request) return;
+        setDeleteRequestModal({ id: request.id, name: request.name });
+    }
+
     function onDeleteRequest(requestId: string) {
         if (!current) return;
 
@@ -2244,6 +2271,15 @@ export default function App() {
             setResp,
             setStatus
         );
+    }
+
+    async function onConfirmDeleteRequest() {
+        if (!deleteRequestModal || deleteRequestBusy) return;
+        setDeleteRequestBusy(true);
+        const deletingId = deleteRequestModal.id;
+        setDeleteRequestModal(null);
+        onDeleteRequest(deletingId);
+        setDeleteRequestBusy(false);
     }
 
     async function onDeleteFolder(folderId: string) {
@@ -3946,10 +3982,36 @@ export default function App() {
                                     void onDeleteFolder(contextMenu.row.folderId);
                                     return;
                                 }
-                                onDeleteRequest(contextMenu.row.requestId);
+                                requestDeleteRequest(contextMenu.row.requestId);
                             }}
+                            title={
+                                contextMenu.row.kind === "request"
+                                    ? `Delete (${SHORTCUT_LABELS.deleteRequest})`
+                                    : "Delete"
+                            }
                         >
-                            Delete
+                            <span
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    gap: 12,
+                                    width: "100%",
+                                }}
+                            >
+                                <span>Delete</span>
+                                {contextMenu.row.kind === "request" && (
+                                    <span
+                                        style={{
+                                            fontSize: 11,
+                                            color: "var(--pg-text-muted)",
+                                            fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
+                                        }}
+                                    >
+                                        {SHORTCUT_LABELS.deleteRequest}
+                                    </span>
+                                )}
+                            </span>
                         </button>
                     </div>
                 </div>
@@ -4335,6 +4397,20 @@ export default function App() {
                     </div>
                 </div>
             )}
+
+            <ConfirmationModal
+                open={!!deleteRequestModal}
+                busy={deleteRequestBusy}
+                title="Delete request"
+                message={
+                    deleteRequestModal
+                        ? `You are about to delete "${deleteRequestModal.name}". This action cannot be undone. Do you want to continue?`
+                        : ""
+                }
+                confirmLabel="Delete request"
+                onCancel={() => setDeleteRequestModal(null)}
+                onConfirm={() => void onConfirmDeleteRequest()}
+            />
 
             <CollectionRunnerModal
                 open={runnerModalOpen}
