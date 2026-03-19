@@ -12,6 +12,7 @@
     "version:minor": "node scripts/set-version.js --bump minor",
     "version:major": "node scripts/set-version.js --bump major",
     "release:macos": "node scripts/build-macos-release.js",
+    "release:windows": "node scripts/build-windows-release.js",
     "tauri": "tauri",
     "tauri:dev:windows": "tauri dev --config src-tauri/tauri.windows.conf.json",
     "tauri:build:windows": "tauri build --config src-tauri/tauri.windows.conf.json"
