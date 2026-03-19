@@ -1,7 +1,7 @@
 {
   "name": "Bifrost",
   "private": true,
-  "version": "1.1.1",
+  "version": "1.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,6 +11,7 @@
     "version:patch": "node scripts/set-version.js --bump patch",
     "version:minor": "node scripts/set-version.js --bump minor",
     "version:major": "node scripts/set-version.js --bump major",
+    "release:macos": "node scripts/build-macos-release.js",
     "tauri": "tauri",
     "tauri:dev:windows": "tauri dev --config src-tauri/tauri.windows.conf.json",
     "tauri:build:windows": "tauri build --config src-tauri/tauri.windows.conf.json"
