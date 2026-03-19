@@ -109,6 +109,10 @@ type MoveNodeModal = {
     title: string;
 };
 
+type CreateRequestModal = {
+    parentFolderId: string | null;
+};
+
 type DeleteCollectionModal = {
     id: string;
     name: string;
@@ -472,6 +476,10 @@ export default function App() {
     const [moveNodeTargetFolderId, setMoveNodeTargetFolderId] = useState<string | null>(null);
     const [moveNodeBusy, setMoveNodeBusy] = useState(false);
     const [moveNodeError, setMoveNodeError] = useState("");
+    const [createRequestModal, setCreateRequestModal] = useState<CreateRequestModal | null>(null);
+    const [createRequestNameInput, setCreateRequestNameInput] = useState("");
+    const [createRequestBusy, setCreateRequestBusy] = useState(false);
+    const [createRequestError, setCreateRequestError] = useState("");
     const [draggedOpenTabRequestId, setDraggedOpenTabRequestId] = useState<string | null>(null);
     const [openTabDropIndicator, setOpenTabDropIndicator] = useState<OpenTabDropIndicator | null>(null);
     const [environmentsModalOpen, setEnvironmentsModalOpen] = useState(false);
@@ -529,6 +537,10 @@ export default function App() {
         setMoveNodeTargetFolderId(null);
         setMoveNodeBusy(false);
         setMoveNodeError("");
+        setCreateRequestModal(null);
+        setCreateRequestNameInput("");
+        setCreateRequestBusy(false);
+        setCreateRequestError("");
         setRootAddMenu(null);
         setDraggedOpenTabRequestId(null);
         setOpenTabDropIndicator(null);
@@ -2414,17 +2426,46 @@ export default function App() {
         }
     }
 
+    function openCreateRequest(parentFolderId: string | null) {
+        setCreateRequestModal({ parentFolderId });
+        setCreateRequestNameInput("New Request");
+        setCreateRequestError("");
+    }
+
     function onNewRequest(parentFolderId: string | null = null) {
-        if (!current) return;
-        devCreate(
-            current,
-            setCurrent,
-            setSelectedRequestId,
-            setResp,
-            setStatus,
-            setSelection,
-            parentFolderId
-        );
+        if (!current || collectionRunPending) return;
+        openCreateRequest(parentFolderId);
+    }
+
+    async function submitCreateRequest() {
+        if (!current || !createRequestModal || createRequestBusy) return;
+
+        const name = createRequestNameInput.trim();
+        if (!name) {
+            setCreateRequestError("Request name cannot be empty.");
+            return;
+        }
+
+        setCreateRequestBusy(true);
+        setCreateRequestError("");
+        try {
+            await devCreate(
+                current,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                setStatus,
+                setSelection,
+                createRequestModal.parentFolderId,
+                name
+            );
+            setCreateRequestModal(null);
+            setStatus("✅ Request created");
+        } catch (error) {
+            setCreateRequestError(`Create failed: ${String(error)}`);
+        } finally {
+            setCreateRequestBusy(false);
+        }
     }
 
     function openRootAddMenuFromButton() {
@@ -4077,6 +4118,76 @@ export default function App() {
                             </button>
                             <button type="submit" disabled={renameBusy} style={primaryButtonStyle(renameBusy)}>
                                 {renameBusy ? "Renaming..." : "Rename"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {createRequestModal && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1310,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={() => {
+                        if (!createRequestBusy) setCreateRequestModal(null);
+                    }}
+                >
+                    <form
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => {
+                            if (event.key === "Escape" && !createRequestBusy) {
+                                event.preventDefault();
+                                setCreateRequestModal(null);
+                            }
+                        }}
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            void submitCreateRequest();
+                        }}
+                        style={{
+                            width: "100%",
+                            maxWidth: 460,
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 12,
+                            background: "var(--pg-surface-1)",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <h3 style={{ margin: 0 }}>Create request</h3>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>Request name</span>
+                            <input
+                                value={createRequestNameInput}
+                                onChange={(event) => setCreateRequestNameInput(event.target.value)}
+                                disabled={createRequestBusy}
+                                autoFocus
+                            />
+                        </label>
+                        {createRequestError && (
+                            <div style={{ color: "var(--pg-danger)", fontSize: 13 }}>{createRequestError}</div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <button
+                                type="button"
+                                onClick={() => setCreateRequestModal(null)}
+                                disabled={createRequestBusy}
+                                style={buttonStyle(createRequestBusy)}
+                            >
+                                Cancel
+                            </button>
+                            <button type="submit" disabled={createRequestBusy} style={primaryButtonStyle(createRequestBusy)}>
+                                {createRequestBusy ? "Creating..." : "Create"}
                             </button>
                         </div>
                     </form>

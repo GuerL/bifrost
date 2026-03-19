@@ -53,13 +53,15 @@ export async function devCreate(
     setResp: (r: HttpResponseDto | null) => void,
     setStatus: (s: string) => void,
     setSelection: (r: Request) => void,
-    parentFolderId?: string | null
+    parentFolderId?: string | null,
+    requestName?: string
 ) {
     if (!current) return;
     let id = crypto.randomUUID();
+    const nextName = requestName?.trim() || "New Request";
    const req: Request = {
      id: id,
-     name: "New Request",
+     name: nextName,
      method: "get",
      url: "",
      headers: [],
