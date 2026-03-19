@@ -123,6 +123,11 @@ type DeleteEnvironmentModal = {
     name: string;
 };
 
+type DeleteFolderModal = {
+    id: string;
+    name: string;
+};
+
 type DeleteRequestModal = {
     id: string;
     name: string;
@@ -500,6 +505,8 @@ export default function App() {
     const [updateDownloadBusy, setUpdateDownloadBusy] = useState(false);
     const [updateRestartModal, setUpdateRestartModal] = useState<UpdateRestartModal | null>(null);
     const [updateRestartBusy, setUpdateRestartBusy] = useState(false);
+    const [deleteFolderModal, setDeleteFolderModal] = useState<DeleteFolderModal | null>(null);
+    const [deleteFolderBusy, setDeleteFolderBusy] = useState(false);
     const [deleteRequestModal, setDeleteRequestModal] = useState<DeleteRequestModal | null>(null);
     const [deleteRequestBusy, setDeleteRequestBusy] = useState(false);
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
@@ -552,6 +559,8 @@ export default function App() {
         collectionRunActiveRequestIdRef.current = null;
         setRunnerModalOpen(false);
         setRunnerSelectedRequestIds([]);
+        setDeleteFolderModal(null);
+        setDeleteFolderBusy(false);
         setDeleteRequestModal(null);
         setDeleteRequestBusy(false);
         setDeleteEnvironmentModal(null);
@@ -2294,8 +2303,15 @@ export default function App() {
         setDeleteRequestBusy(false);
     }
 
-    async function onDeleteFolder(folderId: string) {
-        if (!current) return;
+    function requestDeleteFolder(folderId: string, folderName: string) {
+        setDeleteFolderModal({ id: folderId, name: folderName });
+    }
+
+    async function onConfirmDeleteFolder() {
+        if (!current || !deleteFolderModal || deleteFolderBusy) return;
+        const folderId = deleteFolderModal.id;
+
+        setDeleteFolderBusy(true);
         try {
             await invoke("delete_folder", {
                 collectionId: current.meta.id,
@@ -2309,10 +2325,12 @@ export default function App() {
                 setResp,
                 setStatus
             );
-            setContextMenu(null);
+            setDeleteFolderModal(null);
             setStatus("✅ Folder deleted");
         } catch (error) {
             setStatus(`❌ Delete folder failed: ${String(error)}`);
+        } finally {
+            setDeleteFolderBusy(false);
         }
     }
 
@@ -4020,7 +4038,7 @@ export default function App() {
                             onClick={() => {
                                 setContextMenu(null);
                                 if (contextMenu.row.kind === "folder") {
-                                    void onDeleteFolder(contextMenu.row.folderId);
+                                    requestDeleteFolder(contextMenu.row.folderId, contextMenu.row.name);
                                     return;
                                 }
                                 requestDeleteRequest(contextMenu.row.requestId);
@@ -4508,6 +4526,20 @@ export default function App() {
                     </div>
                 </div>
             )}
+
+            <ConfirmationModal
+                open={!!deleteFolderModal}
+                busy={deleteFolderBusy}
+                title="Delete folder"
+                message={
+                    deleteFolderModal
+                        ? `You are about to delete folder "${deleteFolderModal.name}". All requests inside this folder will be permanently deleted. Do you want to continue?`
+                        : ""
+                }
+                confirmLabel="Delete folder"
+                onCancel={() => setDeleteFolderModal(null)}
+                onConfirm={() => void onConfirmDeleteFolder()}
+            />
 
             <ConfirmationModal
                 open={!!deleteRequestModal}
