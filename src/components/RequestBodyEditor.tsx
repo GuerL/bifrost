@@ -17,6 +17,7 @@ type RequestBodyEditorProps = {
     resolveVariableValue: (name: string) => string | undefined;
     variableSuggestions: string[];
     editorPanelStyle: (height: number | string, minHeight?: number) => React.CSSProperties;
+    onSubmitShortcut: () => void;
 };
 
 function languageFromContentType(contentType: string): string {
@@ -120,6 +121,7 @@ export default function RequestBodyEditor({
     resolveVariableValue,
     variableSuggestions,
     editorPanelStyle,
+    onSubmitShortcut,
 }: RequestBodyEditorProps) {
     return (
         <>
@@ -156,7 +158,12 @@ export default function RequestBodyEditor({
                             path={`/bifrost-body/${selectedRequestId ?? "none"}.json`}
                             theme="bifrost-midnight"
                             beforeMount={beforeMountMonaco}
-                            onMount={onMountBodyJsonEditor}
+                            onMount={(editor, monaco) => {
+                                onMountBodyJsonEditor(editor);
+                                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+                                    onSubmitShortcut();
+                                });
+                            }}
                             defaultValue={
                                 jsonBody.text && jsonBody.text.trim().length > 0
                                     ? jsonBody.text
@@ -216,7 +223,12 @@ export default function RequestBodyEditor({
                                 path={`/bifrost-body/${selectedRequestId ?? "none"}.raw`}
                                 theme="bifrost-midnight"
                                 beforeMount={beforeMountMonaco}
-                                onMount={onMountBodyRawEditor}
+                                onMount={(editor, monaco) => {
+                                    onMountBodyRawEditor(editor);
+                                    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+                                        onSubmitShortcut();
+                                    });
+                                }}
                                 defaultValue={rawBody.text}
                                 onChange={(value) =>
                                     onSetFullDraft({

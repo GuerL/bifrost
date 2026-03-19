@@ -3469,6 +3469,12 @@ export default function App() {
                                     resolveVariableValue={resolveVariableValue}
                                     variableSuggestions={variableSuggestions}
                                     editorPanelStyle={editorPanelStyle}
+                                    onSubmitShortcut={() => {
+                                        if (!selectedRequestId || collectionRunPending) return;
+                                        setContextMenu(null);
+                                        setRootAddMenu(null);
+                                        void sendSelected();
+                                    }}
                                 />
                             )}
 
