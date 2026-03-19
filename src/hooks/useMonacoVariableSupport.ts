@@ -212,6 +212,13 @@ export function useMonacoVariableSupport({
             },
         });
 
+        monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+            validate: true,
+            allowComments: true,
+            comments: "ignore",
+            trailingCommas: "ignore",
+        });
+
         if (monacoFeaturesRegisteredRef.current) return;
         monacoFeaturesRegisteredRef.current = true;
 
