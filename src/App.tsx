@@ -29,6 +29,13 @@ import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.ts
 import CollectionRunnerModal from "./components/CollectionRunnerModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
 import {
+    copyRequestToClipboard,
+    isBifrostClipboardRequestPayload,
+    parseBifrostClipboardPayload,
+    readRequestFromClipboard,
+    type BifrostClipboardRequestPayloadV1,
+} from "./helpers/ClipboardRequestTransfer.ts";
+import {
     getRunnerSelectedRequestsForCollection,
     loadRunnerSelectedRequests,
     saveRunnerSelectedRequests,
@@ -131,6 +138,12 @@ type DeleteFolderModal = {
 type DeleteRequestModal = {
     id: string;
     name: string;
+};
+
+type ClipboardRequestImportModal = {
+    payload: BifrostClipboardRequestPayloadV1;
+    targetFolderId: string | null;
+    targetFolderLabel: string | null;
 };
 
 type UpdateRestartModal = {
@@ -509,6 +522,8 @@ export default function App() {
     const [deleteFolderBusy, setDeleteFolderBusy] = useState(false);
     const [deleteRequestModal, setDeleteRequestModal] = useState<DeleteRequestModal | null>(null);
     const [deleteRequestBusy, setDeleteRequestBusy] = useState(false);
+    const [clipboardImportModal, setClipboardImportModal] = useState<ClipboardRequestImportModal | null>(null);
+    const [clipboardImportBusy, setClipboardImportBusy] = useState(false);
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
@@ -563,6 +578,8 @@ export default function App() {
         setDeleteFolderBusy(false);
         setDeleteRequestModal(null);
         setDeleteRequestBusy(false);
+        setClipboardImportModal(null);
+        setClipboardImportBusy(false);
         setDeleteEnvironmentModal(null);
         setDraftsById({});
         setCloseDraftModal(null);
@@ -1586,6 +1603,37 @@ export default function App() {
         sendSelected,
     ]);
 
+    useEffect(() => {
+        async function onPaste(event: ClipboardEvent) {
+            if (!current || collectionRunPending) return;
+
+            const clipboardText = event.clipboardData?.getData("text/plain");
+            if (typeof clipboardText !== "string" || clipboardText.trim().length === 0) {
+                return;
+            }
+
+            // Only intercept normal paste when clipboard contains a valid Bifrost payload.
+            if (!isBifrostClipboardRequestPayload(clipboardText)) {
+                return;
+            }
+
+            event.preventDefault();
+
+            const payloadFromEvent = parseBifrostClipboardPayload(clipboardText);
+            if (!payloadFromEvent) return;
+
+            try {
+                const payloadFromSystemClipboard = await readRequestFromClipboard();
+                openClipboardImportModal(payloadFromSystemClipboard ?? payloadFromEvent);
+            } catch {
+                openClipboardImportModal(payloadFromEvent);
+            }
+        }
+
+        window.addEventListener("paste", onPaste);
+        return () => window.removeEventListener("paste", onPaste);
+    }, [current, collectionRunPending, selectedRequestId, sidebarRows, collectionFolderOptions]);
+
     async function sendSelected() {
         if (collectionRunPending) return;
         if (!selectedRequestId) return;
@@ -2331,6 +2379,105 @@ export default function App() {
             setStatus(`❌ Delete folder failed: ${String(error)}`);
         } finally {
             setDeleteFolderBusy(false);
+        }
+    }
+
+    function buildSafeImportedRequestName(name: string, existing: Request[]): string {
+        const trimmedBase = name.trim() || "Imported Request";
+        const existingNames = new Set(existing.map((entry) => entry.name));
+        if (!existingNames.has(trimmedBase)) {
+            return trimmedBase;
+        }
+
+        let counter = 2;
+        while (existingNames.has(`${trimmedBase} (${counter})`)) {
+            counter += 1;
+        }
+        return `${trimmedBase} (${counter})`;
+    }
+
+    function resolveClipboardImportTargetFolderId(): string | null {
+        if (!selectedRequestId) return null;
+        const row = sidebarRows.find(
+            (entry): entry is Extract<SidebarTreeRow, { kind: "request" }> =>
+                entry.kind === "request" && entry.requestId === selectedRequestId
+        );
+        return row?.parentFolderId ?? null;
+    }
+
+    function openClipboardImportModal(payload: BifrostClipboardRequestPayloadV1) {
+        const targetFolderId = resolveClipboardImportTargetFolderId();
+        const targetFolderLabel =
+            targetFolderId
+                ? collectionFolderOptions.find((entry) => entry.folderId === targetFolderId)?.label ?? null
+                : null;
+
+        setClipboardImportModal({
+            payload,
+            targetFolderId,
+            targetFolderLabel,
+        });
+    }
+
+    async function onCopyRequest(requestId: string) {
+        if (!current) return;
+
+        const source =
+            (draft && draft.id === requestId ? draft : null) ??
+            draftsById[requestId] ??
+            current.requests.find((entry) => entry.id === requestId) ??
+            null;
+
+        if (!source) return;
+
+        try {
+            await copyRequestToClipboard(source);
+            setStatus(`✅ Request "${source.name}" copied to clipboard`);
+        } catch (error) {
+            setStatus(`❌ Copy request failed: ${String(error)}`);
+        }
+    }
+
+    async function onConfirmImportClipboardRequest() {
+        if (!current || !clipboardImportModal || clipboardImportBusy) return;
+
+        const source = clipboardImportModal.payload.request;
+        const importedRequest: Request = {
+            ...source,
+            id: crypto.randomUUID(),
+            name: buildSafeImportedRequestName(source.name, current.requests),
+            headers: source.headers.map((entry) => ({ ...entry })),
+            query: source.query.map((entry) => ({ ...entry })),
+            body: structuredClone(source.body),
+            auth: structuredClone(source.auth),
+            extractors: source.extractors.map((entry) => ({ ...entry })),
+            scripts: { ...source.scripts },
+        };
+
+        setClipboardImportBusy(true);
+        try {
+            await invoke("create_request", {
+                collectionId: current.meta.id,
+                request: importedRequest,
+                parentFolderId: clipboardImportModal.targetFolderId,
+            });
+
+            await loadCollection(
+                current.meta.id,
+                importedRequest.id,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                setStatus
+            );
+
+            setSelection(importedRequest);
+            setClipboardImportModal(null);
+            setStatus(`✅ Request imported from clipboard: ${importedRequest.name}`);
+        } catch (error) {
+            setStatus(`❌ Clipboard import failed: ${String(error)}`);
+        } finally {
+            setClipboardImportBusy(false);
         }
     }
 
@@ -3991,6 +4138,19 @@ export default function App() {
                             </button>
                         )}
 
+                        {contextMenu.row.kind === "request" && (
+                            <button
+                                style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                                onClick={() => {
+                                    const row = contextMenu.row as Extract<SidebarTreeRow, { kind: "request" }>;
+                                    setContextMenu(null);
+                                    void onCopyRequest(row.requestId);
+                                }}
+                            >
+                                Copy Request
+                            </button>
+                        )}
+
                         {contextMenu.row.kind === "folder" && (
                             <button
                                 style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
@@ -4521,6 +4681,80 @@ export default function App() {
                                 style={primaryButtonStyle(updateRestartBusy)}
                             >
                                 {updateRestartBusy ? "Restarting..." : "Restart now"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {clipboardImportModal && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1460,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={() => {
+                        if (!clipboardImportBusy) setClipboardImportModal(null);
+                    }}
+                >
+                    <div
+                        onMouseDown={(event) => event.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 560,
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 12,
+                            background: "var(--pg-surface-1)",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <h3 style={{ margin: 0 }}>Import request from clipboard</h3>
+                        <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.5 }}>
+                            A Bifrost request payload was detected in your system clipboard.
+                            Confirm import into the current collection.
+                        </div>
+                        <div
+                            style={{
+                                display: "grid",
+                                gridTemplateColumns: "120px 1fr",
+                                gap: "6px 10px",
+                                fontSize: 13,
+                            }}
+                        >
+                            <span style={{ color: "var(--pg-text-muted)" }}>Name</span>
+                            <span>{clipboardImportModal.payload.request.name}</span>
+                            <span style={{ color: "var(--pg-text-muted)" }}>Method</span>
+                            <span>{clipboardImportModal.payload.request.method.toUpperCase()}</span>
+                            <span style={{ color: "var(--pg-text-muted)" }}>URL</span>
+                            <span style={{ wordBreak: "break-all" }}>{clipboardImportModal.payload.request.url || "-"}</span>
+                            <span style={{ color: "var(--pg-text-muted)" }}>Collection</span>
+                            <span>{current?.meta.name ?? "-"}</span>
+                            <span style={{ color: "var(--pg-text-muted)" }}>Folder</span>
+                            <span>{clipboardImportModal.targetFolderLabel ?? "Root"}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <button
+                                onClick={() => setClipboardImportModal(null)}
+                                disabled={clipboardImportBusy}
+                                style={buttonStyle(clipboardImportBusy)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => void onConfirmImportClipboardRequest()}
+                                disabled={clipboardImportBusy}
+                                style={primaryButtonStyle(clipboardImportBusy)}
+                            >
+                                {clipboardImportBusy ? "Importing..." : "Import"}
                             </button>
                         </div>
                     </div>
