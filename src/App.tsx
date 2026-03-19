@@ -1656,6 +1656,30 @@ export default function App() {
         return () => window.removeEventListener("paste", onPaste);
     }, [current, collectionRunPending, selectedRequestId, sidebarRows, collectionFolderOptions]);
 
+    useEffect(() => {
+        if (!clipboardImportModal) return;
+
+        function onKeyDown(event: KeyboardEvent) {
+            if (clipboardImportBusy) return;
+
+            if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                setClipboardImportModal(null);
+                return;
+            }
+
+            if (event.key === "Enter") {
+                event.preventDefault();
+                event.stopPropagation();
+                void onConfirmImportClipboardRequest();
+            }
+        }
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [clipboardImportModal, clipboardImportBusy]);
+
     async function sendSelected() {
         if (collectionRunPending) return;
         if (!selectedRequestId) return;
