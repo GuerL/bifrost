@@ -188,6 +188,7 @@ const SHORTCUT_LABELS = {
     saveDraft: `${PRIMARY_SHORTCUT_MODIFIER} + S`,
     newRequest: `${PRIMARY_SHORTCUT_MODIFIER} + T`,
     duplicateRequest: `${PRIMARY_SHORTCUT_MODIFIER} + D`,
+    copyRequest: `${PRIMARY_SHORTCUT_MODIFIER} + C`,
     closeTab: `${PRIMARY_SHORTCUT_MODIFIER} + W`,
     renameRequest: `${PRIMARY_SHORTCUT_MODIFIER} + E`,
     deleteRequest: IS_MACOS ? "CMD + Backspace" : "CTRL + Delete",
@@ -260,6 +261,15 @@ function parseHttpError(error: unknown): { kind: string; message: string; durati
         message: typeof source?.message === "string" ? source.message : String(error),
         durationMs: typeof source?.duration_ms === "number" ? source.duration_ms : undefined,
     };
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tagName = target.tagName.toLowerCase();
+    if (tagName === "input" || tagName === "textarea" || tagName === "select") return true;
+    if (target.isContentEditable) return true;
+    if (target.closest("[contenteditable='true']")) return true;
+    return false;
 }
 
 function readPersistedTabsState(): PersistedTabsState {
@@ -1549,6 +1559,17 @@ export default function App() {
                 return;
             }
 
+            if (key === "c") {
+                if (!selectedRequestId || collectionRunPending) return;
+                if (isEditableKeyboardTarget(e.target)) return;
+                if (window.getSelection()?.toString().trim()) return;
+                e.preventDefault();
+                setContextMenu(null);
+                setRootAddMenu(null);
+                void onCopyRequest(selectedRequestId);
+                return;
+            }
+
             if (key === "w") {
                 if (!selectedRequestId) return;
                 if (!openRequestIds.includes(selectedRequestId)) return;
@@ -1601,6 +1622,7 @@ export default function App() {
         collectionRunPending,
         sidebarRows,
         sendSelected,
+        onCopyRequest,
     ]);
 
     useEffect(() => {
@@ -4146,8 +4168,28 @@ export default function App() {
                                     setContextMenu(null);
                                     void onCopyRequest(row.requestId);
                                 }}
+                                title={`Copy request (${SHORTCUT_LABELS.copyRequest})`}
                             >
-                                Copy Request
+                                <span
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "space-between",
+                                        gap: 12,
+                                        width: "100%",
+                                    }}
+                                >
+                                    <span>Copy Request</span>
+                                    <span
+                                        style={{
+                                            fontSize: 11,
+                                            color: "var(--pg-text-muted)",
+                                            fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
+                                        }}
+                                    >
+                                        {SHORTCUT_LABELS.copyRequest}
+                                    </span>
+                                </span>
                             </button>
                         )}
 
