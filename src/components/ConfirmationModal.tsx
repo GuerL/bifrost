@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { buttonStyle, dangerButtonStyle } from "../helpers/UiStyles.ts";
 
 type ConfirmationModalProps = {
@@ -21,6 +22,28 @@ export default function ConfirmationModal({
     onCancel,
     onConfirm,
 }: ConfirmationModalProps) {
+    useEffect(() => {
+        if (!open) return;
+
+        function onKeyDown(event: KeyboardEvent) {
+            if (busy) return;
+
+            if (event.key === "Escape") {
+                event.preventDefault();
+                onCancel();
+                return;
+            }
+
+            if (event.key === "Enter") {
+                event.preventDefault();
+                onConfirm();
+            }
+        }
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [open, busy, onCancel, onConfirm]);
+
     if (!open) return null;
 
     return (
