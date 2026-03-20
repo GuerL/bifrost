@@ -44,11 +44,12 @@ function readJson(filePath) {
 
 function runCommand(command, args, cwd, options = {}) {
     const { allowFailure = false, env = process.env } = options;
+
     const result = spawnSync(command, args, {
         cwd,
         env,
         stdio: "inherit",
-        shell: false,
+        shell: process.platform === "win32",
     });
 
     if (result.error) {
