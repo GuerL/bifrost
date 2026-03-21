@@ -227,8 +227,15 @@ fn resolve_request_vars(
             text: replace_vars_in_text(&text, vars, &mut unresolved, &mut dynamic_values),
         },
         Body::Json { mut value, text } => {
-            resolve_json_value(&mut value, vars, &mut unresolved, &mut dynamic_values);
-            Body::Json { value, text }
+            let resolved_text =
+                replace_vars_in_text(&text, vars, &mut unresolved, &mut dynamic_values);
+            if resolved_text.trim().is_empty() {
+                resolve_json_value(&mut value, vars, &mut unresolved, &mut dynamic_values);
+            }
+            Body::Json {
+                value,
+                text: resolved_text,
+            }
         }
         Body::Form { mut fields } => {
             for kv in fields.iter_mut() {
@@ -263,6 +270,27 @@ fn resolve_request_vars(
     let mut unresolved_vec: Vec<String> = unresolved.into_iter().collect();
     unresolved_vec.sort();
     (req, unresolved_vec)
+}
+
+fn parse_json_body_text(text: &str) -> Result<serde_json::Value, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+
+    json5::from_str::<serde_json::Value>(trimmed).map_err(|error| error.to_string())
+}
+
+fn resolve_json_body_from_text(mut req: Request) -> Result<Request, String> {
+    if let Body::Json { value: _, text } = req.body.clone() {
+        let parsed = parse_json_body_text(&text)?;
+        req.body = Body::Json {
+            value: parsed,
+            text,
+        };
+    }
+
+    Ok(req)
 }
 
 fn upsert_header(headers: &mut Vec<KeyValue>, key: &str, value: String) {
@@ -449,6 +477,7 @@ pub async fn send_request(
     environment_id: Option<String>,
     extra_variables: Option<HashMap<String, String>>,
 ) -> Result<HttpResponseDto, HttpErrorDto> {
+    let should_parse_json_text = matches!(&req.body, Body::Json { text, .. } if text.contains("{{"));
     let mut vars = load_environment_values(&app, environment_id).map_err(|e| {
         err(
             "environment",
@@ -471,6 +500,18 @@ pub async fn send_request(
             None,
         ));
     }
+    let req = if should_parse_json_text {
+        resolve_json_body_from_text(req).map_err(|detail| {
+            err(
+                "invalid_json",
+                "Invalid JSON body after variable resolution",
+                Some(detail),
+                None,
+            )
+        })?
+    } else {
+        req
+    };
 
     let token = CancellationToken::new();
     let run_id = Uuid::new_v4().to_string();
