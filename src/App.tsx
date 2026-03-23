@@ -219,6 +219,19 @@ function areExpandedFoldersEqual(
     return true;
 }
 
+function collapsedFolderIdsFromExpandedState(
+    expandedState: Record<string, boolean>,
+    validFolderIds: string[]
+): string[] {
+    const validFolderIdsSet = new Set(validFolderIds);
+    return Object.entries(expandedState)
+        .filter(
+            ([folderId, isExpanded]) =>
+                isExpanded === false && validFolderIdsSet.has(folderId)
+        )
+        .map(([folderId]) => folderId);
+}
+
 function buildDefaultAuth(type: RequestAuth["type"]): RequestAuth {
     if (type === "bearer") {
         return { type: "bearer", token: "" };
@@ -580,13 +593,10 @@ export default function App() {
         expandedState: Record<string, boolean>,
         validFolderIds: string[]
     ) {
-        const validFolderIdsSet = new Set(validFolderIds);
-        const collapsedFolderIds = Object.entries(expandedState)
-            .filter(
-                ([folderId, isExpanded]) =>
-                    isExpanded === false && validFolderIdsSet.has(folderId)
-            )
-            .map(([folderId]) => folderId);
+        const collapsedFolderIds = collapsedFolderIdsFromExpandedState(
+            expandedState,
+            validFolderIds
+        );
         writeCollapsedSavedRequestsFolderIdsForCollection(collectionId, collapsedFolderIds);
     }
 
