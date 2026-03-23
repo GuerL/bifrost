@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import type { HttpResponseDto } from "../types.ts";
+import FindBar from "./FindBar.tsx";
 
 export type ResponseTabId = "body" | "cookies" | "headers" | "runtime";
 
@@ -299,59 +300,25 @@ export default function ResponsePanel({
             {activeTab === "body" && (
                 <>
                     {findOpen && bodyMode === "raw" && (
-                        <div style={findBarStyle()}>
-                            <input
-                                ref={findInputRef}
-                                type="text"
-                                value={findQuery}
-                                onChange={(event) => setFindQuery(event.target.value)}
-                                placeholder="Find in response body"
-                                style={findInputStyle()}
-                                spellCheck={false}
-                            />
-                            <div style={findCountStyle()}>
-                                {!hasFindQuery || bodySearchMatches.length === 0
-                                    ? "0/0"
-                                    : `${activeMatchIndex + 1}/${bodySearchMatches.length}`}
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    if (bodySearchMatches.length === 0) return;
-                                    setActiveMatchIndex((previous) =>
-                                        previous === 0 ? bodySearchMatches.length - 1 : previous - 1
-                                    );
-                                }}
-                                disabled={!hasFindQuery || bodySearchMatches.length === 0}
-                                style={findButtonStyle(!hasFindQuery || bodySearchMatches.length === 0)}
-                                aria-label="Previous match"
-                                title="Previous match (Shift+Enter)"
-                            >
-                                ↑
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    if (bodySearchMatches.length === 0) return;
-                                    setActiveMatchIndex((previous) => (previous + 1) % bodySearchMatches.length);
-                                }}
-                                disabled={!hasFindQuery || bodySearchMatches.length === 0}
-                                style={findButtonStyle(!hasFindQuery || bodySearchMatches.length === 0)}
-                                aria-label="Next match"
-                                title="Next match (Enter)"
-                            >
-                                ↓
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setFindOpen(false)}
-                                style={findButtonStyle(false)}
-                                aria-label="Close find"
-                                title="Close (Escape)"
-                            >
-                                ✕
-                            </button>
-                        </div>
+                        <FindBar
+                            inputRef={findInputRef}
+                            query={findQuery}
+                            activeMatchIndex={activeMatchIndex}
+                            matchCount={bodySearchMatches.length}
+                            onQueryChange={setFindQuery}
+                            onPreviousMatch={() => {
+                                if (bodySearchMatches.length === 0) return;
+                                setActiveMatchIndex((previous) =>
+                                    previous === 0 ? bodySearchMatches.length - 1 : previous - 1
+                                );
+                            }}
+                            onNextMatch={() => {
+                                if (bodySearchMatches.length === 0) return;
+                                setActiveMatchIndex((previous) => (previous + 1) % bodySearchMatches.length);
+                            }}
+                            onClose={() => setFindOpen(false)}
+                            placeholder="Find in response body"
+                        />
                     )}
                     <div
                         style={responseBodyContainerStyle()}
@@ -758,61 +725,6 @@ function bodyModeButtonStyle(active: boolean): React.CSSProperties {
         fontWeight: 600,
         fontSize: 11,
         boxShadow: "none",
-    };
-}
-
-function findBarStyle(): React.CSSProperties {
-    return {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-1)",
-        borderRadius: 10,
-        padding: 6,
-    };
-}
-
-function findInputStyle(): React.CSSProperties {
-    return {
-        minWidth: 0,
-        flex: 1,
-        height: 28,
-        borderRadius: 8,
-        border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-0)",
-        color: "var(--pg-text)",
-        fontSize: 12,
-        padding: "0 8px",
-        outline: "none",
-    };
-}
-
-function findCountStyle(): React.CSSProperties {
-    return {
-        minWidth: 54,
-        textAlign: "center",
-        fontSize: 12,
-        color: "var(--pg-text-muted)",
-        fontVariantNumeric: "tabular-nums",
-    };
-}
-
-function findButtonStyle(disabled: boolean): React.CSSProperties {
-    return {
-        width: 28,
-        height: 28,
-        borderRadius: 8,
-        border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-gradient)",
-        color: "var(--pg-text)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-        padding: 0,
-        boxShadow: "none",
-        fontSize: 12,
-        fontWeight: 700,
-        lineHeight: 1,
     };
 }
 
