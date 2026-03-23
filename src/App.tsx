@@ -206,6 +206,19 @@ const DYNAMIC_VARIABLE_PREVIEWS: Record<string, string> = {
     "$randomint": "Generated at runtime (0-999)",
 };
 
+function areExpandedFoldersEqual(
+    left: Record<string, boolean>,
+    right: Record<string, boolean>
+): boolean {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    if (leftKeys.length !== rightKeys.length) return false;
+    for (const key of leftKeys) {
+        if (left[key] !== right[key]) return false;
+    }
+    return true;
+}
+
 function buildDefaultAuth(type: RequestAuth["type"]): RequestAuth {
     if (type === "bearer") {
         return { type: "bearer", token: "" };
@@ -542,8 +555,11 @@ export default function App() {
     const portableImportInputRef = useRef<HTMLInputElement | null>(null);
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
+    const expandedFoldersRef = useRef<Record<string, boolean>>({});
     const hydratedTabsCollectionIdRef = useRef<string | null>(null);
     const hydratedCollapsedFoldersCollectionIdRef = useRef<string | null>(null);
+    const pendingCollapsedFoldersHydrationCollectionIdRef = useRef<string | null>(null);
+    const pendingCollapsedFoldersHydrationStateRef = useRef<Record<string, boolean> | null>(null);
     const hydratedRunnerCollectionIdRef = useRef<string | null>(null);
     const hydratedRunnerSelectionCollectionIdRef = useRef<string | null>(null);
     const runnerSelectedRequestsStateRef = useRef<RunnerSelectedRequestsState>(
@@ -553,6 +569,21 @@ export default function App() {
     const collectionRunActiveRequestIdRef = useRef<string | null>(null);
     const collectionRunPending = runnerRun?.status === "running";
 
+    function persistCollapsedFoldersForCollection(
+        collectionId: string,
+        expandedState: Record<string, boolean>,
+        validFolderIds: string[]
+    ) {
+        const validFolderIdsSet = new Set(validFolderIds);
+        const collapsedFolderIds = Object.entries(expandedState)
+            .filter(
+                ([folderId, isExpanded]) =>
+                    isExpanded === false && validFolderIdsSet.has(folderId)
+            )
+            .map(([folderId]) => folderId);
+        writeCollapsedSavedRequestsFolderIdsForCollection(collectionId, collapsedFolderIds);
+    }
+
     async function clearCurrentCollectionView() {
         setCurrent(null);
         setSelectedRequestId(null);
@@ -560,6 +591,7 @@ export default function App() {
         setResp(null);
         setDraggedRequestId(null);
         setDropIndicator(null);
+        expandedFoldersRef.current = {};
         setExpandedFolders({});
         setCreateFolderModal(null);
         setCreateFolderNameInput("");
@@ -597,11 +629,14 @@ export default function App() {
         setRenameTarget(null);
         hydratedTabsCollectionIdRef.current = null;
         hydratedCollapsedFoldersCollectionIdRef.current = null;
+        pendingCollapsedFoldersHydrationCollectionIdRef.current = null;
+        pendingCollapsedFoldersHydrationStateRef.current = null;
         hydratedRunnerCollectionIdRef.current = null;
         hydratedRunnerSelectionCollectionIdRef.current = null;
     }
 
     async function reloadCollectionsAndRestoreActive(preferredCollectionId?: string | null) {
+        flushCurrentCollapsedFoldersState();
         try {
             const list = await invoke<CollectionMeta[]>("list_collections");
             setCollections(list);
@@ -653,6 +688,40 @@ export default function App() {
     const collectionFolderOptions = useMemo<FolderOption[]>(
         () => (current ? folderOptions(current.meta.items) : []),
         [current]
+    );
+    const collectionFolderIds = useMemo(
+        () => collectionFolderOptions.map((entry) => entry.folderId),
+        [collectionFolderOptions]
+    );
+
+    const flushCurrentCollapsedFoldersState = useCallback(() => {
+        if (!current) return;
+        persistCollapsedFoldersForCollection(
+            current.meta.id,
+            expandedFoldersRef.current,
+            collectionFolderIds
+        );
+    }, [current, collectionFolderIds]);
+
+    const toggleFolderExpanded = useCallback(
+        (folderId: string) => {
+            const previous = expandedFoldersRef.current;
+            let next: Record<string, boolean>;
+            if (previous[folderId] === false) {
+                next = { ...previous };
+                delete next[folderId];
+            } else {
+                next = { ...previous, [folderId]: false };
+            }
+
+            expandedFoldersRef.current = next;
+            setExpandedFolders(next);
+
+            if (current) {
+                persistCollapsedFoldersForCollection(current.meta.id, next, collectionFolderIds);
+            }
+        },
+        [current, collectionFolderIds]
     );
 
     const expandedFolderIds = useMemo(() => {
@@ -1082,9 +1151,24 @@ export default function App() {
     }, [current?.meta.id]);
 
     useEffect(() => {
+        if (!current) return;
+        // Important: avoid carrying hydration markers from the previous collection.
+        // If we switch quickly, stale markers can let persistence run before re-hydration,
+        // which overwrites the target collection collapsed state.
+        if (hydratedCollapsedFoldersCollectionIdRef.current !== current.meta.id) {
+            hydratedCollapsedFoldersCollectionIdRef.current = null;
+            pendingCollapsedFoldersHydrationCollectionIdRef.current = null;
+            pendingCollapsedFoldersHydrationStateRef.current = null;
+        }
+    }, [current?.meta.id]);
+
+    useEffect(() => {
         if (!current) {
+            expandedFoldersRef.current = {};
             setExpandedFolders({});
             hydratedCollapsedFoldersCollectionIdRef.current = null;
+            pendingCollapsedFoldersHydrationCollectionIdRef.current = null;
+            pendingCollapsedFoldersHydrationStateRef.current = null;
             return;
         }
         if (hydratedCollapsedFoldersCollectionIdRef.current === current.meta.id) {
@@ -1105,9 +1189,23 @@ export default function App() {
             },
             {}
         );
+        pendingCollapsedFoldersHydrationCollectionIdRef.current = current.meta.id;
+        pendingCollapsedFoldersHydrationStateRef.current = nextExpandedFolders;
+        expandedFoldersRef.current = nextExpandedFolders;
         setExpandedFolders(nextExpandedFolders);
-        hydratedCollapsedFoldersCollectionIdRef.current = current.meta.id;
     }, [current?.meta.id, collectionFolderOptions]);
+
+    useEffect(() => {
+        if (!current) return;
+        if (pendingCollapsedFoldersHydrationCollectionIdRef.current !== current.meta.id) return;
+        const expected = pendingCollapsedFoldersHydrationStateRef.current;
+        if (!expected) return;
+        if (!areExpandedFoldersEqual(expandedFolders, expected)) return;
+
+        hydratedCollapsedFoldersCollectionIdRef.current = current.meta.id;
+        pendingCollapsedFoldersHydrationCollectionIdRef.current = null;
+        pendingCollapsedFoldersHydrationStateRef.current = null;
+    }, [current?.meta.id, expandedFolders]);
 
     useEffect(() => {
         if (!current) return;
@@ -1122,13 +1220,16 @@ export default function App() {
             const previousKeys = Object.keys(previous);
             const nextKeys = Object.keys(next);
             if (previousKeys.length !== nextKeys.length) {
+                expandedFoldersRef.current = next;
                 return next;
             }
             for (const key of previousKeys) {
                 if (previous[key] !== next[key]) {
+                    expandedFoldersRef.current = next;
                     return next;
                 }
             }
+            expandedFoldersRef.current = previous;
             return previous;
         });
     }, [current?.meta.id, collectionFolderOptions]);
@@ -1136,16 +1237,9 @@ export default function App() {
     useEffect(() => {
         if (!current) return;
         if (hydratedCollapsedFoldersCollectionIdRef.current !== current.meta.id) return;
-        if (collectionFolderOptions.length === 0) return;
-        const validFolderIds = new Set(collectionFolderOptions.map((folder) => folder.folderId));
-        const collapsedFolderIds = Object.entries(expandedFolders)
-            .filter(
-                ([folderId, isExpanded]) =>
-                    isExpanded === false && validFolderIds.has(folderId)
-            )
-            .map(([folderId]) => folderId);
-        writeCollapsedSavedRequestsFolderIdsForCollection(current.meta.id, collapsedFolderIds);
-    }, [current?.meta.id, expandedFolders, collectionFolderOptions]);
+        if (pendingCollapsedFoldersHydrationCollectionIdRef.current === current.meta.id) return;
+        persistCollapsedFoldersForCollection(current.meta.id, expandedFolders, collectionFolderIds);
+    }, [current?.meta.id, expandedFolders, collectionFolderIds]);
 
     useEffect(() => {
         setDraggedRequestId(null);
@@ -2777,6 +2871,7 @@ export default function App() {
     }
 
     async function onSelectCollection(collectionId: string | null) {
+        flushCurrentCollapsedFoldersState();
         try {
             await invoke("set_active_collection", { collectionId });
 
@@ -3022,6 +3117,7 @@ export default function App() {
         setCollectionBusy(true);
         setCollectionError("");
         try {
+            flushCurrentCollapsedFoldersState();
             await invoke("set_active_collection", { collectionId: collectionSelectedId });
             await loadCollection(
                 collectionSelectedId,
@@ -3388,14 +3484,7 @@ export default function App() {
                                                 onMouseDown={(e) => beginRequestDrag(e, row.nodeId)}
                                                 onClick={() => {
                                                     if (row.kind === "folder") {
-                                                        setExpandedFolders((previous) => {
-                                                            if (previous[row.folderId] === false) {
-                                                                const next = { ...previous };
-                                                                delete next[row.folderId];
-                                                                return next;
-                                                            }
-                                                            return { ...previous, [row.folderId]: false };
-                                                        });
+                                                        toggleFolderExpanded(row.folderId);
                                                         return;
                                                     }
                                                     if (row.request) {
