@@ -28,6 +28,11 @@ type JsonToken = {
     type: JsonTokenType;
 };
 
+type HighlightSegment = {
+    text: string;
+    matchIndex: number | null;
+};
+
 type ResponsePanelProps = {
     response: HttpResponseDto | null;
     statusText: string;
@@ -65,8 +70,23 @@ export default function ResponsePanel({
     const [copyState, setCopyState] = useState<CopyState>("idle");
     const [bodyMode, setBodyMode] = useState<BodyMode>("raw");
     const [bodyControlsHovered, setBodyControlsHovered] = useState(false);
+    const [findOpen, setFindOpen] = useState(false);
+    const [findQuery, setFindQuery] = useState("");
+    const [activeMatchIndex, setActiveMatchIndex] = useState(0);
     const [appVersion, setAppVersion] = useState<string | null>(null);
     const copyResetTimerRef = useRef<number | null>(null);
+    const findInputRef = useRef<HTMLInputElement | null>(null);
+    const matchElementsRef = useRef<Array<HTMLSpanElement | null>>([]);
+
+    const bodySearchMatches = useMemo(
+        () => findTextMatches(bodyView.displayText, findQuery),
+        [bodyView.displayText, findQuery]
+    );
+    const bodyHighlightSegments = useMemo(
+        () => buildHighlightSegments(bodyView.displayText, bodySearchMatches),
+        [bodyView.displayText, bodySearchMatches]
+    );
+    const hasFindQuery = findQuery.trim().length > 0;
 
     useEffect(() => {
         setCopyState("idle");
@@ -77,6 +97,71 @@ export default function ResponsePanel({
             setBodyMode("raw");
         }
     }, [bodyMode, bodyView.canPreview]);
+
+    useEffect(() => {
+        if (activeTab !== "body" || bodyMode !== "raw") {
+            setFindOpen(false);
+        }
+    }, [activeTab, bodyMode]);
+
+    useEffect(() => {
+        if (!findOpen) return;
+        findInputRef.current?.focus();
+        findInputRef.current?.select();
+    }, [findOpen]);
+
+    useEffect(() => {
+        setActiveMatchIndex(0);
+        matchElementsRef.current = [];
+    }, [findQuery, bodyView.displayText]);
+
+    useEffect(() => {
+        if (bodySearchMatches.length === 0) return;
+        const nextIndex = Math.min(activeMatchIndex, bodySearchMatches.length - 1);
+        if (nextIndex !== activeMatchIndex) {
+            setActiveMatchIndex(nextIndex);
+            return;
+        }
+        const activeElement = matchElementsRef.current[nextIndex];
+        activeElement?.scrollIntoView({ block: "center", inline: "nearest" });
+    }, [activeMatchIndex, bodySearchMatches.length]);
+
+    useEffect(() => {
+        function onKeyDown(event: KeyboardEvent) {
+            if (
+                (event.ctrlKey || event.metaKey) &&
+                event.key.toLowerCase() === "f" &&
+                activeTab === "body" &&
+                bodyMode === "raw"
+            ) {
+                event.preventDefault();
+                setFindOpen(true);
+                return;
+            }
+
+            if (!findOpen) return;
+
+            if (event.key === "Escape") {
+                event.preventDefault();
+                setFindOpen(false);
+                return;
+            }
+
+            if (event.key === "Enter") {
+                event.preventDefault();
+                if (bodySearchMatches.length === 0) return;
+                setActiveMatchIndex((previous) => {
+                    if (event.shiftKey) {
+                        return previous === 0 ? bodySearchMatches.length - 1 : previous - 1;
+                    }
+                    return (previous + 1) % bodySearchMatches.length;
+                });
+            }
+        }
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [activeTab, bodyMode, bodySearchMatches.length, findOpen]);
 
     useEffect(() => {
         return () => {
@@ -213,6 +298,61 @@ export default function ResponsePanel({
 
             {activeTab === "body" && (
                 <>
+                    {findOpen && bodyMode === "raw" && (
+                        <div style={findBarStyle()}>
+                            <input
+                                ref={findInputRef}
+                                type="text"
+                                value={findQuery}
+                                onChange={(event) => setFindQuery(event.target.value)}
+                                placeholder="Find in response body"
+                                style={findInputStyle()}
+                                spellCheck={false}
+                            />
+                            <div style={findCountStyle()}>
+                                {!hasFindQuery || bodySearchMatches.length === 0
+                                    ? "0/0"
+                                    : `${activeMatchIndex + 1}/${bodySearchMatches.length}`}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (bodySearchMatches.length === 0) return;
+                                    setActiveMatchIndex((previous) =>
+                                        previous === 0 ? bodySearchMatches.length - 1 : previous - 1
+                                    );
+                                }}
+                                disabled={!hasFindQuery || bodySearchMatches.length === 0}
+                                style={findButtonStyle(!hasFindQuery || bodySearchMatches.length === 0)}
+                                aria-label="Previous match"
+                                title="Previous match (Shift+Enter)"
+                            >
+                                ↑
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (bodySearchMatches.length === 0) return;
+                                    setActiveMatchIndex((previous) => (previous + 1) % bodySearchMatches.length);
+                                }}
+                                disabled={!hasFindQuery || bodySearchMatches.length === 0}
+                                style={findButtonStyle(!hasFindQuery || bodySearchMatches.length === 0)}
+                                aria-label="Next match"
+                                title="Next match (Enter)"
+                            >
+                                ↓
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setFindOpen(false)}
+                                style={findButtonStyle(false)}
+                                aria-label="Close find"
+                                title="Close (Escape)"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    )}
                     <div
                         style={responseBodyContainerStyle()}
                         onMouseEnter={() => setBodyControlsHovered(true)}
@@ -247,7 +387,23 @@ export default function ResponsePanel({
                             <pre
                                 style={responsePreStyle(bodyView.isJson, bodyView.canPreview)}
                             >
-                                {bodyView.isJson
+                                {findOpen && hasFindQuery
+                                    ? bodyHighlightSegments.map((segment, index) =>
+                                        segment.matchIndex === null ? (
+                                            <span key={`segment-${index}`}>{segment.text}</span>
+                                        ) : (
+                                            <span
+                                                key={`match-${segment.matchIndex}`}
+                                                ref={(element) => {
+                                                    matchElementsRef.current[segment.matchIndex ?? 0] = element;
+                                                }}
+                                                style={findMatchStyle(segment.matchIndex === activeMatchIndex)}
+                                            >
+                                                {segment.text}
+                                            </span>
+                                        )
+                                    )
+                                    : bodyView.isJson
                                     ? jsonTokens.map((token, index) => (
                                         <span key={`${token.type}-${index}`} style={jsonTokenStyle(token.type)}>
                                             {token.text}
@@ -463,6 +619,53 @@ function tokenizeJson(json: string): JsonToken[] {
     return tokens;
 }
 
+function findTextMatches(text: string, query: string): Array<{ start: number; end: number }> {
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) {
+        return [];
+    }
+
+    const matches: Array<{ start: number; end: number }> = [];
+    const haystack = text.toLocaleLowerCase();
+    const needle = trimmedQuery.toLocaleLowerCase();
+    let searchIndex = 0;
+
+    while (searchIndex < haystack.length) {
+        const index = haystack.indexOf(needle, searchIndex);
+        if (index === -1) break;
+        matches.push({ start: index, end: index + needle.length });
+        searchIndex = index + needle.length;
+    }
+
+    return matches;
+}
+
+function buildHighlightSegments(
+    text: string,
+    matches: Array<{ start: number; end: number }>
+): HighlightSegment[] {
+    if (matches.length === 0) {
+        return [{ text, matchIndex: null }];
+    }
+
+    const segments: HighlightSegment[] = [];
+    let cursor = 0;
+
+    matches.forEach((match, index) => {
+        if (match.start > cursor) {
+            segments.push({ text: text.slice(cursor, match.start), matchIndex: null });
+        }
+        segments.push({ text: text.slice(match.start, match.end), matchIndex: index });
+        cursor = match.end;
+    });
+
+    if (cursor < text.length) {
+        segments.push({ text: text.slice(cursor), matchIndex: null });
+    }
+
+    return segments;
+}
+
 function findHeaderValue(response: HttpResponseDto, key: string): string | undefined {
     const target = key.toLowerCase();
     const match = response.headers.find((header) => header.key.toLowerCase() === target);
@@ -555,6 +758,76 @@ function bodyModeButtonStyle(active: boolean): React.CSSProperties {
         fontWeight: 600,
         fontSize: 11,
         boxShadow: "none",
+    };
+}
+
+function findBarStyle(): React.CSSProperties {
+    return {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        border: "1px solid var(--pg-border)",
+        background: "var(--pg-surface-1)",
+        borderRadius: 10,
+        padding: 6,
+    };
+}
+
+function findInputStyle(): React.CSSProperties {
+    return {
+        minWidth: 0,
+        flex: 1,
+        height: 28,
+        borderRadius: 8,
+        border: "1px solid var(--pg-border)",
+        background: "var(--pg-surface-0)",
+        color: "var(--pg-text)",
+        fontSize: 12,
+        padding: "0 8px",
+        outline: "none",
+    };
+}
+
+function findCountStyle(): React.CSSProperties {
+    return {
+        minWidth: 54,
+        textAlign: "center",
+        fontSize: 12,
+        color: "var(--pg-text-muted)",
+        fontVariantNumeric: "tabular-nums",
+    };
+}
+
+function findButtonStyle(disabled: boolean): React.CSSProperties {
+    return {
+        width: 28,
+        height: 28,
+        borderRadius: 8,
+        border: "1px solid var(--pg-border)",
+        background: "var(--pg-surface-gradient)",
+        color: "var(--pg-text)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+        padding: 0,
+        boxShadow: "none",
+        fontSize: 12,
+        fontWeight: 700,
+        lineHeight: 1,
+    };
+}
+
+function findMatchStyle(active: boolean): React.CSSProperties {
+    if (active) {
+        return {
+            background: "rgba(245, 158, 11, 0.68)",
+            color: "#111827",
+            borderRadius: 3,
+        };
+    }
+
+    return {
+        background: "rgba(250, 204, 21, 0.32)",
+        borderRadius: 3,
     };
 }
 
