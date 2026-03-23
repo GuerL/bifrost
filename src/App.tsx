@@ -569,6 +569,12 @@ export default function App() {
     const collectionRunActiveRequestIdRef = useRef<string | null>(null);
     const collectionRunPending = runnerRun?.status === "running";
 
+    function resetCollapsedFoldersHydrationRefs() {
+        hydratedCollapsedFoldersCollectionIdRef.current = null;
+        pendingCollapsedFoldersHydrationCollectionIdRef.current = null;
+        pendingCollapsedFoldersHydrationStateRef.current = null;
+    }
+
     function persistCollapsedFoldersForCollection(
         collectionId: string,
         expandedState: Record<string, boolean>,
@@ -628,9 +634,7 @@ export default function App() {
         setCloseDraftBusy(false);
         setRenameTarget(null);
         hydratedTabsCollectionIdRef.current = null;
-        hydratedCollapsedFoldersCollectionIdRef.current = null;
-        pendingCollapsedFoldersHydrationCollectionIdRef.current = null;
-        pendingCollapsedFoldersHydrationStateRef.current = null;
+        resetCollapsedFoldersHydrationRefs();
         hydratedRunnerCollectionIdRef.current = null;
         hydratedRunnerSelectionCollectionIdRef.current = null;
     }
@@ -1156,9 +1160,7 @@ export default function App() {
         // If we switch quickly, stale markers can let persistence run before re-hydration,
         // which overwrites the target collection collapsed state.
         if (hydratedCollapsedFoldersCollectionIdRef.current !== current.meta.id) {
-            hydratedCollapsedFoldersCollectionIdRef.current = null;
-            pendingCollapsedFoldersHydrationCollectionIdRef.current = null;
-            pendingCollapsedFoldersHydrationStateRef.current = null;
+            resetCollapsedFoldersHydrationRefs();
         }
     }, [current?.meta.id]);
 
@@ -1166,9 +1168,7 @@ export default function App() {
         if (!current) {
             expandedFoldersRef.current = {};
             setExpandedFolders({});
-            hydratedCollapsedFoldersCollectionIdRef.current = null;
-            pendingCollapsedFoldersHydrationCollectionIdRef.current = null;
-            pendingCollapsedFoldersHydrationStateRef.current = null;
+            resetCollapsedFoldersHydrationRefs();
             return;
         }
         if (hydratedCollapsedFoldersCollectionIdRef.current === current.meta.id) {
