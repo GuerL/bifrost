@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import type { HttpResponseDto } from "../types.ts";
 import FindBar from "./FindBar.tsx";
@@ -74,7 +74,7 @@ export default function ResponsePanel({
     const [findOpen, setFindOpen] = useState(false);
     const [findQuery, setFindQuery] = useState("");
     const [findCaseSensitive, setFindCaseSensitive] = useState(false);
-    const [activeMatchIndex, setActiveMatchIndex] = useState(0);
+    const [activeMatchIndex, setActiveMatchIndex] = useState(-1);
     const [appVersion, setAppVersion] = useState<string | null>(null);
     const copyResetTimerRef = useRef<number | null>(null);
     const findInputRef = useRef<HTMLInputElement | null>(null);
@@ -89,6 +89,36 @@ export default function ResponsePanel({
         [bodyView.displayText, bodySearchMatches]
     );
     const hasFindQuery = findQuery.trim().length > 0;
+
+    const scrollMatchIntoView = useCallback((index: number) => {
+        window.requestAnimationFrame(() => {
+            const activeElement = matchElementsRef.current[index];
+            activeElement?.scrollIntoView({ block: "center", inline: "nearest" });
+        });
+    }, []);
+
+    const moveToPreviousMatch = useCallback(() => {
+        if (bodySearchMatches.length === 0) return;
+        setActiveMatchIndex((previous) => {
+            const next =
+                previous < 0
+                    ? bodySearchMatches.length - 1
+                    : previous === 0
+                    ? bodySearchMatches.length - 1
+                    : previous - 1;
+            scrollMatchIntoView(next);
+            return next;
+        });
+    }, [bodySearchMatches.length, scrollMatchIntoView]);
+
+    const moveToNextMatch = useCallback(() => {
+        if (bodySearchMatches.length === 0) return;
+        setActiveMatchIndex((previous) => {
+            const next = previous < 0 ? 0 : (previous + 1) % bodySearchMatches.length;
+            scrollMatchIntoView(next);
+            return next;
+        });
+    }, [bodySearchMatches.length, scrollMatchIntoView]);
 
     useEffect(() => {
         setCopyState("idle");
@@ -113,18 +143,19 @@ export default function ResponsePanel({
     }, [findOpen]);
 
     useEffect(() => {
-        setActiveMatchIndex(0);
+        setActiveMatchIndex(-1);
         matchElementsRef.current = [];
     }, [findCaseSensitive, findQuery, bodyView.displayText]);
 
     useEffect(() => {
         if (bodySearchMatches.length === 0) return;
-        const nextIndex = Math.min(activeMatchIndex, bodySearchMatches.length - 1);
-        if (nextIndex !== activeMatchIndex) {
+        if (activeMatchIndex >= bodySearchMatches.length) {
+            const nextIndex = bodySearchMatches.length - 1;
             setActiveMatchIndex(nextIndex);
             return;
         }
-        const activeElement = matchElementsRef.current[nextIndex];
+        if (activeMatchIndex < 0) return;
+        const activeElement = matchElementsRef.current[activeMatchIndex];
         activeElement?.scrollIntoView({ block: "center", inline: "nearest" });
     }, [activeMatchIndex, bodySearchMatches.length]);
 
@@ -161,7 +192,7 @@ export default function ResponsePanel({
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [activeTab, bodyMode, bodySearchMatches.length, findOpen]);
+    }, [activeTab, bodyMode, findOpen, moveToNextMatch, moveToPreviousMatch]);
 
     useEffect(() => {
         return () => {
@@ -201,31 +232,6 @@ export default function ResponsePanel({
             setCopyState("idle");
             copyResetTimerRef.current = null;
         }, 1600);
-    };
-
-    const scrollMatchIntoView = (index: number) => {
-        window.requestAnimationFrame(() => {
-            const activeElement = matchElementsRef.current[index];
-            activeElement?.scrollIntoView({ block: "center", inline: "nearest" });
-        });
-    };
-
-    const moveToPreviousMatch = () => {
-        if (bodySearchMatches.length === 0) return;
-        setActiveMatchIndex((previous) => {
-            const next = previous === 0 ? bodySearchMatches.length - 1 : previous - 1;
-            scrollMatchIntoView(next);
-            return next;
-        });
-    };
-
-    const moveToNextMatch = () => {
-        if (bodySearchMatches.length === 0) return;
-        setActiveMatchIndex((previous) => {
-            const next = (previous + 1) % bodySearchMatches.length;
-            scrollMatchIntoView(next);
-            return next;
-        });
     };
 
     return (
