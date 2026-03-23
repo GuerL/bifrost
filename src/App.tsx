@@ -1708,6 +1708,7 @@ export default function App() {
 
             if (key === "backspace" || key === "delete") {
                 if (!selectedRequestId || collectionRunPending) return;
+                if (isEditableKeyboardTarget(e.target)) return;
                 e.preventDefault();
                 setContextMenu(null);
                 setRootAddMenu(null);
