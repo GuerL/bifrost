@@ -73,6 +73,7 @@ export default function ResponsePanel({
     const [bodyControlsHovered, setBodyControlsHovered] = useState(false);
     const [findOpen, setFindOpen] = useState(false);
     const [findQuery, setFindQuery] = useState("");
+    const [findCaseSensitive, setFindCaseSensitive] = useState(false);
     const [activeMatchIndex, setActiveMatchIndex] = useState(0);
     const [appVersion, setAppVersion] = useState<string | null>(null);
     const copyResetTimerRef = useRef<number | null>(null);
@@ -80,8 +81,8 @@ export default function ResponsePanel({
     const matchElementsRef = useRef<Array<HTMLSpanElement | null>>([]);
 
     const bodySearchMatches = useMemo(
-        () => findTextMatches(bodyView.displayText, findQuery),
-        [bodyView.displayText, findQuery]
+        () => findTextMatches(bodyView.displayText, findQuery, findCaseSensitive),
+        [bodyView.displayText, findCaseSensitive, findQuery]
     );
     const bodyHighlightSegments = useMemo(
         () => buildHighlightSegments(bodyView.displayText, bodySearchMatches),
@@ -114,7 +115,7 @@ export default function ResponsePanel({
     useEffect(() => {
         setActiveMatchIndex(0);
         matchElementsRef.current = [];
-    }, [findQuery, bodyView.displayText]);
+    }, [findCaseSensitive, findQuery, bodyView.displayText]);
 
     useEffect(() => {
         if (bodySearchMatches.length === 0) return;
@@ -318,6 +319,8 @@ export default function ResponsePanel({
                             }}
                             onClose={() => setFindOpen(false)}
                             placeholder="Find in response body"
+                            caseSensitive={findCaseSensitive}
+                            onToggleCaseSensitive={() => setFindCaseSensitive((previous) => !previous)}
                         />
                     )}
                     <div
@@ -586,15 +589,15 @@ function tokenizeJson(json: string): JsonToken[] {
     return tokens;
 }
 
-function findTextMatches(text: string, query: string): Array<{ start: number; end: number }> {
+function findTextMatches(text: string, query: string, caseSensitive: boolean): Array<{ start: number; end: number }> {
     const trimmedQuery = query.trim();
     if (!trimmedQuery) {
         return [];
     }
 
     const matches: Array<{ start: number; end: number }> = [];
-    const haystack = text.toLocaleLowerCase();
-    const needle = trimmedQuery.toLocaleLowerCase();
+    const haystack = caseSensitive ? text : text.toLocaleLowerCase();
+    const needle = caseSensitive ? trimmedQuery : trimmedQuery.toLocaleLowerCase();
     let searchIndex = 0;
 
     while (searchIndex < haystack.length) {

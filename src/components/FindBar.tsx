@@ -10,6 +10,8 @@ type FindBarProps = {
     onClose: () => void;
     inputRef?: RefObject<HTMLInputElement | null>;
     placeholder?: string;
+    caseSensitive?: boolean;
+    onToggleCaseSensitive?: () => void;
 };
 
 export default function FindBar({
@@ -22,6 +24,8 @@ export default function FindBar({
     onClose,
     inputRef,
     placeholder = "Find",
+    caseSensitive = false,
+    onToggleCaseSensitive,
 }: FindBarProps) {
     const hasQuery = query.trim().length > 0;
     const canNavigate = hasQuery && matchCount > 0;
@@ -68,6 +72,17 @@ export default function FindBar({
             >
                 ✕
             </button>
+            {onToggleCaseSensitive && (
+                <button
+                    type="button"
+                    onClick={onToggleCaseSensitive}
+                    style={findCaseButtonStyle(caseSensitive)}
+                    aria-label="Toggle match case"
+                    title="Match case"
+                >
+                    Aa
+                </button>
+            )}
         </div>
     );
 }
@@ -120,6 +135,23 @@ function findButtonStyle(disabled: boolean): CSSProperties {
         cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.5 : 1,
         padding: 0,
+        boxShadow: "none",
+        fontSize: 12,
+        fontWeight: 700,
+        lineHeight: 1,
+    };
+}
+
+function findCaseButtonStyle(active: boolean): CSSProperties {
+    return {
+        minWidth: 36,
+        height: 28,
+        borderRadius: 8,
+        border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
+        background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
+        color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
+        cursor: "pointer",
+        padding: "0 8px",
         boxShadow: "none",
         fontSize: 12,
         fontWeight: 700,
