@@ -151,13 +151,11 @@ export default function ResponsePanel({
 
             if (event.key === "Enter") {
                 event.preventDefault();
-                if (bodySearchMatches.length === 0) return;
-                setActiveMatchIndex((previous) => {
-                    if (event.shiftKey) {
-                        return previous === 0 ? bodySearchMatches.length - 1 : previous - 1;
-                    }
-                    return (previous + 1) % bodySearchMatches.length;
-                });
+                if (event.shiftKey) {
+                    moveToPreviousMatch();
+                    return;
+                }
+                moveToNextMatch();
             }
         }
 
@@ -203,6 +201,31 @@ export default function ResponsePanel({
             setCopyState("idle");
             copyResetTimerRef.current = null;
         }, 1600);
+    };
+
+    const scrollMatchIntoView = (index: number) => {
+        window.requestAnimationFrame(() => {
+            const activeElement = matchElementsRef.current[index];
+            activeElement?.scrollIntoView({ block: "center", inline: "nearest" });
+        });
+    };
+
+    const moveToPreviousMatch = () => {
+        if (bodySearchMatches.length === 0) return;
+        setActiveMatchIndex((previous) => {
+            const next = previous === 0 ? bodySearchMatches.length - 1 : previous - 1;
+            scrollMatchIntoView(next);
+            return next;
+        });
+    };
+
+    const moveToNextMatch = () => {
+        if (bodySearchMatches.length === 0) return;
+        setActiveMatchIndex((previous) => {
+            const next = (previous + 1) % bodySearchMatches.length;
+            scrollMatchIntoView(next);
+            return next;
+        });
     };
 
     return (
@@ -307,16 +330,8 @@ export default function ResponsePanel({
                             activeMatchIndex={activeMatchIndex}
                             matchCount={bodySearchMatches.length}
                             onQueryChange={setFindQuery}
-                            onPreviousMatch={() => {
-                                if (bodySearchMatches.length === 0) return;
-                                setActiveMatchIndex((previous) =>
-                                    previous === 0 ? bodySearchMatches.length - 1 : previous - 1
-                                );
-                            }}
-                            onNextMatch={() => {
-                                if (bodySearchMatches.length === 0) return;
-                                setActiveMatchIndex((previous) => (previous + 1) % bodySearchMatches.length);
-                            }}
+                            onPreviousMatch={moveToPreviousMatch}
+                            onNextMatch={moveToNextMatch}
                             onClose={() => setFindOpen(false)}
                             placeholder="Find in response body"
                             caseSensitive={findCaseSensitive}
