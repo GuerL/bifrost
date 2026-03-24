@@ -84,6 +84,7 @@ import {
     downloadAndInstallPendingUpdate,
     restartAfterUpdate,
 } from "./helpers/TauriUpdaterHelper.ts";
+import { validateStrictJsonBodyForSend } from "./helpers/JsonBodyValidation.ts";
 
 type SidebarContextMenu = {
     x: number;
@@ -1793,6 +1794,20 @@ export default function App() {
                 : current?.requests.find((r) => r.id === selectedRequestId);
 
         if (!req) return;
+        const jsonValidationError = validateStrictJsonBodyForSend(req);
+        if (jsonValidationError) {
+            const statusText = `❌ invalid_json_body: ${jsonValidationError}`;
+            setStatus(statusText);
+            setResponsesByRequestId((previous) => ({
+                ...previous,
+                [selectedRequestId]: {
+                    response: previous[selectedRequestId]?.response ?? null,
+                    statusText,
+                    updatedAt: new Date().toISOString(),
+                },
+            }));
+            return;
+        }
 
         setResp(null);
         setPending(true);
@@ -1824,6 +1839,28 @@ export default function App() {
             runtimeVariables = preScript.runtimeVariables;
             setSessionVariables(runtimeVariables);
             const requestToSend = preScript.request;
+            const jsonValidationErrorAfterPreScript = validateStrictJsonBodyForSend(requestToSend);
+            if (jsonValidationErrorAfterPreScript) {
+                const statusText = `❌ invalid_json_body: ${jsonValidationErrorAfterPreScript}`;
+                setScriptReportsByRequestId((previous) => ({
+                    ...previous,
+                    [selectedRequestId]: {
+                        preRequestError: preScriptError,
+                        postResponseError: null,
+                        tests: preScriptTests,
+                    },
+                }));
+                setStatus(statusText);
+                setResponsesByRequestId((previous) => ({
+                    ...previous,
+                    [selectedRequestId]: {
+                        response: previous[selectedRequestId]?.response ?? null,
+                        statusText,
+                        updatedAt: new Date().toISOString(),
+                    },
+                }));
+                return;
+            }
 
             const r = await invoke<HttpResponseDto>("send_request", {
                 requestId: selectedRequestId,
@@ -2151,6 +2188,43 @@ export default function App() {
             runVariables = preScript.runtimeVariables;
             setSessionVariables(runVariables);
             const executableRequest = preScript.request;
+            const jsonValidationError = validateStrictJsonBodyForSend(executableRequest);
+            if (jsonValidationError) {
+                const statusText = `❌ invalid_json_body: ${jsonValidationError}`;
+                commitRun(
+                    updateExecutionAt(planItem.planIndex, {
+                        status: "failed",
+                        statusText,
+                        wasSent: false,
+                        finishedAt: new Date().toISOString(),
+                        errorCode: "invalid_json_body",
+                        errorMessage: jsonValidationError,
+                        response: null,
+                        extractedVariables: [],
+                        extractionErrors: [],
+                        preRequestScriptError,
+                        postResponseScriptError: null,
+                        preRequestScriptTests,
+                        postResponseScriptTests: [],
+                    })
+                );
+                setScriptReportsByRequestId((previous) => ({
+                    ...previous,
+                    [planItem.requestId]: {
+                        preRequestError: preRequestScriptError,
+                        postResponseError: null,
+                        tests: preRequestScriptTests,
+                    },
+                }));
+
+                if (collectionRunStopOnFailure) {
+                    commitRun(
+                        skipRemainingFrom(planItem.planIndex, "Skipped (stopped on failure)")
+                    );
+                    break;
+                }
+                continue;
+            }
 
             try {
                 const response = await invoke<HttpResponseDto>("send_request", {
