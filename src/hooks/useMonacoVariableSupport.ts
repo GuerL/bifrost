@@ -212,13 +212,13 @@ export function useMonacoVariableSupport({
             },
         });
 
-        // Keep JSON diagnostics enabled so syntax issues are surfaced immediately in editors.
-        // Comments stay allowed, but trailing commas are flagged.
+        // Body JSON supports template placeholders like {{variable}} that are not valid strict JSON
+        // before runtime resolution, so we disable Monaco JSON diagnostics to avoid false errors.
         monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
-            validate: true,
+            validate: false,
             allowComments: true,
             comments: "ignore",
-            trailingCommas: "error",
+            trailingCommas: "ignore",
         });
 
         if (monacoFeaturesRegisteredRef.current) return;
