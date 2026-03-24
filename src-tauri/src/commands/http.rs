@@ -477,7 +477,10 @@ pub async fn send_request(
     environment_id: Option<String>,
     extra_variables: Option<HashMap<String, String>>,
 ) -> Result<HttpResponseDto, HttpErrorDto> {
-    let should_parse_json_text = matches!(&req.body, Body::Json { text, .. } if text.contains("{{"));
+    // `Body::Json.value` can be stale while the editor text changed (especially after invalid JSON
+    // intermediate states). If JSON text is present, treat it as source-of-truth at send time.
+    // Keep backward compatibility for older persisted requests that may have empty `text`.
+    let should_parse_json_text = matches!(&req.body, Body::Json { text, .. } if !text.trim().is_empty());
     let mut vars = load_environment_values(&app, environment_id).map_err(|e| {
         err(
             "environment",

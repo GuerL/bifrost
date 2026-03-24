@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import Editor, { type BeforeMount } from "@monaco-editor/react";
 import type * as MonacoApi from "monaco-editor";
 import KeyValueTable from "../KeyValueTable.tsx";
@@ -123,6 +124,12 @@ export default function RequestBodyEditor({
     editorPanelStyle,
     onSubmitShortcut,
 }: RequestBodyEditorProps) {
+    const submitShortcutRef = useRef(onSubmitShortcut);
+
+    useEffect(() => {
+        submitShortcutRef.current = onSubmitShortcut;
+    }, [onSubmitShortcut]);
+
     return (
         <>
             <select
@@ -161,7 +168,7 @@ export default function RequestBodyEditor({
                             onMount={(editor, monaco) => {
                                 onMountBodyJsonEditor(editor);
                                 editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-                                    onSubmitShortcut();
+                                    submitShortcutRef.current();
                                 });
                             }}
                             defaultValue={
@@ -226,7 +233,7 @@ export default function RequestBodyEditor({
                                 onMount={(editor, monaco) => {
                                     onMountBodyRawEditor(editor);
                                     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-                                        onSubmitShortcut();
+                                        submitShortcutRef.current();
                                     });
                                 }}
                                 defaultValue={rawBody.text}
