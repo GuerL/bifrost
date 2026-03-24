@@ -272,27 +272,6 @@ fn resolve_request_vars(
     (req, unresolved_vec)
 }
 
-fn parse_json_body_text(text: &str) -> Result<serde_json::Value, String> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Ok(serde_json::json!({}));
-    }
-
-    json5::from_str::<serde_json::Value>(trimmed).map_err(|error| error.to_string())
-}
-
-fn resolve_json_body_from_text(mut req: Request) -> Result<Request, String> {
-    if let Body::Json { value: _, text } = req.body.clone() {
-        let parsed = parse_json_body_text(&text)?;
-        req.body = Body::Json {
-            value: parsed,
-            text,
-        };
-    }
-
-    Ok(req)
-}
-
 fn upsert_header(headers: &mut Vec<KeyValue>, key: &str, value: String) {
     if let Some(entry) = headers
         .iter_mut()
@@ -416,7 +395,15 @@ pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpEr
         Body::Raw { content_type, text } => builder
             .header("Content-Type", content_type.clone())
             .body(text.clone()),
-        Body::Json { value, .. } => builder.json(value),
+        Body::Json { value, text } => {
+            if text.trim().is_empty() {
+                builder.json(value)
+            } else {
+                builder
+                    .header("Content-Type", "application/json")
+                    .body(text.clone())
+            }
+        }
         Body::Form { fields } => {
             let pairs: Vec<(String, String)> = fields
                 .iter()
@@ -477,10 +464,6 @@ pub async fn send_request(
     environment_id: Option<String>,
     extra_variables: Option<HashMap<String, String>>,
 ) -> Result<HttpResponseDto, HttpErrorDto> {
-    // `Body::Json.value` can be stale while the editor text changed (especially after invalid JSON
-    // intermediate states). If JSON text is present, treat it as source-of-truth at send time.
-    // Keep backward compatibility for older persisted requests that may have empty `text`.
-    let should_parse_json_text = matches!(&req.body, Body::Json { text, .. } if !text.trim().is_empty());
     let mut vars = load_environment_values(&app, environment_id).map_err(|e| {
         err(
             "environment",
@@ -503,18 +486,6 @@ pub async fn send_request(
             None,
         ));
     }
-    let req = if should_parse_json_text {
-        resolve_json_body_from_text(req).map_err(|detail| {
-            err(
-                "invalid_json",
-                "Invalid JSON body after variable resolution",
-                Some(detail),
-                None,
-            )
-        })?
-    } else {
-        req
-    };
 
     let token = CancellationToken::new();
     let run_id = Uuid::new_v4().to_string();
