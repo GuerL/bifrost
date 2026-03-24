@@ -218,7 +218,7 @@ export function useMonacoVariableSupport({
             validate: false,
             allowComments: true,
             comments: "ignore",
-            trailingCommas: "ignore",
+            trailingCommas: "error",
         });
 
         if (monacoFeaturesRegisteredRef.current) return;
