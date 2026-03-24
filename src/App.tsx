@@ -1638,9 +1638,7 @@ export default function App() {
             if (key === "enter") {
                 if (!selectedRequestId || collectionRunPending) return;
                 e.preventDefault();
-                setContextMenu(null);
-                setRootAddMenu(null);
-                void sendSelected();
+                triggerSendFromUi();
                 return;
             }
 
@@ -1938,6 +1936,13 @@ export default function App() {
             const p = await isPending(selectedRequestId).catch(() => false);
             setPending(p);
         }
+    }
+
+    function triggerSendFromUi() {
+        if (!selectedRequestId || collectionRunPending) return;
+        setContextMenu(null);
+        setRootAddMenu(null);
+        void sendSelected();
     }
 
     function toggleRunnerRequestSelection(requestId: string, selected: boolean) {
@@ -3774,7 +3779,7 @@ export default function App() {
                                 />
 
                                 <button
-                                    onClick={sendSelected}
+                                    onClick={triggerSendFromUi}
                                     disabled={!selectedRequestId || pending || collectionRunPending}
                                     style={primaryButtonStyle(!selectedRequestId || pending || collectionRunPending)}
                                 >
@@ -3857,12 +3862,7 @@ export default function App() {
                                     resolveVariableValue={resolveVariableValue}
                                     variableSuggestions={variableSuggestions}
                                     editorPanelStyle={editorPanelStyle}
-                                    onSubmitShortcut={() => {
-                                        if (!selectedRequestId || collectionRunPending) return;
-                                        setContextMenu(null);
-                                        setRootAddMenu(null);
-                                        void sendSelected();
-                                    }}
+                                    onSubmitShortcut={triggerSendFromUi}
                                 />
                             )}
 
