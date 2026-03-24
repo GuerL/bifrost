@@ -212,10 +212,9 @@ export function useMonacoVariableSupport({
             },
         });
 
-        // Body JSON supports template placeholders like {{variable}} that are not valid strict JSON
-        // before runtime resolution, so we disable Monaco JSON diagnostics to avoid false errors.
+        // Keep JSON diagnostics enabled in the editor (visual feedback only).
         monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
-            validate: false,
+            validate: true,
             allowComments: true,
             comments: "ignore",
             trailingCommas: "error",

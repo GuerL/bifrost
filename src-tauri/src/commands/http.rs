@@ -331,6 +331,87 @@ fn apply_auth_to_request(req: &mut Request) {
     }
 }
 
+fn strip_json_comments(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let chars: Vec<char> = input.chars().collect();
+
+    let mut i = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        let next = chars.get(i + 1).copied().unwrap_or('\0');
+
+        if in_line_comment {
+            if ch == '\n' {
+                in_line_comment = false;
+                out.push(ch);
+            }
+            i += 1;
+            continue;
+        }
+
+        if in_block_comment {
+            if ch == '*' && next == '/' {
+                in_block_comment = false;
+                i += 2;
+                continue;
+            }
+            if ch == '\n' {
+                out.push(ch);
+            }
+            i += 1;
+            continue;
+        }
+
+        if in_string {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            i += 1;
+            continue;
+        }
+
+        if ch == '/' && next == '/' {
+            in_line_comment = true;
+            i += 2;
+            continue;
+        }
+
+        if ch == '/' && next == '*' {
+            in_block_comment = true;
+            i += 2;
+            continue;
+        }
+
+        out.push(ch);
+        i += 1;
+    }
+
+    out
+}
+
 pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpErrorDto> {
     apply_auth_to_request(&mut req);
     const REQUEST_TIMEOUT_SECONDS: u64 = 120;
@@ -399,9 +480,10 @@ pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpEr
             if text.trim().is_empty() {
                 builder.json(value)
             } else {
+                let stripped = strip_json_comments(text);
                 builder
                     .header("Content-Type", "application/json")
-                    .body(text.clone())
+                    .body(stripped)
             }
         }
         Body::Form { fields } => {
