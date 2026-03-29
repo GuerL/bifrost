@@ -24,6 +24,7 @@ import RequestScriptsEditor from "./components/RequestScriptsEditor.tsx";
 import CollectionsModal from "./components/CollectionsModal.tsx";
 import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
 import ConfirmationModal from "./components/ConfirmationModal.tsx";
+import NoCollectionsModal from "./components/NoCollectionsModal.tsx";
 import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.tsx";
 import CollectionRunnerModal from "./components/CollectionRunnerModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
@@ -547,6 +548,7 @@ export default function App() {
     const [collectionCreateName, setCollectionCreateName] = useState("");
     const [collectionBusy, setCollectionBusy] = useState(false);
     const [collectionError, setCollectionError] = useState("");
+    const [noCollectionsModalOpen, setNoCollectionsModalOpen] = useState(false);
     const [runnerModalOpen, setRunnerModalOpen] = useState(false);
     const [runnerSelectedRequestIds, setRunnerSelectedRequestIds] = useState<string[]>([]);
     const [updateDownloadModal, setUpdateDownloadModal] = useState<UpdateDownloadModal | null>(null);
@@ -574,6 +576,7 @@ export default function App() {
     const pendingCollapsedFoldersHydrationStateRef = useRef<Record<string, boolean> | null>(null);
     const hydratedRunnerCollectionIdRef = useRef<string | null>(null);
     const hydratedRunnerSelectionCollectionIdRef = useRef<string | null>(null);
+    const noCollectionsModalShownRef = useRef(false);
     const runnerSelectedRequestsStateRef = useRef<RunnerSelectedRequestsState>(
         loadRunnerSelectedRequests()
     );
@@ -1348,6 +1351,22 @@ export default function App() {
     }, [collectionsModalOpen, collections, collectionSelectedId, current?.meta.id]);
 
     useEffect(() => {
+        if (collections.length > 0) {
+            if (noCollectionsModalOpen) {
+                setNoCollectionsModalOpen(false);
+            }
+            noCollectionsModalShownRef.current = false;
+            return;
+        }
+        if (current) return;
+        if (collectionsModalOpen || noCollectionsModalOpen) return;
+        if (noCollectionsModalShownRef.current) return;
+
+        noCollectionsModalShownRef.current = true;
+        setNoCollectionsModalOpen(true);
+    }, [collections.length, current, collectionsModalOpen, noCollectionsModalOpen]);
+
+    useEffect(() => {
         if (!current) return;
         if (hydratedTabsCollectionIdRef.current !== current.meta.id) return;
 
@@ -1641,7 +1660,7 @@ export default function App() {
             }
 
             if (key === "t") {
-                if (!current || collectionRunPending) return;
+                if (collectionRunPending) return;
                 e.preventDefault();
                 setContextMenu(null);
                 setRootAddMenu(null);
@@ -2751,8 +2770,22 @@ export default function App() {
         setCreateRequestError("");
     }
 
+    function openNoCollectionsModal() {
+        noCollectionsModalShownRef.current = true;
+        setNoCollectionsModalOpen(true);
+    }
+
     function onNewRequest(parentFolderId: string | null = null) {
-        if (!current || collectionRunPending) return;
+        if (collectionRunPending) return;
+        if (!current) {
+            if (collections.length === 0) {
+                openNoCollectionsModal();
+                setStatus("ℹ️ No collection available. Create one first.");
+            } else {
+                setStatus("ℹ️ Select an active collection before creating a request.");
+            }
+            return;
+        }
         openCreateRequest(parentFolderId);
     }
 
@@ -3015,6 +3048,7 @@ export default function App() {
             collections.find((collection) => collection.id === (current?.meta.id ?? "")) ??
             collections[0] ??
             null;
+        setNoCollectionsModalOpen(false);
         setCollectionSelectedId(selected?.id ?? null);
         setCollectionDraftName(selected?.name ?? "");
         setCollectionCreateName("");
@@ -4942,6 +4976,12 @@ export default function App() {
                 onClearSelection={clearRunnerRequestSelection}
                 onRun={() => void runCollection(runnerSelectedRequestIds)}
                 onCancel={() => void cancelCollectionRun()}
+            />
+
+            <NoCollectionsModal
+                open={noCollectionsModalOpen}
+                onClose={() => setNoCollectionsModalOpen(false)}
+                onOpenCollections={openCollectionsModal}
             />
 
             <CollectionsModal
