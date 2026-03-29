@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::model::collection::*;
 use crate::storage::paths::*;
-use crate::storage::paths::{delete_dir, read_json, write_json};
+use crate::storage::paths::{read_json, write_json};
 
 const COLLECTION_SCHEMA_VERSION: u32 = 2;
 
@@ -364,117 +364,6 @@ fn delete_request_file_if_exists(
     if req_path.exists() {
         fs::remove_file(&req_path).map_err(|e| e.to_string())?;
     }
-    Ok(())
-}
-
-#[tauri::command]
-pub fn init_default_collection(app: AppHandle) -> Result<(), String> {
-    let meta = CollectionMeta {
-        version: COLLECTION_SCHEMA_VERSION,
-        id: "default".into(),
-        name: "Default".into(),
-        request_order: vec![
-            "ping".into(),
-            "ping-second".into(),
-            "invalid-http".into(),
-            "timeout-http".into(),
-        ],
-        items: vec![
-            request_ref("ping".into()),
-            request_ref("ping-second".into()),
-            request_ref("invalid-http".into()),
-            request_ref("timeout-http".into()),
-        ],
-    };
-
-    let ping = Request {
-        id: "ping".into(),
-        name: "Ping (GET)".into(),
-        method: HttpMethod::Get,
-        url: "https://postman-echo0.com/get".into(),
-        headers: vec![],
-        query: vec![],
-        body: Body::None,
-        auth: Auth::None,
-        extractors: vec![],
-        scripts: RequestScripts::default(),
-    };
-
-    let ping_second = Request {
-        id: "ping-second".into(),
-        name: "Ping (POST)".into(),
-        method: HttpMethod::Post,
-        url: "https://postman-echo.com/post".into(),
-        headers: vec![],
-        query: vec![],
-        body: Body::Json {
-            value: serde_json::json!({"hello": "world"}),
-            text: "{\n  \"hello\": \"world\"\n}".into(),
-        },
-        auth: Auth::None,
-        extractors: vec![],
-        scripts: RequestScripts::default(),
-    };
-
-    let invalid_htp_request = Request {
-        id: "invalid-http".into(),
-        name: "Invalid HTTP method".into(),
-        method: HttpMethod::Get,
-        url: "htp://postman-echo.com/get".into(),
-        headers: vec![],
-        query: vec![],
-        body: Body::None,
-        auth: Auth::None,
-        extractors: vec![],
-        scripts: RequestScripts::default(),
-    };
-
-    let timeout_http_request = Request {
-        id: "timeout-http".into(),
-        name: "Request with timeout".into(),
-        method: HttpMethod::Get,
-        url: "http://10.255.255.1".into(),
-        headers: vec![],
-        query: vec![],
-        body: Body::None,
-        auth: Auth::None,
-        extractors: vec![],
-        scripts: RequestScripts::default(),
-    };
-
-    let meta_path = collection_meta_path(&app, "default")?;
-    let ping_path = request_path(&app, "default", "ping")?;
-    let ping_second_path = request_path(&app, "default", "ping-second")?;
-    let invalid_http_path = request_path(&app, "default", "invalid-http")?;
-    let timeout_http_path = request_path(&app, "default", "timeout-http")?;
-
-    if !meta_path.exists() {
-        write_json(&meta_path, &meta)?;
-    }
-    if !ping_path.exists() {
-        write_json(&ping_path, &ping)?;
-    }
-    if !ping_second_path.exists() {
-        write_json(&ping_second_path, &ping_second)?;
-    }
-    if !invalid_http_path.exists() {
-        write_json(&invalid_http_path, &invalid_htp_request)?;
-    }
-    if !timeout_http_path.exists() {
-        write_json(&timeout_http_path, &timeout_http_request)?;
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn overwrite_default(app: AppHandle) -> Result<(), String> {
-    let meta_path = collection_meta_path(&app, "default")?;
-    if meta_path.exists() {
-        let dir = collection_dir(&app, "default")?;
-        delete_dir(&dir)?;
-    }
-    init_default_collection(app)?;
     Ok(())
 }
 

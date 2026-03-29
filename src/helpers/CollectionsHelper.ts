@@ -1,19 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { CollectionLoaded, CollectionMeta, HttpResponseDto, Request } from "../types.ts";
 
-
-
-export async function initDefault(setStatus: (s: string) => void, setCollections: (cols: CollectionMeta[]) => void) {
-    try {
-        setStatus("Init default collection...");
-        await invoke("init_default_collection");
-        await refreshCollections(setCollections, setStatus);
-        setStatus("✅ Default collection ready");
-    } catch (e) {
-        setStatus(`❌ Init failed: ${String(e)}`);
-    }
-}
-
 export async function refreshCollections(setCollections: (cols: CollectionMeta[]) => void, setStatus: (s: string) => void) {
     try {
         const list = await invoke<CollectionMeta[]>("list_collections");
@@ -36,16 +23,6 @@ export async function loadCollection(id: string,requestId:string|null ,  setCurr
     }
 }
 
-export async function overwriteDefault(setStatus: (s: string) => void, setCollections: (cols: CollectionMeta[]) => void) {
-    try {
-        setStatus("Overwriting default collection...");
-        await invoke("overwrite_default");
-        await refreshCollections(setCollections, setStatus);
-        setStatus("✅ Default collection overwritten");
-    } catch (e) {
-        setStatus(`❌ Overwrite failed: ${String(e)}`);
-    }
-}
 export async function devCreate(
     current: CollectionLoaded | null,
     setCurrent: (c: CollectionLoaded) => void,

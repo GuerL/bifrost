@@ -28,8 +28,6 @@ pub fn run() {
             commands::fs::open_app_data_dir,
             commands::fs::write_text_file,
             commands::fs::read_text_file,
-            commands::collection::init_default_collection,
-            commands::collection::overwrite_default,
             commands::environment::init_default_environment,
             commands::environment::list_environments,
             commands::environment::load_environment,

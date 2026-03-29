@@ -7,7 +7,6 @@ import {
     devDelete,
     devDuplicate,
     devRename,
-    initDefault,
     loadCollection,
 } from "./helpers/CollectionsHelper.ts";
 import {
@@ -1025,7 +1024,6 @@ export default function App() {
 
     useEffect(() => {
         (async () => {
-            await initDefault(setStatus, setCollections);
             await reloadCollectionsAndRestoreActive();
             await reloadEnvironments();
         })();
@@ -3322,39 +3320,6 @@ export default function App() {
                         flexShrink: 0,
                     }}
                 >
-                    {/*<div>*/}
-                    {/*    <h3>Collections</h3>*/}
-
-                    {/*    <button*/}
-                    {/*        style={{ ...buttonStyle(false), width: "100%", marginBottom: 8 }}*/}
-                    {/*        onClick={async () => {*/}
-                    {/*            await initDefault(setStatus, setCollections);*/}
-                    {/*            await reloadCollectionsAndRestoreActive();*/}
-                    {/*        }}*/}
-                    {/*    >*/}
-                    {/*        Init default*/}
-                    {/*    </button>*/}
-                    {/*    <button*/}
-                    {/*        style={{ ...buttonStyle(false), width: "100%", marginBottom: 8 }}*/}
-                    {/*        onClick={async () => {*/}
-                    {/*            await refreshCollections(setCollections, setStatus);*/}
-                    {/*            await reloadCollectionsAndRestoreActive();*/}
-                    {/*        }}*/}
-                    {/*    >*/}
-                    {/*        Refresh*/}
-                    {/*    </button>*/}
-                    {/*    <button*/}
-                    {/*        style={{ ...buttonStyle(false), width: "100%", marginBottom: 8 }}*/}
-                    {/*        onClick={async () => {*/}
-                    {/*            await overwriteDefault(setStatus, setCollections);*/}
-                    {/*            await reloadCollectionsAndRestoreActive();*/}
-                    {/*        }}*/}
-                    {/*    >*/}
-                    {/*        Overwrite default*/}
-                    {/*    </button>*/}
-
-                    {/*</div>*/}
-
                     <div
                         style={{
                             display: "flex",
