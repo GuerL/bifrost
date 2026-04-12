@@ -11,6 +11,31 @@ L'objectif est de fournir un outil rapide et local pour tester des APIs avec :
 - drafts persistés
 - historique et résultats par requête
 
+## Positioning
+
+Bifrost exists because many API clients shifted from developer tooling toward account-centric platforms. It is built as a fast, transparent desktop client for day-to-day API work where behavior stays understandable.
+
+## The problem with many modern API tools
+
+Many teams now deal with avoidable friction: vendor lock-in, forced accounts, opaque sync layers, heavier interfaces, slower startup, runtime behavior split between local and remote systems, and important capabilities that move behind paywalls. These patterns reduce control and make tooling harder to trust.
+
+## What Bifrost does differently
+
+Bifrost is local-first by design, with predictable execution and transparent storage. Data is meant to stay inspectable and portable, request behavior remains explicit, and scripting is visible rather than hidden behind platform internals. Its Tauri (Rust) + React architecture is chosen for responsive performance, and its AGPL-3.0-only license keeps improvements in the open ecosystem, including for network-used modifications.
+
+## Core principles
+
+- Developers should own their API data and workflow state.
+- Core usage should not require a cloud account.
+- Runtime logic should be explicit, deterministic, and inspectable.
+- Collections and environments should stay portable.
+- Scripting behavior should be transparent and auditable.
+- Startup time and resource usage should stay low.
+
+## Short summary paragraph
+
+Bifrost is an open-source, local-first API client for developers who want speed, control, and predictable behavior. It prioritizes transparent storage, portable workflows, and an AGPL-governed open model over opaque platform dependencies.
+
 ---
 
 # Stack
