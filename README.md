@@ -1,15 +1,15 @@
 # Bifrost
 
-Bifrost est un client HTTP desktop inspiré de Postman, construit avec **Tauri**, **React**, **TypeScript** et **Rust**.
+Bifrost is a desktop HTTP client inspired by Postman, built with **Tauri**, **React**, **TypeScript**, and **Rust**.
 
-L'objectif est de fournir un outil rapide et local pour tester des APIs avec :
+The goal is to provide a fast, local tool for API testing with:
 
-- collections de requêtes
-- variables d'environnement
-- éditeur JSON
-- runner de collections
-- drafts persistés
-- historique et résultats par requête
+- request collections
+- environment variables
+- JSON editor
+- collection runner
+- persistent drafts
+- request history and per-request results
 
 ## Positioning
 
@@ -55,9 +55,9 @@ Desktop
 
 ---
 
-# Prérequis
+# Prerequisites
 
-Avant de lancer le projet, assure-toi d'avoir :
+Before running the project, make sure you have:
 
 - **Node.js LTS**
 - **npm**
@@ -66,13 +66,13 @@ Avant de lancer le projet, assure-toi d'avoir :
 
 ---
 
-# Installation de Rust
+# Rust Installation
 
-Rust doit être installé via **rustup**, qui est le gestionnaire officiel des toolchains Rust.
+Rust should be installed via **rustup**, the official Rust toolchain manager.
 
 ---
 
-## Option 1 — Installation officielle (recommandée)
+## Option 1 — Official installation (recommended)
 
 ```bash
 curl https://sh.rustup.rs -sSf | sh
