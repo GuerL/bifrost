@@ -17,7 +17,7 @@ const bundleDirPath = path.join(releaseDirPath, "bundle");
 const latestJsonPath = path.join(bundleDirPath, "macos", "latest.json");
 
 const DEFAULT_RELEASE_URL_TEMPLATE =
-    "https://github.com/GuerL/bifrost-releases/releases/download/v${version}/${artifact}";
+    "https://github.com/GuerL/bifrost/releases/download/v${version}/${artifact}";
 const SEMVER_REGEX =
     /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|[0-9A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 

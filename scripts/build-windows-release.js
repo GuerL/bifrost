@@ -16,7 +16,7 @@ const nsisBundleDirPath = path.join(projectRoot, "src-tauri", "target", "release
 const latestJsonPath = path.join(nsisBundleDirPath, "latest.json");
 
 const DEFAULT_RELEASE_URL_TEMPLATE =
-    "https://github.com/GuerL/bifrost-releases/releases/download/v${version}/${artifact}";
+    "https://github.com/GuerL/bifrost/releases/download/v${version}/${artifact}";
 const SEMVER_REGEX =
     /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|[0-9A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 

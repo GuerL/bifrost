@@ -45,7 +45,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFFQzRDODJEMDE0OEQzREIKUldUYjAwZ0JMY2pFSGhoMnl1SDJlbVBDZlRLcDR5emN5YTJzY3lhaFpjbWJsajhud1J4TzhhcksK",
       "endpoints": [
-        "https://github.com/guerl/bifrost-releases/releases/latest/download/latest.json"
+        "https://github.com/GuerL/bifrost/releases/latest/download/latest.json"
       ]
     }
   }
