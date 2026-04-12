@@ -51,3 +51,14 @@ Rust doit être installé via **rustup**, qui est le gestionnaire officiel des t
 
 ```bash
 curl https://sh.rustup.rs -sSf | sh
+```
+
+## License
+
+This project is licensed under the **GNU Affero General Public License v3.0 only (AGPL-3.0-only)**.
+
+If you redistribute modified versions of this project, those modifications must remain under the same AGPL v3 license.
+
+If you modify this software and make it available to users over a network, you must also make the corresponding source code of that modified version available.
+
+See [LICENSE](./LICENSE) for the full legal text.
