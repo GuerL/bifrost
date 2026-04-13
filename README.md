@@ -96,6 +96,7 @@ Install Rust:
 curl https://sh.rustup.rs -sSf | sh
 ```
 
+---
 ## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 only (AGPL-3.0-only)**.
@@ -105,6 +106,8 @@ If you redistribute modified versions of this project, those modifications must 
 If you modify this software and make it available to users over a network, you must also make the corresponding source code of that modified version available.
 
 See [LICENSE](./LICENSE) for the full legal text.
+
+---
 
 ## Support the project
 
