@@ -1,4 +1,15 @@
-# Bifrost – Developer-first API client
+<p align="center">
+  <img src="src-tauri/icons/bifrost_logo.svg" alt="Bifrost logo" width="130"/>
+</p>
+
+<h1 align="center">
+  Bifrost – Developer-first API client
+</h1>
+
+<p align="center">
+  Lightweight, local-first API client built for developers.
+</p>
+
 ![GitHub release](https://img.shields.io/github/v/release/guerl/bifrost)
 ![GitHub downloads](https://img.shields.io/github/downloads/guerl/bifrost/total)
 ![GitHub stars](https://img.shields.io/github/stars/guerl/bifrost)
