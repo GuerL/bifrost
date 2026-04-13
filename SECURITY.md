@@ -2,12 +2,22 @@
 
 ## Reporting a Vulnerability
 
-Please report suspected vulnerabilities privately and include:
+If you discover a security vulnerability, please report it privately.
 
-- A clear description of the issue and impact.
-- Steps to reproduce.
-- Any proof-of-concept or logs that help validate the report.
+Preferred method:
+Use GitHub Security Advisories to disclose vulnerabilities responsibly:
 
-Security contact channel: **TODO**.
+https://github.com/guerl/bifrost/security/advisories
 
-Please do not open public issues for unpatched security vulnerabilities.
+Please include:
+
+- A clear description of the issue and its potential impact
+- Steps to reproduce
+- Proof-of-concept if available
+- Any relevant logs or context
+
+Please do not open public issues for unpatched vulnerabilities, as this may expose users to unnecessary risk.
+
+## Scope
+
+This policy applies to all actively maintained versions of Bifrost.

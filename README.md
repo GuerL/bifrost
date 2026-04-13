@@ -1,44 +1,70 @@
-# Bifrost
+<p align="center">
+  <img src="src-tauri/icons/bifrost_logo.svg" alt="Bifrost logo" width="130"/>
+</p>
 
-Bifrost is a desktop HTTP client inspired by Postman, built with **Tauri**, **React**, **TypeScript**, and **Rust**.
+<h1 align="center">
+  Bifrost – Developer-first API client
+</h1>
 
-The goal is to provide a fast, local tool for API testing with:
+<p align="center">
+  Lightweight, local-first API client built for developers.
+</p>
 
-- request collections
-- environment variables
-- JSON editor
-- collection runner
-- persistent drafts
-- request history and per-request results
+![GitHub release](https://img.shields.io/github/v/release/guerl/bifrost)
+![GitHub downloads](https://img.shields.io/github/downloads/guerl/bifrost/total)
+![GitHub stars](https://img.shields.io/github/stars/guerl/bifrost)
+![License](https://img.shields.io/github/license/guerl/bifrost)
+![Tauri](https://img.shields.io/badge/runtime-tauri-blue)
+![Rust](https://img.shields.io/badge/backend-rust-orange)
+![React](https://img.shields.io/badge/frontend-react-blue)
 
-## Positioning
+Bifrost is a local-first desktop API client built for developers who want speed, clarity, and control over their workflows.
 
-Bifrost exists because many API clients shifted from developer tooling toward account-centric platforms. It is built as a fast, transparent desktop client for day-to-day API work where behavior stays understandable.
-
-## The problem with many modern API tools
-
-Many teams now deal with avoidable friction: vendor lock-in, forced accounts, opaque sync layers, heavier interfaces, slower startup, runtime behavior split between local and remote systems, and important capabilities that move behind paywalls. These patterns reduce control and make tooling harder to trust.
-
-## What Bifrost does differently
-
-Bifrost is local-first by design, with predictable execution and transparent storage. Data is meant to stay inspectable and portable, request behavior remains explicit, and scripting is visible rather than hidden behind platform internals. Its Tauri (Rust) + React architecture is chosen for responsive performance, and its AGPL-3.0-only license keeps improvements in the open ecosystem, including for network-used modifications.
-
-## Core principles
-
-- Developers should own their API data and workflow state.
-- Core usage should not require a cloud account.
-- Runtime logic should be explicit, deterministic, and inspectable.
-- Collections and environments should stay portable.
-- Scripting behavior should be transparent and auditable.
-- Startup time and resource usage should stay low.
-
-## Short summary paragraph
-
-Bifrost is an open-source, local-first API client for developers who want speed, control, and predictable behavior. It prioritizes transparent storage, portable workflows, and an AGPL-governed open model over opaque platform dependencies.
+Built with **Tauri**, **Rust**, **React**, and **TypeScript**, Bifrost focuses on predictable behavior, transparent data handling, and a fast user experience without requiring a cloud account.
 
 ---
 
-# Stack
+## Philosophy
+
+Bifrost is designed around a simple idea:
+
+developer tools should serve developers first.
+
+Many modern API tools evolved toward account-centric ecosystems, adding layers of synchronization, abstraction, and platform coupling. While these approaches can be useful in some contexts, they can also introduce unnecessary friction for everyday API work.
+
+Bifrost focuses on providing a clear, local, and understandable workflow that stays close to how developers naturally think and debug.
+
+---
+
+## Core principles
+
+- Local-first by default
+- Transparent data storage
+- Predictable request execution
+- Portable collections and environments
+- Explicit runtime behavior
+- Minimal startup time
+- Lightweight architecture
+- Developer-oriented workflow design
+
+---
+
+## Features
+
+- HTTP request builder
+- Request collections
+- Environment variables
+- JSON editor
+- Collection runner
+- Persistent drafts
+- Request history
+- Per-request execution results
+- Local data storage
+- Fast startup
+
+---
+
+## Architecture
 
 Frontend
 - React
@@ -48,36 +74,40 @@ Frontend
 
 Backend
 - Rust
-- Tauri v2
 
-Desktop
-- Tauri (WebView + Rust backend)
+Desktop runtime
+- Tauri v2 (Rust + WebView)
 
----
-
-# Prerequisites
-
-Before running the project, make sure you have:
-
-- **Node.js LTS**
-- **npm**
-- **Rust**
-- **Tauri dependencies**
+This architecture allows Bifrost to remain lightweight while providing a responsive native experience.
 
 ---
 
-# Rust Installation
+## Why Bifrost
 
-Rust should be installed via **rustup**, the official Rust toolchain manager.
+Bifrost prioritizes clarity over abstraction.
+
+Execution remains understandable, storage stays inspectable, and workflows remain portable across environments.
+
+The goal is not to reinvent API tooling, but to provide a stable, fast, and developer-friendly alternative focused on everyday productivity.
 
 ---
 
-## Option 1 — Official installation (recommended)
+## Installation (dev)
+
+Prerequisites:
+
+- Node.js LTS
+- npm
+- Rust (via rustup)
+- Tauri dependencies
+
+Install Rust:
 
 ```bash
 curl https://sh.rustup.rs -sSf | sh
 ```
 
+---
 ## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 only (AGPL-3.0-only)**.
@@ -87,6 +117,8 @@ If you redistribute modified versions of this project, those modifications must 
 If you modify this software and make it available to users over a network, you must also make the corresponding source code of that modified version available.
 
 See [LICENSE](./LICENSE) for the full legal text.
+
+---
 
 ## Support the project
 
