@@ -87,3 +87,11 @@ If you redistribute modified versions of this project, those modifications must 
 If you modify this software and make it available to users over a network, you must also make the corresponding source code of that modified version available.
 
 See [LICENSE](./LICENSE) for the full legal text.
+
+## Support the project
+
+If Bifrost helps you, consider supporting development:
+
+- GitHub Sponsors: https://github.com/sponsors/GuerL
+
+- Buy Me a Coffee: https://buymeacoffee.com/quentinvb
