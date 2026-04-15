@@ -25,9 +25,11 @@ jobs:
           - label: macOS
             runner: macos-latest
             args: ""
+            tauri_timeout: 40
           - label: Windows
             runner: windows-latest
             args: "--config src-tauri/tauri.windows.conf.json"
+            tauri_timeout: 45
 
     steps:
       - name: Checkout
@@ -45,13 +47,30 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      - name: Build and publish release artifacts
+      - name: Notarization preflight (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -e
+          echo "Checking notarytool availability..."
+          xcrun notarytool --version
+          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
+            echo "::warning::One or more Apple notarization secrets are missing."
+          else
+            echo "Apple notarization credentials are configured."
+          fi
+
+      - name: Build and publish release artifacts (Tauri action)
         uses: tauri-apps/tauri-action@v0.6.2
+        timeout-minutes: ${{ matrix.tauri_timeout }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Optional macOS signing/notarization secrets can be added later when ready:
+          # macOS signing/notarization secrets used by tauri-action on macOS.
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -71,3 +90,57 @@ jobs:
           uploadUpdaterSignatures: false
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+
+      - name: Notarization diagnostics (macOS, always)
+        if: runner.os == 'macOS' && always()
+        continue-on-error: true
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set +e
+          diag_dir="${RUNNER_TEMP}/notarytool-diagnostics"
+          mkdir -p "$diag_dir"
+
+          echo "notarytool version:"
+          xcrun notarytool --version || true
+
+          echo "Fetching notarization history from Apple..."
+          xcrun notarytool history \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --output-format json > "$diag_dir/history.json"
+          history_exit=$?
+          if [ "$history_exit" -ne 0 ]; then
+            echo "::warning::Unable to fetch notarization history (exit $history_exit)."
+            exit 0
+          fi
+
+          cat "$diag_dir/history.json"
+          latest_submission_id="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$diag_dir/history.json" | head -n 1)"
+          if [ -z "$latest_submission_id" ]; then
+            echo "::warning::No notarization submission id found in history output."
+            exit 0
+          fi
+
+          echo "Fetching notarization log for submission: $latest_submission_id"
+          xcrun notarytool log "$latest_submission_id" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --output-format json > "$diag_dir/log-$latest_submission_id.json" || \
+            echo "::warning::Unable to fetch notarization log for submission $latest_submission_id."
+
+          echo "Notarization diagnostic files:"
+          ls -la "$diag_dir"
+
+      - name: Upload notarization diagnostics (macOS)
+        if: runner.os == 'macOS' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: notarytool-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/notarytool-diagnostics
+          if-no-files-found: ignore
