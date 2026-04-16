@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   publish-tauri:
-    timeout-minutes: 45
+    timeout-minutes: 60
     name: Build and Publish (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -25,7 +25,7 @@ jobs:
           - label: macOS
             runner: macos-latest
             args: ""
-            tauri_timeout: 40
+            tauri_timeout: 45
           - label: Windows
             runner: windows-latest
             args: "--config src-tauri/tauri.windows.conf.json"
