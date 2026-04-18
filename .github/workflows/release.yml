@@ -64,6 +64,7 @@ jobs:
           fi
 
       - name: Build and publish release artifacts (Tauri action)
+        id: tauri_release
         uses: tauri-apps/tauri-action@v0.6.2
         timeout-minutes: ${{ matrix.tauri_timeout }}
         env:
@@ -86,11 +87,50 @@ jobs:
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           generateReleaseNotes: true
-          uploadUpdaterJson: true
-          uploadUpdaterSignatures: false
+          includeUpdaterJson: true
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+      - name: Remove updater signature assets from release
+        if: always()
+        uses: actions/github-script@v9
+        env:
+          RELEASE_ID: ${{ steps.tauri_release.outputs.releaseId }}
+        with:
+          script: |
+            const releaseId = Number(process.env.RELEASE_ID || 0);
+            if (!releaseId) {
+              core.warning("No releaseId was produced; skipping .sig asset cleanup.");
+              return;
+            }
 
+            const { owner, repo } = context.repo;
+            const assets = await github.paginate(
+              github.rest.repos.listReleaseAssets,
+              {
+                owner,
+                repo,
+                release_id: releaseId,
+                per_page: 100,
+              }
+            );
+
+            const sigAssets = assets.filter(asset => asset.name.endsWith(".sig"));
+
+            if (sigAssets.length === 0) {
+              core.info("No .sig assets found on this release.");
+              return;
+            }
+
+            for (const asset of sigAssets) {
+              core.info(`Deleting release asset: ${asset.name}`);
+              await github.rest.repos.deleteReleaseAsset({
+                owner,
+                repo,
+                asset_id: asset.id,
+              });
+            }
+
+            core.info(`Deleted ${sigAssets.length} .sig release asset(s).`);
       - name: Notarization diagnostics (macOS, always)
         if: runner.os == 'macOS' && always()
         continue-on-error: true
