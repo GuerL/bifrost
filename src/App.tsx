@@ -2598,7 +2598,6 @@ export default function App() {
         if (!current) return null;
 
         return (
-            (draft && draft.id === requestId ? draft : null) ??
             draftsById[requestId] ??
             current.requests.find((entry) => entry.id === requestId) ??
             null
