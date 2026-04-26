@@ -259,6 +259,10 @@ export async function copyRequestToClipboard(request: Request): Promise<void> {
     await writeText(serialized);
 }
 
+export async function copyTextToClipboard(text: string): Promise<void> {
+    await writeText(text);
+}
+
 export async function readRequestFromClipboard(): Promise<BifrostClipboardRequestPayloadV1 | null> {
     const text = await readText();
     if (typeof text !== "string" || text.trim().length === 0) return null;

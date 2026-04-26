@@ -29,12 +29,14 @@ import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.ts
 import CollectionRunnerModal from "./components/CollectionRunnerModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
 import {
+    copyTextToClipboard,
     copyRequestToClipboard,
     isBifrostClipboardRequestPayload,
     parseBifrostClipboardPayload,
     readRequestFromClipboard,
     type BifrostClipboardRequestPayloadV1,
 } from "./helpers/ClipboardRequestTransfer.ts";
+import { buildCurlCommand } from "./helpers/CurlCommand.ts";
 import {
     getRunnerSelectedRequestsForCollection,
     loadRunnerSelectedRequests,
@@ -2592,15 +2594,18 @@ export default function App() {
         });
     }
 
-    async function onCopyRequest(requestId: string) {
-        if (!current) return;
+    function resolveRequestForAction(requestId: string): Request | null {
+        if (!current) return null;
 
-        const source =
-            (draft && draft.id === requestId ? draft : null) ??
+        return (
             draftsById[requestId] ??
             current.requests.find((entry) => entry.id === requestId) ??
-            null;
+            null
+        );
+    }
 
+    async function onCopyRequest(requestId: string) {
+        const source = resolveRequestForAction(requestId);
         if (!source) return;
 
         try {
@@ -2608,6 +2613,20 @@ export default function App() {
             setStatus(`✅ Request "${source.name}" copied to clipboard`);
         } catch (error) {
             setStatus(`❌ Copy request failed: ${String(error)}`);
+        }
+    }
+
+    async function onCopyAsCurl(requestId: string) {
+        const source = resolveRequestForAction(requestId);
+        if (!source) return;
+
+        try {
+            const curl = buildCurlCommand(source);
+            await copyTextToClipboard(curl);
+            setStatus(`✅ cURL copied for "${source.name}"`);
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            setStatus(`❌ Copy as cURL failed: ${reason}`);
         }
     }
 
@@ -4313,6 +4332,19 @@ export default function App() {
                                         {SHORTCUT_LABELS.copyRequest}
                                     </span>
                                 </span>
+                            </button>
+                        )}
+
+                        {contextMenu.row.kind === "request" && (
+                            <button
+                                style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                                onClick={() => {
+                                    const row = contextMenu.row as Extract<SidebarTreeRow, { kind: "request" }>;
+                                    setContextMenu(null);
+                                    void onCopyAsCurl(row.requestId);
+                                }}
+                            >
+                                Copy as cURL
                             </button>
                         )}
 
