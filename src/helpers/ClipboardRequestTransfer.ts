@@ -260,7 +260,45 @@ export async function copyRequestToClipboard(request: Request): Promise<void> {
 }
 
 export async function copyTextToClipboard(text: string): Promise<void> {
-    await writeText(text);
+    if (!text) {
+        throw new Error("Nothing to copy.");
+    }
+
+    try {
+        await writeText(text);
+        return;
+    } catch {
+        // Fall through to browser clipboard APIs when plugin clipboard is unavailable.
+    }
+
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+
+    if (typeof document === "undefined" || !document.body) {
+        throw new Error("Clipboard API is unavailable.");
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+
+    try {
+        const copied = document.execCommand("copy");
+        if (!copied) {
+            throw new Error("Failed to copy.");
+        }
+    } finally {
+        document.body.removeChild(textarea);
+    }
 }
 
 export async function readRequestFromClipboard(): Promise<BifrostClipboardRequestPayloadV1 | null> {

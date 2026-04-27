@@ -86,6 +86,13 @@ import {
     downloadAndInstallPendingUpdate,
     restartAfterUpdate,
 } from "./helpers/TauriUpdaterHelper.ts";
+import {
+    notifyDismiss,
+    notifyError,
+    notifyInfo,
+    notifyLoading,
+    notifySuccess,
+} from "./helpers/Toast.tsx";
 
 type SidebarContextMenu = {
     x: number;
@@ -289,6 +296,10 @@ function parseHttpError(error: unknown): { kind: string; message: string; durati
         message: typeof source?.message === "string" ? source.message : String(error),
         durationMs: typeof source?.duration_ms === "number" ? source.duration_ms : undefined,
     };
+}
+
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
@@ -671,7 +682,6 @@ export default function App() {
 
             if (!activeCollectionId) {
                 await clearCurrentCollectionView();
-                setStatus("✅ No active collection");
                 return;
             }
 
@@ -680,11 +690,10 @@ export default function App() {
                 null,
                 setCurrent,
                 setSelectedRequestId,
-                setResp,
-                setStatus
+                setResp
             );
         } catch (e) {
-            setStatus(`❌ Collections failed: ${String(e)}`);
+            notifyError(`Failed to load collections: ${errorMessage(e)}`);
         }
     }
 
@@ -921,7 +930,7 @@ export default function App() {
             setEnvDraftName(selected?.name ?? "");
             setEnvDraftVars(selected?.variables ?? []);
         } catch (e) {
-            setStatus(`❌ Environments failed: ${String(e)}`);
+            notifyError(`Failed to load environments: ${errorMessage(e)}`);
         }
     }
 
@@ -988,7 +997,6 @@ export default function App() {
             const availableUpdate = await checkForUpdate();
             if (cancelled || !availableUpdate) return;
             setUpdateDownloadModal({ version: availableUpdate.version });
-            setStatus(`⬇️ Update ${availableUpdate.version} available.`);
         })();
 
         return () => {
@@ -1002,17 +1010,17 @@ export default function App() {
         try {
             const installedUpdate = await downloadAndInstallPendingUpdate();
             if (!installedUpdate) {
-                setStatus("❌ Update install failed.");
+                notifyError("Failed to install update");
                 setUpdateDownloadBusy(false);
                 return;
             }
 
             setUpdateDownloadModal(null);
             setUpdateRestartModal({ version: installedUpdate.version });
-            setStatus(`✅ Update ${installedUpdate.version} installed. Restart required.`);
+            notifySuccess(`Update ${installedUpdate.version} installed`);
             setUpdateDownloadBusy(false);
         } catch (error) {
-            setStatus(`❌ Update install failed: ${String(error)}`);
+            notifyError(`Failed to install update: ${errorMessage(error)}`);
             setUpdateDownloadBusy(false);
         }
     }
@@ -1022,7 +1030,7 @@ export default function App() {
         try {
             await restartAfterUpdate();
         } catch (error) {
-            setStatus(`❌ Restart failed: ${String(error)}`);
+            notifyError(`Failed to restart app: ${errorMessage(error)}`);
             setUpdateRestartBusy(false);
         }
     }
@@ -1042,7 +1050,7 @@ export default function App() {
                 });
                 setDraftsById(drafts);
             } catch (e) {
-                setStatus(`❌ Failed to load drafts: ${String(e)}`);
+                notifyError(`Failed to load drafts: ${errorMessage(e)}`);
             }
         })();
     }, [current?.meta.id]);
@@ -1542,10 +1550,10 @@ export default function App() {
                     return next;
                 });
 
-                setStatus("✅ Draft saved");
+                notifySuccess("Request saved");
                 return true;
             } catch (e) {
-                setStatus(`❌ Save failed: ${String(e)}`);
+                notifyError(`Failed to save request: ${errorMessage(e)}`);
                 return false;
             }
         },
@@ -1569,10 +1577,10 @@ export default function App() {
                     return next;
                 });
 
-                setStatus("✅ Draft discarded");
+                notifyInfo("Draft discarded");
                 return true;
             } catch (e) {
-                setStatus(`❌ Discard failed: ${String(e)}`);
+                notifyError(`Failed to discard draft: ${errorMessage(e)}`);
                 return false;
             }
         },
@@ -1676,7 +1684,7 @@ export default function App() {
                 e.preventDefault();
                 setContextMenu(null);
                 setRootAddMenu(null);
-                onDuplicateRequest(selectedRequestId);
+                void onDuplicateRequest(selectedRequestId);
                 return;
             }
 
@@ -2011,14 +2019,14 @@ export default function App() {
 
         const ordered = requestsInTreeOrder(current);
         if (ordered.length === 0) {
-            setStatus("No request in this collection.");
+            notifyInfo("No request in this collection");
             return;
         }
 
         const selectedSet = new Set(requestIdsToRun ?? runnerSelectedRequestIds);
         const selected = ordered.filter((request) => selectedSet.has(request.id));
         if (selected.length === 0) {
-            setStatus("No request selected for this run.");
+            notifyInfo("No request selected for this run");
             return;
         }
 
@@ -2033,7 +2041,7 @@ export default function App() {
         });
 
         if (plan.length === 0) {
-            setStatus("No execution planned.");
+            notifyInfo("No execution planned");
             return;
         }
 
@@ -2394,12 +2402,11 @@ export default function App() {
                 selectedRequestId,
                 setCurrent,
                 setSelectedRequestId,
-                setResp,
-                setStatus
+                setResp
             );
-            setStatus("✅ Collection order updated");
+            notifySuccess("Collection order updated");
         } catch (error) {
-            setStatus(`❌ Move failed: ${String(error)}`);
+            notifyError(`Failed to move node: ${errorMessage(error)}`);
         }
     }
 
@@ -2418,12 +2425,11 @@ export default function App() {
                 selectedRequestId,
                 setCurrent,
                 setSelectedRequestId,
-                setResp,
-                setStatus
+                setResp
             );
-            setStatus("✅ Node moved to folder");
+            notifySuccess("Node moved to folder");
         } catch (error) {
-            setStatus(`❌ Move failed: ${String(error)}`);
+            notifyError(`Failed to move node: ${errorMessage(error)}`);
         }
     }
 
@@ -2475,7 +2481,7 @@ export default function App() {
         setDeleteRequestModal({ id: request.id, name: request.name });
     }
 
-    function onDeleteRequest(requestId: string) {
+    async function onDeleteRequest(requestId: string) {
         if (!current) return;
 
         if (draggedRequestId === requestId) {
@@ -2507,14 +2513,18 @@ export default function App() {
             previous?.requestId === requestId ? null : previous
         );
 
-        devDelete(
-            current,
-            requestId,
-            setCurrent,
-            setSelectedRequestId,
-            setResp,
-            setStatus
-        );
+        try {
+            await devDelete(
+                current,
+                requestId,
+                setCurrent,
+                setSelectedRequestId,
+                setResp
+            );
+            notifySuccess("Request deleted");
+        } catch (error) {
+            notifyError(`Failed to delete request: ${errorMessage(error)}`);
+        }
     }
 
     async function onConfirmDeleteRequest() {
@@ -2522,7 +2532,7 @@ export default function App() {
         setDeleteRequestBusy(true);
         const deletingId = deleteRequestModal.id;
         setDeleteRequestModal(null);
-        onDeleteRequest(deletingId);
+        await onDeleteRequest(deletingId);
         setDeleteRequestBusy(false);
     }
 
@@ -2545,13 +2555,12 @@ export default function App() {
                 selectedRequestId,
                 setCurrent,
                 setSelectedRequestId,
-                setResp,
-                setStatus
+                setResp
             );
             setDeleteFolderModal(null);
-            setStatus("✅ Folder deleted");
+            notifySuccess("Folder deleted");
         } catch (error) {
-            setStatus(`❌ Delete folder failed: ${String(error)}`);
+            notifyError(`Failed to delete folder: ${errorMessage(error)}`);
         } finally {
             setDeleteFolderBusy(false);
         }
@@ -2610,9 +2619,9 @@ export default function App() {
 
         try {
             await copyRequestToClipboard(source);
-            setStatus(`✅ Request "${source.name}" copied to clipboard`);
-        } catch (error) {
-            setStatus(`❌ Copy request failed: ${String(error)}`);
+            notifySuccess("Copied to clipboard");
+        } catch {
+            notifyError("Failed to copy");
         }
     }
 
@@ -2623,10 +2632,9 @@ export default function App() {
         try {
             const curl = buildCurlCommand(source);
             await copyTextToClipboard(curl);
-            setStatus(`✅ cURL copied for "${source.name}"`);
-        } catch (error) {
-            const reason = error instanceof Error ? error.message : String(error);
-            setStatus(`❌ Copy as cURL failed: ${reason}`);
+            notifySuccess("Copied as cURL");
+        } catch {
+            notifyError("Failed to copy");
         }
     }
 
@@ -2659,32 +2667,35 @@ export default function App() {
                 importedRequest.id,
                 setCurrent,
                 setSelectedRequestId,
-                setResp,
-                setStatus
+                setResp
             );
 
             setSelection(importedRequest);
             setClipboardImportModal(null);
-            setStatus(`✅ Request imported from clipboard: ${importedRequest.name}`);
+            notifySuccess("Request imported from clipboard");
         } catch (error) {
-            setStatus(`❌ Clipboard import failed: ${String(error)}`);
+            notifyError(`Failed to import from clipboard: ${errorMessage(error)}`);
         } finally {
             setClipboardImportBusy(false);
         }
     }
 
-    function onDuplicateRequest(requestId: string, targetFolderId?: string | null) {
+    async function onDuplicateRequest(requestId: string, targetFolderId?: string | null) {
         if (!current) return;
 
-        devDuplicate(
-            current,
-            requestId,
-            setCurrent,
-            setSelectedRequestId,
-            setResp,
-            setStatus,
-            targetFolderId
-        );
+        try {
+            await devDuplicate(
+                current,
+                requestId,
+                setCurrent,
+                setSelectedRequestId,
+                setResp,
+                targetFolderId
+            );
+            notifySuccess("Request duplicated");
+        } catch (error) {
+            notifyError(`Failed to duplicate request: ${errorMessage(error)}`);
+        }
     }
 
     function openRenameModal(row: SidebarTreeRow) {
@@ -2722,42 +2733,51 @@ export default function App() {
         setRenameError("");
 
         if (renameTarget.kind === "request") {
-            const source = current.requests.find((r) => r.id === renameTarget.id);
-            if (!source) {
-                setRenameError("Source request not found.");
+            try {
+                const source = current.requests.find((r) => r.id === renameTarget.id);
+                if (!source) {
+                    setRenameError("Source request not found.");
+                    setRenameBusy(false);
+                    return;
+                }
+
+                if (nextName === source.name) {
+                    setRenameError("Nothing to rename.");
+                    setRenameBusy(false);
+                    return;
+                }
+
+                const ok = await devRename(
+                    current,
+                    renameTarget.id,
+                    nextName,
+                    setCurrent,
+                    setSelectedRequestId,
+                    setResp
+                );
+
+                if (ok) {
+                    setDraftsById((prev) => {
+                        const existing = prev[renameTarget.id];
+                        if (!existing) return prev;
+                        const next = { ...prev };
+                        next[renameTarget.id] = { ...existing, name: nextName };
+                        return next;
+                    });
+                    setRenameTarget(null);
+                    setRenameError("");
+                    notifySuccess("Request renamed");
+                } else {
+                    setRenameError("Rename failed.");
+                }
+                setRenameBusy(false);
+                return;
+            } catch (error) {
+                setRenameError(`Rename failed: ${errorMessage(error)}`);
+                notifyError(`Failed to rename request: ${errorMessage(error)}`);
                 setRenameBusy(false);
                 return;
             }
-
-            if (nextName === source.name) {
-                setRenameError("Nothing to rename.");
-                setRenameBusy(false);
-                return;
-            }
-
-            const ok = await devRename(
-                current,
-                renameTarget.id,
-                nextName,
-                setCurrent,
-                setSelectedRequestId,
-                setResp,
-                setStatus
-            );
-
-            if (ok) {
-                setDraftsById((prev) => {
-                    const existing = prev[renameTarget.id];
-                    if (!existing) return prev;
-                    const next = { ...prev };
-                    next[renameTarget.id] = { ...existing, name: nextName };
-                    return next;
-                });
-                setRenameTarget(null);
-                setRenameError("");
-            }
-            setRenameBusy(false);
-            return;
         }
 
         try {
@@ -2771,13 +2791,13 @@ export default function App() {
                 selectedRequestId,
                 setCurrent,
                 setSelectedRequestId,
-                setResp,
-                setStatus
+                setResp
             );
             setRenameTarget(null);
-            setStatus("✅ Folder renamed");
+            notifySuccess("Folder renamed");
         } catch (error) {
-            setRenameError(`Rename failed: ${String(error)}`);
+            setRenameError(`Rename failed: ${errorMessage(error)}`);
+            notifyError(`Failed to rename folder: ${errorMessage(error)}`);
         } finally {
             setRenameBusy(false);
         }
@@ -2799,9 +2819,9 @@ export default function App() {
         if (!current) {
             if (collections.length === 0) {
                 openNoCollectionsModal();
-                setStatus("ℹ️ No collection available. Create one first.");
+                notifyInfo("No collection available. Create one first");
             } else {
-                setStatus("ℹ️ Select an active collection before creating a request.");
+                notifyInfo("Select an active collection before creating a request");
             }
             return;
         }
@@ -2825,15 +2845,15 @@ export default function App() {
                 setCurrent,
                 setSelectedRequestId,
                 setResp,
-                setStatus,
                 setSelection,
                 createRequestModal.parentFolderId,
                 name
             );
             setCreateRequestModal(null);
-            setStatus("✅ Request created");
+            notifySuccess("Request created");
         } catch (error) {
-            setCreateRequestError(`Create failed: ${String(error)}`);
+            setCreateRequestError(`Create failed: ${errorMessage(error)}`);
+            notifyError(`Failed to create request: ${errorMessage(error)}`);
         } finally {
             setCreateRequestBusy(false);
         }
@@ -2876,13 +2896,13 @@ export default function App() {
                 selectedRequestId,
                 setCurrent,
                 setSelectedRequestId,
-                setResp,
-                setStatus
+                setResp
             );
             setCreateFolderModal(null);
-            setStatus("✅ Folder created");
+            notifySuccess("Folder created");
         } catch (error) {
-            setCreateFolderError(`Create failed: ${String(error)}`);
+            setCreateFolderError(`Create failed: ${errorMessage(error)}`);
+            notifyError(`Failed to create folder: ${errorMessage(error)}`);
         } finally {
             setCreateFolderBusy(false);
         }
@@ -2914,13 +2934,13 @@ export default function App() {
                 selectedRequestId,
                 setCurrent,
                 setSelectedRequestId,
-                setResp,
-                setStatus
+                setResp
             );
             setMoveNodeModal(null);
-            setStatus("✅ Node moved");
+            notifySuccess("Node moved");
         } catch (error) {
-            setMoveNodeError(`Move failed: ${String(error)}`);
+            setMoveNodeError(`Move failed: ${errorMessage(error)}`);
+            notifyError(`Failed to move node: ${errorMessage(error)}`);
         } finally {
             setMoveNodeBusy(false);
         }
@@ -2930,9 +2950,9 @@ export default function App() {
         try {
             await invoke("set_active_environment", { environmentId });
             setActiveEnvironmentId(environmentId);
-            setStatus(environmentId ? "✅ Environment selected" : "✅ Environment cleared");
+            notifySuccess(environmentId ? "Environment selected" : "Environment cleared");
         } catch (e) {
-            setStatus(`❌ Environment select failed: ${String(e)}`);
+            notifyError(`Failed to select environment: ${errorMessage(e)}`);
         }
     }
 
@@ -2943,7 +2963,7 @@ export default function App() {
 
             if (!collectionId) {
                 await clearCurrentCollectionView();
-                setStatus("✅ Collection cleared");
+                notifySuccess("Collection cleared");
                 return;
             }
 
@@ -2952,11 +2972,11 @@ export default function App() {
                 null,
                 setCurrent,
                 setSelectedRequestId,
-                setResp,
-                setStatus
+                setResp
             );
+            notifySuccess("Collection selected");
         } catch (e) {
-            setStatus(`❌ Collection select failed: ${String(e)}`);
+            notifyError(`Failed to select collection: ${errorMessage(e)}`);
         }
     }
 
@@ -2973,8 +2993,8 @@ export default function App() {
         event.target.value = "";
         if (!file) return;
 
+        const importToastId = notifyLoading(`Importing ${file.name}...`);
         try {
-            setStatus(`Importing Postman collection: ${file.name}...`);
             const jsonText = await file.text();
             const imported = await invoke<ImportPostmanResult>(
                 "import_postman_collection_from_json",
@@ -2990,11 +3010,13 @@ export default function App() {
                 imported.warnings.length > 0
                     ? ` • ${imported.warnings.length} warning(s)`
                     : "";
-            setStatus(
-                `✅ Imported '${imported.collection_name}' (${imported.imported_requests} requests, ${imported.imported_folders} folders)${warningsSuffix}`
+            notifyDismiss(importToastId);
+            notifySuccess(
+                `Imported '${imported.collection_name}' (${imported.imported_requests} requests, ${imported.imported_folders} folders)${warningsSuffix}`
             );
         } catch (error) {
-            setStatus(`❌ Postman import failed: ${String(error)}`);
+            notifyDismiss(importToastId);
+            notifyError(`Failed to import Postman collection: ${errorMessage(error)}`);
         }
     }
 
@@ -3003,8 +3025,8 @@ export default function App() {
         event.target.value = "";
         if (!file) return;
 
+        const importToastId = notifyLoading(`Importing ${file.name}...`);
         try {
-            setStatus(`Importing Bifrost portable file: ${file.name}...`);
             const jsonText = await file.text();
             const imported = await invoke<ImportPortableResult>(
                 "import_collection_portable_from_json",
@@ -3020,17 +3042,20 @@ export default function App() {
                 imported.warnings.length > 0
                     ? ` • ${imported.warnings.length} warning(s)`
                     : "";
-            setStatus(
-                `✅ Imported '${imported.collection_name}' (${imported.imported_requests} requests)${warningsSuffix}`
+            notifyDismiss(importToastId);
+            notifySuccess(
+                `Imported '${imported.collection_name}' (${imported.imported_requests} requests)${warningsSuffix}`
             );
         } catch (error) {
-            setStatus(`❌ Portable import failed: ${String(error)}`);
+            notifyDismiss(importToastId);
+            notifyError(`Failed to import portable file: ${errorMessage(error)}`);
         }
     }
 
     async function onExportPortableCollection() {
         if (!current) return;
 
+        let exportToastId: string | null = null;
         try {
             const appDataDir = await invoke<string>("app_data_dir");
             const suggestedFilePath = `${appDataDir}/${safeFileName(current.meta.name)}.bifrost.portable.json`;
@@ -3046,19 +3071,22 @@ export default function App() {
                 },
             });
             if (!userPath || !userPath.trim()) {
-                setStatus("ℹ️ Portable export cancelled");
+                notifyInfo("Portable export cancelled");
                 return;
             }
 
-            setStatus(`Exporting '${current.meta.name}'...`);
+            exportToastId = notifyLoading(`Exporting '${current.meta.name}'...`);
             await invoke("export_collection_portable_to_file", {
                 collectionId: current.meta.id,
                 path: userPath.trim(),
             });
-
-            setStatus(`✅ Portable export saved: ${userPath.trim()}`);
+            notifyDismiss(exportToastId);
+            notifySuccess(`Portable export saved: ${userPath.trim()}`);
         } catch (error) {
-            setStatus(`❌ Portable export failed: ${String(error)}`);
+            if (exportToastId) {
+                notifyDismiss(exportToastId);
+            }
+            notifyError(`Failed to export portable file: ${errorMessage(error)}`);
         }
     }
 
@@ -3109,9 +3137,10 @@ export default function App() {
             setCollectionSelectedId(created.id);
             setCollectionDraftName(created.name);
             setCollectionCreateName("");
-            setStatus(`✅ Collection created: ${created.name}`);
+            notifySuccess(`Collection created: ${created.name}`);
         } catch (e) {
-            setCollectionError(`Create failed: ${String(e)}`);
+            setCollectionError(`Create failed: ${errorMessage(e)}`);
+            notifyError(`Failed to create collection: ${errorMessage(e)}`);
         } finally {
             setCollectionBusy(false);
         }
@@ -3133,9 +3162,10 @@ export default function App() {
                 newName: name,
             });
             await reloadCollectionsAndRestoreActive(current?.meta.id ?? collectionSelectedId);
-            setStatus("✅ Collection saved");
+            notifySuccess("Collection saved");
         } catch (e) {
-            setCollectionError(`Save failed: ${String(e)}`);
+            setCollectionError(`Save failed: ${errorMessage(e)}`);
+            notifyError(`Failed to save collection: ${errorMessage(e)}`);
         } finally {
             setCollectionBusy(false);
         }
@@ -3170,9 +3200,10 @@ export default function App() {
             setCollectionSelectedId(nextSelected?.id ?? null);
             setCollectionDraftName(nextSelected?.name ?? "");
             setDeleteCollectionModal(null);
-            setStatus("✅ Collection deleted");
+            notifySuccess("Collection deleted");
         } catch (e) {
-            setCollectionError(`Delete failed: ${String(e)}`);
+            setCollectionError(`Delete failed: ${errorMessage(e)}`);
+            notifyError(`Failed to delete collection: ${errorMessage(e)}`);
         } finally {
             setCollectionBusy(false);
         }
@@ -3191,12 +3222,12 @@ export default function App() {
                 null,
                 setCurrent,
                 setSelectedRequestId,
-                setResp,
-                setStatus
+                setResp
             );
-            setStatus("✅ Collection selected");
+            notifySuccess("Collection selected");
         } catch (e) {
-            setCollectionError(`Set active failed: ${String(e)}`);
+            setCollectionError(`Set active failed: ${errorMessage(e)}`);
+            notifyError(`Failed to select collection: ${errorMessage(e)}`);
         } finally {
             setCollectionBusy(false);
         }
@@ -3236,9 +3267,10 @@ export default function App() {
         try {
             const created = await invoke<Environment>("create_environment", { name: "New Environment" });
             await reloadEnvironments(created.id);
-            setStatus("✅ Environment created");
+            notifySuccess("Environment created");
         } catch (e) {
-            setEnvError(`Create failed: ${String(e)}`);
+            setEnvError(`Create failed: ${errorMessage(e)}`);
+            notifyError(`Failed to create environment: ${errorMessage(e)}`);
         } finally {
             setEnvBusy(false);
         }
@@ -3254,9 +3286,10 @@ export default function App() {
                 newName: `${envDraftName || "Environment"} Copy`,
             });
             await reloadEnvironments(duplicated.id);
-            setStatus("✅ Environment duplicated");
+            notifySuccess("Environment duplicated");
         } catch (e) {
-            setEnvError(`Duplicate failed: ${String(e)}`);
+            setEnvError(`Duplicate failed: ${errorMessage(e)}`);
+            notifyError(`Failed to duplicate environment: ${errorMessage(e)}`);
         } finally {
             setEnvBusy(false);
         }
@@ -3277,9 +3310,10 @@ export default function App() {
             await invoke("delete_environment", { environmentId: deleteEnvironmentModal.id });
             await reloadEnvironments();
             setDeleteEnvironmentModal(null);
-            setStatus("✅ Environment deleted");
+            notifySuccess("Environment deleted");
         } catch (e) {
-            setEnvError(`Delete failed: ${String(e)}`);
+            setEnvError(`Delete failed: ${errorMessage(e)}`);
+            notifyError(`Failed to delete environment: ${errorMessage(e)}`);
         } finally {
             setEnvBusy(false);
         }
@@ -3304,9 +3338,10 @@ export default function App() {
                 },
             });
             await reloadEnvironments(envSelectedId);
-            setStatus("✅ Environment saved");
+            notifySuccess("Environment saved");
         } catch (e) {
-            setEnvError(`Save failed: ${String(e)}`);
+            setEnvError(`Save failed: ${errorMessage(e)}`);
+            notifyError(`Failed to save environment: ${errorMessage(e)}`);
         } finally {
             setEnvBusy(false);
         }
@@ -4275,7 +4310,7 @@ export default function App() {
                                 onClick={() => {
                                     const row = contextMenu.row as Extract<SidebarTreeRow, { kind: "request" }>;
                                     setContextMenu(null);
-                                    onDuplicateRequest(row.requestId, row.parentFolderId);
+                                    void onDuplicateRequest(row.requestId, row.parentFolderId);
                                 }}
                                 title={`Duplicate (${SHORTCUT_LABELS.duplicateRequest})`}
                             >
