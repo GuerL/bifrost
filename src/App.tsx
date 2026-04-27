@@ -93,6 +93,7 @@ import {
     notifyLoading,
     notifySuccess,
 } from "./helpers/Toast.tsx";
+import { useTheme } from "./helpers/Theme.tsx";
 
 type SidebarContextMenu = {
     x: number;
@@ -501,6 +502,7 @@ function safeFileName(value: string): string {
 }
 
 export default function App() {
+    const { resolvedTheme } = useTheme();
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
     const [activeEnvironmentId, setActiveEnvironmentId] = useState<string | null>(null);
@@ -893,11 +895,13 @@ export default function App() {
     const {
         beforeMountMonaco,
         editorOptions,
+        editorTheme,
         bindBodyJsonEditor,
         bindBodyRawEditor,
     } = useMonacoVariableSupport({
         variableSuggestions,
         variableValues: variableValuesWithDynamic,
+        resolvedTheme,
     });
 
     const isDirty = useMemo(() => {
@@ -3907,6 +3911,7 @@ export default function App() {
                                     selectedRequestId={selectedRequestId}
                                     beforeMountMonaco={beforeMountMonaco}
                                     editorOptions={editorOptions}
+                                    editorTheme={editorTheme}
                                     onPatchDraft={updateDraft}
                                     onSetFullDraft={setFullDraft}
                                     onMountBodyJsonEditor={bindBodyJsonEditor}
@@ -4101,6 +4106,7 @@ export default function App() {
                                     selectedRequestId={selectedRequestId}
                                     beforeMountMonaco={beforeMountMonaco}
                                     editorOptions={editorOptions}
+                                    editorTheme={editorTheme}
                                     editorPanelStyle={editorPanelStyle}
                                     onChange={(next) => updateDraft({ scripts: next })}
                                 />
@@ -4114,7 +4120,7 @@ export default function App() {
                                             height="100%"
                                             language="json"
                                             path={`/bifrost-dev/${selectedRequestId ?? "none"}.json`}
-                                            theme="bifrost-midnight"
+                                            theme={editorTheme}
                                             beforeMount={beforeMountMonaco}
                                             defaultValue={editorText}
                                             onMount={(editor) => {
@@ -5267,7 +5273,7 @@ function editorPanelStyle(height: number | string, minHeight = 220): React.CSSPr
         borderRadius: 12,
         overflow: "hidden",
         border: "1px solid var(--pg-border)",
-        boxShadow: "inset 0 0 0 1px var(--pg-surface-0), 0 14px 28px rgba(2, 6, 23, 0.35)",
+        boxShadow: "inset 0 0 0 1px var(--pg-surface-0), 0 14px 28px var(--pg-shadow-color)",
         background: "var(--pg-editor-deep)",
     };
 }

@@ -752,7 +752,7 @@ function bodyModeButtonStyle(active: boolean): React.CSSProperties {
         padding: "0 8px",
         borderRadius: 8,
         border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
-        background: active ? "var(--pg-primary)" : "rgba(15, 23, 42, 0.88)",
+        background: active ? "var(--pg-primary)" : "var(--pg-topbar-body-toggle-bg)",
         color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
         cursor: "pointer",
         fontWeight: 600,
@@ -764,14 +764,14 @@ function bodyModeButtonStyle(active: boolean): React.CSSProperties {
 function findMatchStyle(active: boolean): React.CSSProperties {
     if (active) {
         return {
-            background: "rgba(245, 158, 11, 0.68)",
-            color: "#111827",
+            background: "var(--pg-find-match-active-bg)",
+            color: "var(--pg-find-match-active-text)",
             borderRadius: 3,
         };
     }
 
     return {
-        background: "rgba(250, 204, 21, 0.32)",
+        background: "var(--pg-find-match-bg)",
         borderRadius: 3,
     };
 }
@@ -803,7 +803,7 @@ function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSS
             ...responseTabStyle(false),
             border: "1px solid rgba(34, 197, 94, 0.7)",
             background: "rgba(22, 163, 74, 0.16)",
-            color: "#bbf7d0",
+            color: "var(--pg-copy-success-text)",
         };
     }
 
@@ -813,7 +813,7 @@ function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSS
             ...responseTabStyle(false),
             border: "1px solid rgba(239, 68, 68, 0.75)",
             background: "rgba(239, 68, 68, 0.14)",
-            color: "#fecaca",
+            color: "var(--pg-copy-error-text)",
         };
     }
 
@@ -874,9 +874,7 @@ function CopyStatusIcon({ state }: { state: CopyState }) {
 function responsePreStyle(isJson: boolean, hasBodyModeControls: boolean): React.CSSProperties {
     return {
         margin: 0,
-        background: isJson
-            ? "linear-gradient(180deg, rgba(13, 28, 40, 0.98) 0%, rgba(10, 20, 35, 0.98) 100%)"
-            : "var(--pg-surface-1)",
+        background: isJson ? "var(--pg-json-body-bg)" : "var(--pg-surface-1)",
         color: "var(--pg-text-dim)",
         width: "100%",
         minWidth: 0,
@@ -904,7 +902,7 @@ function responsePreviewWrapStyle(): React.CSSProperties {
         flex: 1,
         borderRadius: 12,
         border: "1px solid var(--pg-border)",
-        background: "#ffffff",
+        background: "var(--pg-preview-bg)",
         overflow: "hidden",
     };
 }
@@ -931,16 +929,16 @@ function responseVersionStyle(): React.CSSProperties {
 
 function jsonTokenStyle(type: JsonTokenType): React.CSSProperties {
     if (type === "key") {
-        return { color: "#7dd3fc" };
+        return { color: "var(--pg-json-key)" };
     }
     if (type === "string") {
-        return { color: "#6ee7b7" };
+        return { color: "var(--pg-json-string)" };
     }
     if (type === "number") {
-        return { color: "#fbbf24" };
+        return { color: "var(--pg-json-number)" };
     }
     if (type === "boolean") {
-        return { color: "#f97316" };
+        return { color: "var(--pg-json-boolean)" };
     }
     if (type === "null") {
         return { color: "var(--pg-text-muted)" };

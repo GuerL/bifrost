@@ -8,6 +8,7 @@ type RequestScriptsEditorProps = {
     selectedRequestId: string | null;
     beforeMountMonaco: BeforeMount;
     editorOptions: MonacoApi.editor.IStandaloneEditorConstructionOptions;
+    editorTheme: "bifrost-midnight" | "bifrost-daylight";
     editorPanelStyle: (height: number | string, minHeight?: number) => React.CSSProperties;
     onChange: (next: RequestScripts) => void;
 };
@@ -17,6 +18,7 @@ export default function RequestScriptsEditor({
     selectedRequestId,
     beforeMountMonaco,
     editorOptions,
+    editorTheme,
     editorPanelStyle,
     onChange,
 }: RequestScriptsEditorProps) {
@@ -78,7 +80,7 @@ pg.environment.set("accessToken", response?.token ?? "");`}
                             height="100%"
                             language="javascript"
                             path={`/bifrost-script/${selectedRequestId ?? "none"}.${showingPre ? "pre" : "post"}.js`}
-                            theme="bifrost-midnight"
+                            theme={editorTheme}
                             beforeMount={beforeMountMonaco}
                             value={showingPre ? scripts.pre_request : scripts.post_response}
                             onChange={(value) =>

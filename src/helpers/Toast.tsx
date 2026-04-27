@@ -5,7 +5,7 @@ const TOAST_STYLE: ToastOptions["style"] = {
     border: "1px solid var(--pg-border)",
     background: "var(--pg-surface-1)",
     color: "var(--pg-text)",
-    boxShadow: "0 14px 30px rgba(2, 6, 23, 0.42)",
+    boxShadow: "0 14px 30px var(--pg-shadow-color)",
     fontSize: 13,
     maxWidth: 420,
 };

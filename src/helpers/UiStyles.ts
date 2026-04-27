@@ -11,7 +11,7 @@ export function buttonStyle(disabled: boolean): CSSProperties {
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
         fontSize: 12,
-        boxShadow: disabled ? "none" : "0 6px 14px rgba(2, 6, 23, 0.18)",
+        boxShadow: disabled ? "none" : "0 6px 14px var(--pg-shadow-color)",
     };
 }
 
@@ -98,7 +98,7 @@ export function windowButtonStyle(
         lineHeight: 1,
         padding: 0,
         fontSize: 12,
-        boxShadow: "0 6px 14px rgba(2, 6, 23, 0.18)",
+        boxShadow: "0 6px 14px var(--pg-shadow-color)",
     };
 }
 
