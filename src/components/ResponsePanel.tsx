@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import type { HttpResponseDto } from "../types.ts";
 import FindBar from "./FindBar.tsx";
+import { copyTextToClipboard } from "../helpers/ClipboardRequestTransfer.ts";
+import { notifyError, notifySuccess } from "../helpers/Toast.tsx";
 
 export type ResponseTabId = "body" | "cookies" | "headers" | "runtime";
 
@@ -223,7 +225,14 @@ export default function ResponsePanel({
 
     const handleCopyBody = async () => {
         if (!bodyView.copyText) return;
-        const copied = await copyTextToClipboard(bodyView.copyText);
+        let copied = false;
+        try {
+            await copyTextToClipboard(bodyView.copyText);
+            copied = true;
+            notifySuccess("Copied to clipboard");
+        } catch {
+            notifyError("Failed to copy");
+        }
         setCopyState(copied ? "copied" : "error");
         if (copyResetTimerRef.current !== null) {
             window.clearTimeout(copyResetTimerRef.current);
@@ -937,42 +946,6 @@ function jsonTokenStyle(type: JsonTokenType): React.CSSProperties {
         return { color: "var(--pg-text-muted)" };
     }
     return { color: "var(--pg-text-dim)" };
-}
-
-async function copyTextToClipboard(text: string): Promise<boolean> {
-    if (!text) return false;
-
-    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        try {
-            await navigator.clipboard.writeText(text);
-            return true;
-        } catch {
-            // Fallback below for unsupported environments.
-        }
-    }
-
-    if (typeof document === "undefined" || !document.body) {
-        return false;
-    }
-
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    textarea.style.pointerEvents = "none";
-    textarea.style.left = "-9999px";
-    document.body.appendChild(textarea);
-    textarea.select();
-    textarea.setSelectionRange(0, text.length);
-
-    try {
-        return document.execCommand("copy");
-    } catch {
-        return false;
-    } finally {
-        document.body.removeChild(textarea);
-    }
 }
 
 function responsePanelStyle(): React.CSSProperties {
