@@ -189,6 +189,30 @@ select{
   height: 30px;
 }
 
+:root[data-theme="dark"] select {
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] select {
+  color-scheme: light;
+}
+
+select,
+option,
+optgroup {
+  color: var(--pg-text);
+}
+
+select option,
+select optgroup {
+  background: var(--pg-surface-0);
+}
+
+select option:checked {
+  background: var(--pg-surface-2);
+  color: var(--pg-text);
+}
+
 button {
   cursor: pointer;
 }
