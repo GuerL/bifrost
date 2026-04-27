@@ -10,6 +10,7 @@ type RequestBodyEditorProps = {
     selectedRequestId: string | null;
     beforeMountMonaco: BeforeMount;
     editorOptions: MonacoApi.editor.IStandaloneEditorConstructionOptions;
+    editorTheme: "bifrost-midnight" | "bifrost-daylight";
     onPatchDraft: (patch: Partial<Request>) => void;
     onSetFullDraft: (next: Request) => void;
     onMountBodyJsonEditor: (editor: MonacoApi.editor.IStandaloneCodeEditor) => void;
@@ -114,6 +115,7 @@ export default function RequestBodyEditor({
     selectedRequestId,
     beforeMountMonaco,
     editorOptions,
+    editorTheme,
     onPatchDraft,
     onSetFullDraft,
     onMountBodyJsonEditor,
@@ -163,7 +165,7 @@ export default function RequestBodyEditor({
                             height="100%"
                             language="json"
                             path={`/bifrost-body/${selectedRequestId ?? "none"}.json`}
-                            theme="bifrost-midnight"
+                            theme={editorTheme}
                             beforeMount={beforeMountMonaco}
                             onMount={(editor, monaco) => {
                                 onMountBodyJsonEditor(editor);
@@ -228,7 +230,7 @@ export default function RequestBodyEditor({
                                 height="100%"
                                 language={languageFromContentType(rawBody.content_type)}
                                 path={`/bifrost-body/${selectedRequestId ?? "none"}.raw`}
-                                theme="bifrost-midnight"
+                                theme={editorTheme}
                                 beforeMount={beforeMountMonaco}
                                 onMount={(editor, monaco) => {
                                     onMountBodyRawEditor(editor);

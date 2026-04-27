@@ -22,11 +22,13 @@ type TemplateCompletionContext = {
 type UseMonacoVariableSupportArgs = {
     variableSuggestions: string[];
     variableValues: Map<string, string>;
+    resolvedTheme: "light" | "dark";
 };
 
 type UseMonacoVariableSupportResult = {
     beforeMountMonaco: BeforeMount;
     editorOptions: MonacoApi.editor.IStandaloneEditorConstructionOptions;
+    editorTheme: "bifrost-midnight" | "bifrost-daylight";
     bindBodyJsonEditor: (editor: MonacoApi.editor.IStandaloneCodeEditor) => void;
     bindBodyRawEditor: (editor: MonacoApi.editor.IStandaloneCodeEditor) => void;
 };
@@ -101,6 +103,7 @@ function truncateForHover(value: string, maxLen = 180): string {
 export function useMonacoVariableSupport({
     variableSuggestions,
     variableValues,
+    resolvedTheme,
 }: UseMonacoVariableSupportArgs): UseMonacoVariableSupportResult {
     const monacoProvidersRef = useRef<MonacoApi.IDisposable[]>([]);
     const monacoFeaturesRegisteredRef = useRef(false);
@@ -209,6 +212,29 @@ export function useMonacoVariableSupport({
                 "scrollbarSlider.background": "#009DA655",
                 "scrollbarSlider.hoverBackground": "#009DA688",
                 "scrollbarSlider.activeBackground": "#009DA6CC",
+            },
+        });
+        monaco.editor.defineTheme("bifrost-daylight", {
+            base: "vs",
+            inherit: true,
+            rules: [
+                { token: "keyword", foreground: "007C83" },
+                { token: "number", foreground: "B45309" },
+                { token: "string", foreground: "0E7490" },
+            ],
+            colors: {
+                "editor.background": "#F8FAFC",
+                "editor.foreground": "#0F172A",
+                "editorLineNumber.foreground": "#94A3B8",
+                "editorLineNumber.activeForeground": "#64748B",
+                "editorCursor.foreground": "#007C83",
+                "editor.selectionBackground": "#009DA633",
+                "editor.lineHighlightBackground": "#EEF2F7",
+                "editorIndentGuide.background1": "#D0D7E2",
+                "editorIndentGuide.activeBackground1": "#94A3B8",
+                "scrollbarSlider.background": "#94A3B855",
+                "scrollbarSlider.hoverBackground": "#64748B66",
+                "scrollbarSlider.activeBackground": "#47556988",
             },
         });
 
@@ -428,6 +454,11 @@ declare const pg: {
         []
     );
 
+    const editorTheme = useMemo<"bifrost-midnight" | "bifrost-daylight">(
+        () => (resolvedTheme === "light" ? "bifrost-daylight" : "bifrost-midnight"),
+        [resolvedTheme]
+    );
+
     useEffect(() => {
         variableSuggestionsRef.current = variableSuggestions;
         variableValuesRef.current = variableValues;
@@ -450,6 +481,7 @@ declare const pg: {
     return {
         beforeMountMonaco,
         editorOptions,
+        editorTheme,
         bindBodyJsonEditor,
         bindBodyRawEditor,
     };

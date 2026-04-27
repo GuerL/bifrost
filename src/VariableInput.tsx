@@ -336,7 +336,9 @@ export default function VariableInput({
                 position: "relative",
                 borderRadius: 10,
                 border: isFocused ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
-                background: disabled ? "rgba(15, 23, 42, 0.55)" : "rgba(15, 23, 42, 0.82)",
+                background: disabled
+                    ? "var(--pg-surface-overlay-disabled)"
+                    : "var(--pg-surface-overlay)",
                 boxShadow: isFocused
                     ? "0 0 0 3px rgba(var(--pg-primary-rgb), 0.25), inset 0 1px 0 rgba(255,255,255,0.02)"
                     : "inset 0 1px 0 rgba(255,255,255,0.03)",
@@ -447,8 +449,8 @@ export default function VariableInput({
                         overflowY: "auto",
                         border: "1px solid var(--pg-border)",
                         borderRadius: 10,
-                        background: "rgba(2, 6, 23, 0.96)",
-                        boxShadow: "0 16px 24px rgba(2, 6, 23, 0.45)",
+                        background: "var(--pg-floating-bg)",
+                        boxShadow: "0 16px 24px var(--pg-shadow-color)",
                     }}
                 >
                     {completionItems.slice(0, 10).map((name, idx) => {
@@ -493,12 +495,12 @@ export default function VariableInput({
                         padding: "8px 10px",
                         borderRadius: 8,
                         border: "1px solid var(--pg-border)",
-                        background: "rgba(2, 6, 23, 0.96)",
+                        background: "var(--pg-floating-bg)",
                         color: "var(--pg-text-dim)",
                         fontSize: 12,
                         lineHeight: 1.45,
                         pointerEvents: "none",
-                        boxShadow: "0 12px 20px rgba(2, 6, 23, 0.45)",
+                        boxShadow: "0 12px 20px var(--pg-shadow-color)",
                     }}
                 >
                     <div style={{ fontWeight: 700, marginBottom: 2 }}>
