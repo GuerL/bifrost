@@ -17,6 +17,7 @@ export type ResolvedTheme = "light" | "dark";
 type ThemeContextValue = {
     theme: Theme;
     resolvedTheme: ResolvedTheme;
+    systemTheme: ResolvedTheme;
     setTheme: (nextTheme: Theme) => void;
     toggleTheme: () => void;
 };
@@ -90,6 +91,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         () => resolveTheme(theme, systemPrefersDark),
         [theme, systemPrefersDark]
     );
+    const systemTheme = useMemo<ResolvedTheme>(
+        () => (systemPrefersDark ? "dark" : "light"),
+        [systemPrefersDark]
+    );
 
     useEffect(() => {
         if (typeof window === "undefined") return;
@@ -118,10 +123,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         () => ({
             theme,
             resolvedTheme,
+            systemTheme,
             setTheme,
             toggleTheme,
         }),
-        [theme, resolvedTheme, toggleTheme]
+        [theme, resolvedTheme, systemTheme, toggleTheme]
     );
 
     return (

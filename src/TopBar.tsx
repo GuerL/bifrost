@@ -60,7 +60,7 @@ export default function TopBar({
     canExportCollection,
     isCollectionRunning,
 }: TopBarProps) {
-    const { theme, resolvedTheme, setTheme } = useTheme();
+    const { theme, systemTheme, setTheme } = useTheme();
     const [isTransferMenuOpen, setIsTransferMenuOpen] = useState(false);
     const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
     const transferMenuRef = useRef<HTMLDivElement | null>(null);
@@ -298,7 +298,7 @@ export default function TopBar({
                         style={buttonStyle(false)}
                         aria-haspopup="menu"
                         aria-expanded={isThemeMenuOpen}
-                        title={`Theme: ${themeLabel(theme, resolvedTheme)}`}
+                        title={`Theme: ${themeLabel(theme, systemTheme)}`}
                     >
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                             {themeIcon(theme)}
@@ -359,7 +359,7 @@ export default function TopBar({
                             >
                                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                                     <SystemThemeIcon />
-                                    System ({resolvedTheme})
+                                    System ({systemTheme})
                                 </span>
                                 {theme === "system" ? "✓" : ""}
                             </button>
@@ -481,9 +481,9 @@ function GlobeGlyph() {
     );
 }
 
-function themeLabel(theme: Theme, resolvedTheme: "light" | "dark"): string {
+function themeLabel(theme: Theme, systemTheme: "light" | "dark"): string {
     if (theme === "system") {
-        return `System (${resolvedTheme})`;
+        return `System (${systemTheme})`;
     }
     return theme === "dark" ? "Dark" : "Light";
 }
