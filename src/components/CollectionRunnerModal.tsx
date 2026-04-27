@@ -1,5 +1,5 @@
 import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
-import { buttonStyle, dangerButtonStyle, primaryButtonStyle, selectStyle } from "../helpers/UiStyles.ts";
+import { buttonStyle, dangerButtonStyle, primaryButtonStyle } from "../helpers/UiStyles.ts";
 import type { CollectionNode, Request } from "../types.ts";
 import { groupRunnerExecutionsForDisplay } from "../runner/grouping.ts";
 import { calculateRunnerAverages } from "../runner/stats.ts";
@@ -13,6 +13,7 @@ import type {
     RunnerIterationMode,
     RunnerRun,
 } from "../runner/types.ts";
+import AppSelect from "./AppSelect.tsx";
 
 type RunResultFilter = "all" | "failed" | "success";
 type RunnerPanelTab = "executions" | "averages";
@@ -34,6 +35,10 @@ type RunnerSelectionRequestNode = {
 
 type RunnerSelectionTreeNode = RunnerSelectionFolderNode | RunnerSelectionRequestNode;
 const RUNNER_TREE_INDENT_PX = 24;
+const RUN_MODE_OPTIONS = [
+    { value: "request_iteration", label: "Request iteration" },
+    { value: "collection_iteration", label: "Collection iteration" },
+];
 
 type CollectionRunnerModalProps = {
     open: boolean;
@@ -315,15 +320,16 @@ export default function CollectionRunnerModal({
                         >
                             <label style={labelColStyle()}>
                                 <span style={labelTextStyle()}>Run mode</span>
-                                <select
+                                <AppSelect
                                     value={runMode}
                                     disabled={isRunning}
-                                    onChange={(event) => onRunModeChange(event.target.value as RunnerIterationMode)}
-                                    style={selectStyle()}
-                                >
-                                    <option value="request_iteration">Request iteration</option>
-                                    <option value="collection_iteration">Collection iteration</option>
-                                </select>
+                                    options={RUN_MODE_OPTIONS}
+                                    ariaLabel="Runner mode"
+                                    style={{ width: "100%" }}
+                                    onValueChange={(nextValue) =>
+                                        onRunModeChange(nextValue as RunnerIterationMode)
+                                    }
+                                />
                             </label>
 
                             <label style={labelColStyle()}>

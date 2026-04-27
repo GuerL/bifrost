@@ -21,6 +21,7 @@ import TopBar from "./TopBar.tsx";
 import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
 import RequestBodyEditor from "./components/RequestBodyEditor.tsx";
 import RequestScriptsEditor from "./components/RequestScriptsEditor.tsx";
+import AppSelect from "./components/AppSelect.tsx";
 import CollectionsModal from "./components/CollectionsModal.tsx";
 import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
 import ConfirmationModal from "./components/ConfirmationModal.tsx";
@@ -48,7 +49,6 @@ import {
     buttonStyle,
     dangerButtonStyle,
     primaryButtonStyle,
-    selectStyle,
 } from "./helpers/UiStyles.ts";
 import { buildRunnerExecutionPlan } from "./runner/plan.ts";
 import {
@@ -215,6 +215,25 @@ const DYNAMIC_VARIABLE_PREVIEWS: Record<string, string> = {
     "$uuid": "Generated at runtime (UUID v4)",
     "$randomint": "Generated at runtime (0-999)",
 };
+const REQUEST_METHOD_OPTIONS = [
+    { value: "get", label: "GET" },
+    { value: "post", label: "POST" },
+    { value: "put", label: "PUT" },
+    { value: "patch", label: "PATCH" },
+    { value: "delete", label: "DELETE" },
+    { value: "head", label: "HEAD" },
+    { value: "options", label: "OPTIONS" },
+];
+const REQUEST_AUTH_TYPE_OPTIONS = [
+    { value: "none", label: "None" },
+    { value: "bearer", label: "Bearer token" },
+    { value: "basic", label: "Basic auth" },
+    { value: "api_key", label: "API key" },
+];
+const REQUEST_API_KEY_LOCATION_OPTIONS = [
+    { value: "header", label: "Header" },
+    { value: "query", label: "Query" },
+];
 
 function areExpandedFoldersEqual(
     left: Record<string, boolean>,
@@ -3809,21 +3828,14 @@ export default function App() {
                             {/*</div>*/}
 
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
-                                <select
+                                <AppSelect
                                     value={draft.method}
-                                    onChange={(e) =>
-                                        updateDraft({ method: e.target.value as Request["method"] })
+                                    options={REQUEST_METHOD_OPTIONS}
+                                    ariaLabel="Request method"
+                                    onValueChange={(nextValue) =>
+                                        updateDraft({ method: nextValue as Request["method"] })
                                     }
-                                    style={selectStyle()}
-                                >
-                                    <option value="get">GET</option>
-                                    <option value="post">POST</option>
-                                    <option value="put">PUT</option>
-                                    <option value="patch">PATCH</option>
-                                    <option value="delete">DELETE</option>
-                                    <option value="head">HEAD</option>
-                                    <option value="options">OPTIONS</option>
-                                </select>
+                                />
 
                                 <VariableInput
                                     placeholder="URL"
@@ -3941,20 +3953,17 @@ export default function App() {
                                                 <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 600 }}>
                                                     Auth type
                                                 </span>
-                                                <select
+                                                <AppSelect
                                                     value={auth.type}
-                                                    onChange={(event) =>
+                                                    options={REQUEST_AUTH_TYPE_OPTIONS}
+                                                    ariaLabel="Authentication type"
+                                                    style={{ width: "100%" }}
+                                                    onValueChange={(nextValue) =>
                                                         updateDraft({
-                                                            auth: buildDefaultAuth(event.target.value as RequestAuth["type"]),
+                                                            auth: buildDefaultAuth(nextValue as RequestAuth["type"]),
                                                         })
                                                     }
-                                                    style={selectStyle()}
-                                                >
-                                                    <option value="none">None</option>
-                                                    <option value="bearer">Bearer token</option>
-                                                    <option value="basic">Basic auth</option>
-                                                    <option value="api_key">API key</option>
-                                                </select>
+                                                />
                                             </div>
 
                                             {auth.type === "bearer" && (
@@ -4030,23 +4039,22 @@ export default function App() {
                                                         <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 600 }}>
                                                             Add to
                                                         </span>
-                                                        <select
+                                                        <AppSelect
                                                             value={auth.in}
-                                                            onChange={(event) =>
+                                                            options={REQUEST_API_KEY_LOCATION_OPTIONS}
+                                                            ariaLabel="API key location"
+                                                            style={{ width: "100%" }}
+                                                            onValueChange={(nextValue) =>
                                                                 updateDraft({
                                                                     auth: {
                                                                         type: "api_key",
                                                                         key: auth.key,
                                                                         value: auth.value,
-                                                                        in: event.target.value as "header" | "query",
+                                                                        in: nextValue as "header" | "query",
                                                                     },
                                                                 })
                                                             }
-                                                            style={selectStyle()}
-                                                        >
-                                                            <option value="header">Header</option>
-                                                            <option value="query">Query</option>
-                                                        </select>
+                                                        />
                                                     </div>
 
                                                     <div style={{ display: "grid", gap: 6 }}>
@@ -4714,21 +4722,22 @@ export default function App() {
                         </div>
                         <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                             <span style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>Destination folder</span>
-                            <select
+                            <AppSelect
                                 value={moveNodeTargetFolderId ?? ""}
-                                onChange={(event) =>
-                                    setMoveNodeTargetFolderId(event.target.value ? event.target.value : null)
-                                }
+                                options={[
+                                    { value: "", label: "Root" },
+                                    ...collectionFolderOptions.map((entry) => ({
+                                        value: entry.folderId,
+                                        label: entry.label,
+                                    })),
+                                ]}
+                                ariaLabel="Move destination folder"
                                 disabled={moveNodeBusy}
-                                style={selectStyle()}
-                            >
-                                <option value="">Root</option>
-                                {collectionFolderOptions.map((entry) => (
-                                    <option key={entry.folderId} value={entry.folderId}>
-                                        {entry.label}
-                                    </option>
-                                ))}
-                            </select>
+                                style={{ width: "100%" }}
+                                onValueChange={(nextValue) =>
+                                    setMoveNodeTargetFolderId(nextValue ? nextValue : null)
+                                }
+                            />
                         </label>
                         {moveNodeError && (
                             <div style={{ color: "var(--pg-danger)", fontSize: 13 }}>{moveNodeError}</div>
