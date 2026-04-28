@@ -23,7 +23,7 @@ jobs:
       matrix:
         include:
           - label: macOS
-            runner: macos-latest
+            runner: macos-26
             args: ""
             tauri_timeout: 45
           - label: Windows
@@ -43,6 +43,20 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate macOS build toolchain
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
+          echo "Detected macOS SDK: ${sdk_version}"
+          sdk_major="${sdk_version%%.*}"
+          if [ "${sdk_major}" -lt 26 ]; then
+            echo "::error::macOS SDK ${sdk_version} is too old. Expected SDK 26+ for visual parity with local builds."
+            exit 1
+          fi
 
       - name: Install frontend dependencies
         run: npm install
