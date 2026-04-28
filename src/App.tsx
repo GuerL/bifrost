@@ -205,6 +205,7 @@ const SHORTCUT_LABELS = {
     newRequest: `${PRIMARY_SHORTCUT_MODIFIER} + T`,
     duplicateRequest: `${PRIMARY_SHORTCUT_MODIFIER} + D`,
     copyRequest: `${PRIMARY_SHORTCUT_MODIFIER} + C`,
+    copyAsCurl: `${PRIMARY_SHORTCUT_MODIFIER} + SHIFT + C`,
     closeTab: `${PRIMARY_SHORTCUT_MODIFIER} + W`,
     renameRequest: `${PRIMARY_SHORTCUT_MODIFIER} + E`,
     deleteRequest: IS_MACOS ? "CMD + Backspace" : "CTRL + Delete",
@@ -334,6 +335,7 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
     if (tagName === "input" || tagName === "textarea" || tagName === "select") return true;
     if (target.isContentEditable) return true;
     if (target.closest("[contenteditable='true']")) return true;
+    if (target.closest(".monaco-editor, .monaco-inputbox, [role='textbox']")) return true;
     return false;
 }
 
@@ -1751,6 +1753,10 @@ export default function App() {
                 e.preventDefault();
                 setContextMenu(null);
                 setRootAddMenu(null);
+                if (e.shiftKey) {
+                    void onCopyAsCurl(selectedRequestId);
+                    return;
+                }
                 void onCopyRequest(selectedRequestId);
                 return;
             }
@@ -1809,6 +1815,7 @@ export default function App() {
         sidebarRows,
         sendSelected,
         onCopyRequest,
+        onCopyAsCurl,
     ]);
 
     useEffect(() => {
@@ -4583,8 +4590,28 @@ export default function App() {
                                     setContextMenu(null);
                                     void onCopyAsCurl(row.requestId);
                                 }}
+                                title={`Copy as cURL (${SHORTCUT_LABELS.copyAsCurl})`}
                             >
-                                Copy as cURL
+                                <span
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "space-between",
+                                        gap: 12,
+                                        width: "100%",
+                                    }}
+                                >
+                                    <span>Copy as cURL</span>
+                                    <span
+                                        style={{
+                                            fontSize: 11,
+                                            color: "var(--pg-text-muted)",
+                                            fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
+                                        }}
+                                    >
+                                        {SHORTCUT_LABELS.copyAsCurl}
+                                    </span>
+                                </span>
                             </button>
                         )}
 
