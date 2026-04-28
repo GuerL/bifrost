@@ -29,6 +29,7 @@ type TopBarProps = {
     onSaveDraft: () => void;
     onOpenRawJson: () => void;
     onOpenCollectionRunner: () => void;
+    onImportCurl: () => void;
     onImportPostman: () => void;
     onImportPortable: () => void;
     onExportPortable: () => void;
@@ -51,6 +52,7 @@ export default function TopBar({
     onSaveDraft,
     onOpenRawJson,
     onOpenCollectionRunner,
+    onImportCurl,
     onImportPostman,
     onImportPortable,
     onExportPortable,
@@ -126,8 +128,12 @@ export default function TopBar({
         }
     }
 
-    function runTransferAction(action: "importPostman" | "importPortable" | "exportPortable") {
+    function runTransferAction(action: "importCurl" | "importPostman" | "importPortable" | "exportPortable") {
         setIsTransferMenuOpen(false);
+        if (action === "importCurl") {
+            onImportCurl();
+            return;
+        }
         if (action === "importPostman") {
             onImportPostman();
             return;
@@ -399,6 +405,14 @@ export default function TopBar({
                                 zIndex: 40,
                             }}
                         >
+                            <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => runTransferAction("importCurl")}
+                                style={transferMenuItemStyle()}
+                            >
+                                Import from cURL
+                            </button>
                             <button
                                 type="button"
                                 role="menuitem"

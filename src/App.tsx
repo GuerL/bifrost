@@ -38,6 +38,7 @@ import {
     type BifrostClipboardRequestPayloadV1,
 } from "./helpers/ClipboardRequestTransfer.ts";
 import { buildCurlCommand } from "./helpers/CurlCommand.ts";
+import { parseCurlCommand } from "./helpers/CurlImport.ts";
 import {
     getRunnerSelectedRequestsForCollection,
     loadRunnerSelectedRequests,
@@ -152,6 +153,11 @@ type DeleteRequestModal = {
 
 type ClipboardRequestImportModal = {
     payload: BifrostClipboardRequestPayloadV1;
+    targetFolderId: string | null;
+    targetFolderLabel: string | null;
+};
+
+type CurlImportModal = {
     targetFolderId: string | null;
     targetFolderLabel: string | null;
 };
@@ -595,6 +601,10 @@ export default function App() {
     const [deleteRequestBusy, setDeleteRequestBusy] = useState(false);
     const [clipboardImportModal, setClipboardImportModal] = useState<ClipboardRequestImportModal | null>(null);
     const [clipboardImportBusy, setClipboardImportBusy] = useState(false);
+    const [curlImportModal, setCurlImportModal] = useState<CurlImportModal | null>(null);
+    const [curlImportCommand, setCurlImportCommand] = useState("");
+    const [curlImportBusy, setCurlImportBusy] = useState(false);
+    const [curlImportError, setCurlImportError] = useState("");
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
@@ -674,6 +684,10 @@ export default function App() {
         setDeleteRequestBusy(false);
         setClipboardImportModal(null);
         setClipboardImportBusy(false);
+        setCurlImportModal(null);
+        setCurlImportCommand("");
+        setCurlImportBusy(false);
+        setCurlImportError("");
         setDeleteEnvironmentModal(null);
         setDraftsById({});
         setCloseDraftModal(null);
@@ -1833,6 +1847,22 @@ export default function App() {
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [clipboardImportModal, clipboardImportBusy]);
 
+    useEffect(() => {
+        if (!curlImportModal) return;
+
+        function onKeyDown(event: KeyboardEvent) {
+            if (curlImportBusy) return;
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            setCurlImportModal(null);
+            setCurlImportError("");
+        }
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [curlImportModal, curlImportBusy]);
+
     async function sendSelected() {
         if (collectionRunPending) return;
         if (!selectedRequestId) return;
@@ -2603,7 +2633,7 @@ export default function App() {
         return `${trimmedBase} (${counter})`;
     }
 
-    function resolveClipboardImportTargetFolderId(): string | null {
+    function resolveCurrentImportTargetFolderId(): string | null {
         if (!selectedRequestId) return null;
         const row = sidebarRows.find(
             (entry): entry is Extract<SidebarTreeRow, { kind: "request" }> =>
@@ -2612,12 +2642,14 @@ export default function App() {
         return row?.parentFolderId ?? null;
     }
 
+    function resolveImportTargetFolderLabel(targetFolderId: string | null): string | null {
+        if (!targetFolderId) return null;
+        return collectionFolderOptions.find((entry) => entry.folderId === targetFolderId)?.label ?? null;
+    }
+
     function openClipboardImportModal(payload: BifrostClipboardRequestPayloadV1) {
-        const targetFolderId = resolveClipboardImportTargetFolderId();
-        const targetFolderLabel =
-            targetFolderId
-                ? collectionFolderOptions.find((entry) => entry.folderId === targetFolderId)?.label ?? null
-                : null;
+        const targetFolderId = resolveCurrentImportTargetFolderId();
+        const targetFolderLabel = resolveImportTargetFolderLabel(targetFolderId);
 
         setClipboardImportModal({
             payload,
@@ -2658,6 +2690,124 @@ export default function App() {
             notifySuccess("Copied as cURL");
         } catch {
             notifyError("Failed to copy");
+        }
+    }
+
+    function normalizeImportedCurlMethod(methodInput: string): Request["method"] {
+        const method = methodInput.trim().toUpperCase();
+        if (method === "GET") return "get";
+        if (method === "POST") return "post";
+        if (method === "PUT") return "put";
+        if (method === "PATCH") return "patch";
+        if (method === "DELETE") return "delete";
+        if (method === "HEAD") return "head";
+        if (method === "OPTIONS") return "options";
+        throw new Error(`Unsupported HTTP method: ${method}`);
+    }
+
+    function findHeaderValue(
+        headers: { name: string; value: string; enabled: boolean }[],
+        headerName: string
+    ): string | null {
+        const targetName = headerName.trim().toLowerCase();
+        for (let index = headers.length - 1; index >= 0; index -= 1) {
+            const entry = headers[index];
+            if (entry.enabled === false) continue;
+            if (entry.name.trim().toLowerCase() !== targetName) continue;
+            const value = entry.value.trim();
+            return value.length > 0 ? value : null;
+        }
+        return null;
+    }
+
+    function buildRequestFromParsedCurl(
+        parsed: ReturnType<typeof parseCurlCommand>,
+        existingRequests: Request[]
+    ): Request {
+        const method = normalizeImportedCurlMethod(parsed.method);
+        const headers = parsed.headers.map((entry) => ({
+            key: entry.name,
+            value: entry.value,
+        }));
+        const contentType = findHeaderValue(parsed.headers, "content-type") ?? "text/plain";
+
+        return {
+            id: crypto.randomUUID(),
+            name: buildSafeImportedRequestName(parsed.name, existingRequests),
+            method,
+            url: parsed.url,
+            headers,
+            query: [],
+            body: parsed.body
+                ? {
+                    type: "raw",
+                    content_type: contentType,
+                    text: parsed.body.content,
+                }
+                : { type: "none" },
+            auth: { type: "none" },
+            extractors: [],
+            scripts: { pre_request: "", post_response: "" },
+        };
+    }
+
+    function openCurlImportModal() {
+        if (!current) {
+            if (collections.length === 0) {
+                openNoCollectionsModal();
+                notifyInfo("No collection available. Create one first");
+            } else {
+                notifyInfo("Select an active collection before importing a cURL request");
+            }
+            return;
+        }
+
+        const targetFolderId = resolveCurrentImportTargetFolderId();
+        const targetFolderLabel = resolveImportTargetFolderLabel(targetFolderId);
+
+        setCurlImportModal({ targetFolderId, targetFolderLabel });
+        setCurlImportCommand("");
+        setCurlImportError("");
+    }
+
+    async function onConfirmImportCurlRequest() {
+        if (!current || !curlImportModal || curlImportBusy) return;
+
+        setCurlImportBusy(true);
+        setCurlImportError("");
+        try {
+            const parsed = parseCurlCommand(curlImportCommand);
+            const importedRequest = buildRequestFromParsedCurl(parsed, current.requests);
+
+            await invoke("create_request", {
+                collectionId: current.meta.id,
+                request: importedRequest,
+                parentFolderId: curlImportModal.targetFolderId,
+            });
+
+            await loadCollection(
+                current.meta.id,
+                importedRequest.id,
+                setCurrent,
+                setSelectedRequestId,
+                setResp
+            );
+
+            setSelection(importedRequest);
+            setCurlImportModal(null);
+            setCurlImportCommand("");
+            notifySuccess("Imported cURL request");
+
+            if (parsed.warnings.length === 1) {
+                notifyInfo(parsed.warnings[0]);
+            } else if (parsed.warnings.length > 1) {
+                notifyInfo(`Imported with ${parsed.warnings.length} warnings`);
+            }
+        } catch (error) {
+            setCurlImportError(errorMessage(error));
+            notifyError("Failed to import cURL");
+        } finally {
+            setCurlImportBusy(false);
         }
     }
 
@@ -3384,6 +3534,7 @@ export default function App() {
                 onSaveDraft={saveDraft}
                 onOpenRawJson={() => setTab("json")}
                 onOpenCollectionRunner={() => setRunnerModalOpen(true)}
+                onImportCurl={openCurlImportModal}
                 onImportPostman={openPostmanImportPicker}
                 onImportPortable={openPortableImportPicker}
                 onExportPortable={() => void onExportPortableCollection()}
@@ -4931,6 +5082,96 @@ export default function App() {
                             </button>
                         </div>
                     </div>
+                </div>
+            )}
+
+            {curlImportModal && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1450,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={() => {
+                        if (!curlImportBusy) {
+                            setCurlImportModal(null);
+                            setCurlImportError("");
+                        }
+                    }}
+                >
+                    <form
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            void onConfirmImportCurlRequest();
+                        }}
+                        style={{
+                            width: "100%",
+                            maxWidth: 700,
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 12,
+                            background: "var(--pg-surface-1)",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <h3 style={{ margin: 0 }}>Import from cURL</h3>
+                        <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.5 }}>
+                            Paste a cURL command to create a request in{" "}
+                            <span style={{ color: "var(--pg-text)" }}>{current?.meta.name ?? "-"}</span>{" "}
+                            ({curlImportModal.targetFolderLabel ?? "Root"}).
+                        </div>
+                        <textarea
+                            value={curlImportCommand}
+                            onChange={(event) => setCurlImportCommand(event.target.value)}
+                            placeholder="curl https://api.example.com"
+                            disabled={curlImportBusy}
+                            autoFocus
+                            spellCheck={false}
+                            style={{
+                                width: "100%",
+                                minHeight: 180,
+                                resize: "vertical",
+                                boxSizing: "border-box",
+                                fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
+                                fontSize: 12,
+                                lineHeight: 1.5,
+                                padding: "10px 12px",
+                            }}
+                        />
+                        {curlImportError && (
+                            <div style={{ color: "var(--pg-danger)", fontSize: 13 }}>
+                                {curlImportError}
+                            </div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setCurlImportModal(null);
+                                    setCurlImportError("");
+                                }}
+                                disabled={curlImportBusy}
+                                style={buttonStyle(curlImportBusy)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={curlImportBusy}
+                                style={primaryButtonStyle(curlImportBusy)}
+                            >
+                                {curlImportBusy ? "Importing..." : "Import"}
+                            </button>
+                        </div>
+                    </form>
                 </div>
             )}
 
