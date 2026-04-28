@@ -47,6 +47,11 @@
   --pg-danger-dark: #7f1d1d;
   --pg-warning: #f59e0b;
   --pg-editor-deep: #0b1220;
+  --pg-topbar-height: 52px;
+  --pg-topbar-horizontal-padding: 12px;
+  --pg-macos-topbar-left-inset: 88px;
+  --pg-macos-traffic-light-position-x: 14px;
+  --pg-macos-traffic-light-position-y: 30px;
   --pg-scrollbar-size: 10px;
   --pg-scrollbar-track: rgba(15, 23, 42, 0.72);
   --pg-scrollbar-thumb: rgba(var(--pg-primary-rgb), 0.78);
@@ -132,6 +137,33 @@ body {
   background: var(--pg-bg-main);
   color: var(--pg-text-dim);
   transition: background-color 180ms ease, color 180ms ease;
+}
+
+.pg-topbar {
+  box-sizing: border-box;
+  height: var(--pg-topbar-height);
+  padding-left: var(--pg-topbar-horizontal-padding);
+  padding-right: var(--pg-topbar-horizontal-padding);
+}
+
+:root[data-platform="macos"] .pg-topbar {
+  padding-left: var(--pg-macos-topbar-left-inset);
+}
+
+.pg-topbar-drag {
+  -webkit-app-region: drag;
+}
+
+.pg-topbar-no-drag,
+.pg-topbar-no-drag button,
+.pg-topbar-no-drag select,
+.pg-topbar-no-drag input,
+.pg-topbar-no-drag textarea,
+.pg-topbar-no-drag [role="button"],
+.pg-topbar-no-drag [role="menuitem"],
+.pg-topbar-no-drag [role="menuitemradio"],
+.pg-topbar-no-drag [data-radix-collection-item] {
+  -webkit-app-region: no-drag;
 }
 
 * {

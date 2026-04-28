@@ -176,14 +176,12 @@ export default function TopBar({
 
     return (
         <div
+            className="pg-topbar pg-topbar-drag"
             data-tauri-drag-region
             style={{
-                height: 52,
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
-                paddingLeft: isMacOS ? 88 : 12, // space for macOS traffic lights
-                paddingRight: 12,
                 borderBottom: "1px solid var(--pg-border)",
                 background: "var(--pg-surface-0)",
                 userSelect: "none",
@@ -199,6 +197,7 @@ export default function TopBar({
                 }}
             >
                 <div
+                    className="pg-topbar-drag"
                     data-tauri-drag-region
                     style={{
                         display: "flex",
@@ -228,31 +227,33 @@ export default function TopBar({
                         Bifrost
                     </span>
                 </div>
-                <TopbarSelector
-                    icon={<FolderGlyph />}
-                    value={currentCollectionId}
-                    items={collectionSelectorItems}
-                    onSelect={(collectionId) => onSelectCollection(collectionId ?? "")}
-                    onManage={onManageCollections}
-                    manageLabel="Manage Collections"
-                    placeholder="No collection"
-                    emptyOptionLabel="No collection"
-                    width={224}
-                    ariaLabel="Select collection"
-                />
+                <div className="pg-topbar-no-drag" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <TopbarSelector
+                        icon={<FolderGlyph />}
+                        value={currentCollectionId}
+                        items={collectionSelectorItems}
+                        onSelect={(collectionId) => onSelectCollection(collectionId ?? "")}
+                        onManage={onManageCollections}
+                        manageLabel="Manage Collections"
+                        placeholder="No collection"
+                        emptyOptionLabel="No collection"
+                        width={224}
+                        ariaLabel="Select collection"
+                    />
 
-                <TopbarSelector
-                    icon={<GlobeGlyph />}
-                    value={currentEnvironmentId}
-                    items={environmentSelectorItems}
-                    onSelect={onSelectEnvironment}
-                    onManage={onManageEnvironments}
-                    manageLabel="Manage Environments"
-                    placeholder="No environment"
-                    emptyOptionLabel="No environment"
-                    width={210}
-                    ariaLabel="Select environment"
-                />
+                    <TopbarSelector
+                        icon={<GlobeGlyph />}
+                        value={currentEnvironmentId}
+                        items={environmentSelectorItems}
+                        onSelect={onSelectEnvironment}
+                        onManage={onManageEnvironments}
+                        manageLabel="Manage Environments"
+                        placeholder="No environment"
+                        emptyOptionLabel="No environment"
+                        width={210}
+                        ariaLabel="Select environment"
+                    />
+                </div>
             </div>
 
             <div
@@ -265,6 +266,7 @@ export default function TopBar({
             />
 
             <div
+                className="pg-topbar-no-drag"
                 style={{
                     display: "flex",
                     alignItems: "center",
