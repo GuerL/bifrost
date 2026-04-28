@@ -3410,7 +3410,7 @@ export default function App() {
 
             <div
                 style={{
-                    height: "calc(100vh - 52px)",
+                    height: "calc(100vh - var(--pg-topbar-height))",
                     padding: "10px 24px",
                     fontFamily: "system-ui",
                     display: "flex",
