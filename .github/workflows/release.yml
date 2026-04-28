@@ -177,10 +177,11 @@ jobs:
           ls -la "$diag_dir"
 
       - name: Upload notarization diagnostics (macOS)
-        if: runner.os == 'macOS' && always()
+        if: failure() && runner.os == 'macOS'
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
-          name: notarytool-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          name: notarytool-diagnostics-macos-${{ github.run_id }}
           path: ${{ runner.temp }}/notarytool-diagnostics
+          retention-days: 7
           if-no-files-found: ignore
