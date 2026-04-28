@@ -337,6 +337,24 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
     return false;
 }
 
+function isTypingContextActive(): boolean {
+    const activeElement = document.activeElement;
+    if (!(activeElement instanceof HTMLElement)) return false;
+    if (activeElement instanceof HTMLInputElement) return true;
+    if (activeElement instanceof HTMLTextAreaElement) return true;
+    if (activeElement.isContentEditable) return true;
+    if (activeElement.closest("[contenteditable='true']")) return true;
+    return false;
+}
+
+function isCurlClipboardCommand(clipboardText: string): boolean {
+    const trimmed = clipboardText.trim();
+    if (trimmed.length <= 4) return false;
+    if (!trimmed.toLowerCase().startsWith("curl")) return false;
+    if (!/\s/.test(trimmed.slice(4, 5))) return false;
+    return trimmed.slice(4).trim().length > 0;
+}
+
 function readPersistedTabsState(): PersistedTabsState {
     if (typeof window === "undefined") return {};
 
@@ -611,6 +629,7 @@ export default function App() {
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
     const postmanImportInputRef = useRef<HTMLInputElement | null>(null);
     const portableImportInputRef = useRef<HTMLInputElement | null>(null);
+    const curlImportTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
     const expandedFoldersRef = useRef<Record<string, boolean>>({});
@@ -1794,34 +1813,43 @@ export default function App() {
 
     useEffect(() => {
         async function onPaste(event: ClipboardEvent) {
-            if (!current || collectionRunPending) return;
+            if (collectionRunPending) return;
+            if (isTypingContextActive()) return;
+            if (isEditableKeyboardTarget(event.target)) return;
 
             const clipboardText = event.clipboardData?.getData("text/plain");
-            if (typeof clipboardText !== "string" || clipboardText.trim().length === 0) {
+            if (typeof clipboardText !== "string") {
+                return;
+            }
+            const trimmedClipboardText = clipboardText.trim();
+            if (trimmedClipboardText.length === 0) return;
+
+            // Priority 1: Bifrost clipboard payload import.
+            if (current && isBifrostClipboardRequestPayload(trimmedClipboardText)) {
+                event.preventDefault();
+
+                const payloadFromEvent = parseBifrostClipboardPayload(trimmedClipboardText);
+                if (!payloadFromEvent) return;
+
+                try {
+                    const payloadFromSystemClipboard = await readRequestFromClipboard();
+                    openClipboardImportModal(payloadFromSystemClipboard ?? payloadFromEvent);
+                } catch {
+                    openClipboardImportModal(payloadFromEvent);
+                }
                 return;
             }
 
-            // Only intercept normal paste when clipboard contains a valid Bifrost payload.
-            if (!isBifrostClipboardRequestPayload(clipboardText)) {
-                return;
-            }
-
-            event.preventDefault();
-
-            const payloadFromEvent = parseBifrostClipboardPayload(clipboardText);
-            if (!payloadFromEvent) return;
-
-            try {
-                const payloadFromSystemClipboard = await readRequestFromClipboard();
-                openClipboardImportModal(payloadFromSystemClipboard ?? payloadFromEvent);
-            } catch {
-                openClipboardImportModal(payloadFromEvent);
+            // Priority 2: cURL import modal.
+            if (isCurlClipboardCommand(trimmedClipboardText)) {
+                event.preventDefault();
+                openCurlImportModal(trimmedClipboardText);
             }
         }
 
         window.addEventListener("paste", onPaste);
         return () => window.removeEventListener("paste", onPaste);
-    }, [current, collectionRunPending, selectedRequestId, sidebarRows, collectionFolderOptions]);
+    }, [current, collectionRunPending, selectedRequestId, sidebarRows, collectionFolderOptions, collections.length]);
 
     useEffect(() => {
         if (!clipboardImportModal) return;
@@ -1862,6 +1890,18 @@ export default function App() {
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [curlImportModal, curlImportBusy]);
+
+    useEffect(() => {
+        if (!curlImportModal) return;
+        const frame = window.requestAnimationFrame(() => {
+            const textarea = curlImportTextareaRef.current;
+            if (!textarea) return;
+            const cursor = textarea.value.length;
+            textarea.focus();
+            textarea.setSelectionRange(cursor, cursor);
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [curlImportModal]);
 
     async function sendSelected() {
         if (collectionRunPending) return;
@@ -2751,7 +2791,7 @@ export default function App() {
         };
     }
 
-    function openCurlImportModal() {
+    function openCurlImportModal(initialCommand = "") {
         if (!current) {
             if (collections.length === 0) {
                 openNoCollectionsModal();
@@ -2766,7 +2806,7 @@ export default function App() {
         const targetFolderLabel = resolveImportTargetFolderLabel(targetFolderId);
 
         setCurlImportModal({ targetFolderId, targetFolderLabel });
-        setCurlImportCommand("");
+        setCurlImportCommand(initialCommand);
         setCurlImportError("");
     }
 
@@ -5129,6 +5169,7 @@ export default function App() {
                             ({curlImportModal.targetFolderLabel ?? "Root"}).
                         </div>
                         <textarea
+                            ref={curlImportTextareaRef}
                             value={curlImportCommand}
                             onChange={(event) => setCurlImportCommand(event.target.value)}
                             placeholder="curl https://api.example.com"
