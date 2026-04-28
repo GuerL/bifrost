@@ -3,6 +3,7 @@ import Editor, { type BeforeMount } from "@monaco-editor/react";
 import type * as MonacoApi from "monaco-editor";
 import KeyValueTable from "../KeyValueTable.tsx";
 import VariableInput, { type VariableStatus } from "../VariableInput.tsx";
+import AppSelect from "./AppSelect.tsx";
 import type { Body, Request } from "../types.ts";
 
 type RequestBodyEditorProps = {
@@ -110,6 +111,13 @@ function parseJsonc(text: string): unknown {
     return JSON.parse(stripped.length > 0 ? stripped : "{}");
 }
 
+const BODY_TYPE_OPTIONS = [
+    { value: "none", label: "none" },
+    { value: "json", label: "json" },
+    { value: "raw", label: "raw" },
+    { value: "form", label: "form" },
+];
+
 export default function RequestBodyEditor({
     draft,
     selectedRequestId,
@@ -134,10 +142,12 @@ export default function RequestBodyEditor({
 
     return (
         <>
-            <select
+            <AppSelect
                 value={draft.body.type}
-                onChange={(e) => {
-                    const t = e.target.value as Body["type"];
+                options={BODY_TYPE_OPTIONS}
+                ariaLabel="Request body type"
+                onValueChange={(nextValue) => {
+                    const t = nextValue as Body["type"];
                     const body: Body =
                         t === "none"
                             ? { type: "none" }
@@ -149,12 +159,7 @@ export default function RequestBodyEditor({
 
                     onPatchDraft({ body });
                 }}
-            >
-                <option value="none">none</option>
-                <option value="json">json</option>
-                <option value="raw">raw</option>
-                <option value="form">form</option>
-            </select>
+            />
 
             {draft.body.type === "json" && (() => {
                 const jsonBody = draft.body;

@@ -1,6 +1,7 @@
 import VariableInput, { type VariableStatus } from "../VariableInput.tsx";
 import type { ResponseExtractorRule } from "../types.ts";
-import { buttonStyle, selectStyle } from "../helpers/UiStyles.ts";
+import { buttonStyle } from "../helpers/UiStyles.ts";
+import AppSelect from "./AppSelect.tsx";
 
 type ResponseExtractionEditorProps = {
     rules: ResponseExtractorRule[];
@@ -18,6 +19,11 @@ function createRule(): ResponseExtractorRule {
         path: "",
     };
 }
+
+const EXTRACTION_SOURCE_OPTIONS = [
+    { value: "json_body", label: "JSON body" },
+    { value: "header", label: "Header" },
+];
 
 export default function ResponseExtractionEditor({
     rules,
@@ -44,10 +50,13 @@ export default function ResponseExtractionEditor({
                         alignItems: "center",
                     }}
                 >
-                    <select
+                    <AppSelect
                         value={rule.from}
-                        onChange={(event) => {
-                            const from = event.target.value as ResponseExtractorRule["from"];
+                        options={EXTRACTION_SOURCE_OPTIONS}
+                        ariaLabel="Extraction source"
+                        style={{ width: "100%" }}
+                        onValueChange={(nextValue) => {
+                            const from = nextValue as ResponseExtractorRule["from"];
                             const next = rules.slice();
                             next[index] =
                                 from === "json_body"
@@ -65,11 +74,7 @@ export default function ResponseExtractionEditor({
                                     };
                             onChange(next);
                         }}
-                        style={selectStyle()}
-                    >
-                        <option value="json_body">JSON body</option>
-                        <option value="header">Header</option>
-                    </select>
+                    />
 
                     <VariableInput
                         placeholder="Variable name (ex: authToken)"
