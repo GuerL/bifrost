@@ -3,10 +3,18 @@ export type ParsedCurlRequest = {
     method: string;
     url: string;
     headers: { name: string; value: string; enabled: boolean }[];
-    body?: {
-        type: "raw";
-        content: string;
-    };
+    body?:
+        | {
+              type: "raw";
+              content: string;
+          }
+        | {
+              type: "multipart";
+              fields: (
+                  | { kind: "text"; name: string; value: string }
+                  | { kind: "file"; name: string; file_path: string }
+              )[];
+          };
     warnings: string[];
 };
 
@@ -270,6 +278,10 @@ type ParsedState = {
     getMode: boolean;
     headers: { name: string; value: string; enabled: boolean }[];
     dataSegments: string[];
+    formFields: (
+        | { kind: "text"; name: string; value: string }
+        | { kind: "file"; name: string; file_path: string }
+    )[];
     warnings: string[];
 };
 
@@ -285,6 +297,36 @@ function applyDataOption(
     }
 
     state.dataSegments.push(value);
+}
+
+function parseFormField(value: string):
+    | { kind: "text"; name: string; value: string }
+    | { kind: "file"; name: string; file_path: string }
+    | null {
+    const separatorIndex = value.indexOf("=");
+    if (separatorIndex <= 0) {
+        return null;
+    }
+
+    const name = value.slice(0, separatorIndex).trim();
+    if (!name) return null;
+
+    const fieldValue = value.slice(separatorIndex + 1);
+    if (fieldValue.startsWith("@")) {
+        const filePath = fieldValue.slice(1).split(";")[0]?.trim() ?? "";
+        if (!filePath) return null;
+        return {
+            kind: "file",
+            name,
+            file_path: filePath,
+        };
+    }
+
+    return {
+        kind: "text",
+        name,
+        value: fieldValue,
+    };
 }
 
 export function parseCurlCommand(input: string): ParsedCurlRequest {
@@ -309,6 +351,7 @@ export function parseCurlCommand(input: string): ParsedCurlRequest {
         getMode: false,
         headers: [],
         dataSegments: [],
+        formFields: [],
         warnings: [],
     };
 
@@ -448,11 +491,22 @@ export function parseCurlCommand(input: string): ParsedCurlRequest {
         }
 
         if (optionsEnabled && (token === "-F" || token === "--form" || token.startsWith("--form=") || token.startsWith("-F"))) {
-            pushWarning(state.warnings, "Multipart form data is not supported and was ignored.");
+            let formValue = "";
             if (token === "-F" || token === "--form") {
-                if (index + 1 < tokens.length) {
-                    index += 1;
-                }
+                const next = takeNextOptionValue(tokens, index, token);
+                formValue = next.value;
+                index = next.nextIndex;
+            } else if (token.startsWith("--form=")) {
+                formValue = token.slice("--form=".length);
+            } else {
+                formValue = token.slice(2);
+            }
+
+            const parsedField = parseFormField(formValue);
+            if (parsedField) {
+                state.formFields.push(parsedField);
+            } else {
+                pushWarning(state.warnings, `Ignored unsupported form field: ${formValue}`);
             }
             index += 1;
             continue;
@@ -513,6 +567,20 @@ export function parseCurlCommand(input: string): ParsedCurlRequest {
         } else if (state.dataSegments.length > 0) {
             pushWarning(state.warnings, "Could not convert complex --get payload into query parameters.");
         }
+        if (state.formFields.length > 0) {
+            pushWarning(state.warnings, "Ignored multipart form fields because --get mode was enabled.");
+        }
+    } else if (state.formFields.length > 0) {
+        if (state.dataSegments.length > 0) {
+            pushWarning(
+                state.warnings,
+                "Both --data and --form options were found. Imported as multipart; --data was ignored."
+            );
+        }
+        body = {
+            type: "multipart",
+            fields: state.formFields,
+        };
     } else if (state.dataSegments.length > 0) {
         body = {
             type: "raw",

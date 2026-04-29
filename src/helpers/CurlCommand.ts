@@ -4,11 +4,26 @@ type CurlKeyValue = {
     enabled?: boolean;
 };
 
+type CurlMultipartField =
+    | {
+          kind: "text";
+          name: string;
+          value: string;
+          enabled?: boolean;
+      }
+    | {
+          kind: "file";
+          name: string;
+          file_path: string;
+          enabled?: boolean;
+      };
+
 type CurlBodyLike =
     | { type: "none" }
     | { type: "raw"; content_type?: string; text: string }
     | { type: "json"; value: unknown; text?: string }
-    | { type: "form"; fields: CurlKeyValue[] };
+    | { type: "form"; fields: CurlKeyValue[] }
+    | { type: "multipart"; fields: CurlMultipartField[] };
 
 export type RequestLike = {
     method: string;
@@ -21,7 +36,9 @@ export type RequestLike = {
 type BodyBuildResult = {
     hasExplicitBody: boolean;
     data: string | null;
+    formDataEntries: string[];
     implicitContentType: string | null;
+    isMultipart: boolean;
 };
 
 function unsupportedBodyType(body: { type: string }): never {
@@ -135,7 +152,9 @@ function buildBody(body: CurlBodyLike | undefined): BodyBuildResult {
         return {
             hasExplicitBody: false,
             data: null,
+            formDataEntries: [],
             implicitContentType: null,
+            isMultipart: false,
         };
     }
 
@@ -147,7 +166,9 @@ function buildBody(body: CurlBodyLike | undefined): BodyBuildResult {
         return {
             hasExplicitBody: true,
             data: body.text,
+            formDataEntries: [],
             implicitContentType: contentType,
+            isMultipart: false,
         };
     }
 
@@ -156,7 +177,9 @@ function buildBody(body: CurlBodyLike | undefined): BodyBuildResult {
             return {
                 hasExplicitBody: true,
                 data: stripJsonComments(body.text),
+                formDataEntries: [],
                 implicitContentType: "application/json",
+                isMultipart: false,
             };
         }
 
@@ -165,7 +188,9 @@ function buildBody(body: CurlBodyLike | undefined): BodyBuildResult {
             return {
                 hasExplicitBody: true,
                 data: serialized ?? "null",
+                formDataEntries: [],
                 implicitContentType: "application/json",
+                isMultipart: false,
             };
         } catch (error) {
             throw new Error(
@@ -182,7 +207,33 @@ function buildBody(body: CurlBodyLike | undefined): BodyBuildResult {
         return {
             hasExplicitBody: true,
             data: activeFields.map((entry) => `${entry.key}=${entry.value}`).join("&"),
+            formDataEntries: [],
             implicitContentType: "application/x-www-form-urlencoded",
+            isMultipart: false,
+        };
+    }
+
+    if (body.type === "multipart") {
+        const activeFields = body.fields.filter((field) => {
+            if (!isEnabled(field)) return false;
+            return field.name.trim().length > 0;
+        });
+        const formDataEntries = activeFields
+            .map((field) => {
+                if (field.kind === "text") {
+                    return `${field.name}=${field.value}`;
+                }
+                const filePath = field.file_path.trim();
+                if (!filePath) return null;
+                return `${field.name}=@${filePath}`;
+            })
+            .filter((entry): entry is string => !!entry);
+        return {
+            hasExplicitBody: true,
+            data: null,
+            formDataEntries,
+            implicitContentType: null,
+            isMultipart: true,
         };
     }
 
@@ -198,11 +249,18 @@ export function buildCurlCommand(request: RequestLike): string {
     const fullUrl = buildUrlWithQuery(request.url, request.query ?? []);
     const body = buildBody(request.body);
 
-    const headers = (request.headers ?? []).filter((entry) => {
+    let headers = (request.headers ?? []).filter((entry) => {
         if (!isEnabled(entry)) return false;
         if (entry.key.trim().length === 0) return false;
         return entry.value.trim().length > 0;
     });
+
+    if (body.isMultipart) {
+        headers = headers.filter((entry) => {
+            if (entry.key.trim().toLowerCase() !== "content-type") return true;
+            return !entry.value.trim().toLowerCase().startsWith("multipart/form-data");
+        });
+    }
 
     const hasContentTypeHeader = headers.some(
         (entry) => entry.key.trim().toLowerCase() === "content-type"
@@ -223,7 +281,11 @@ export function buildCurlCommand(request: RequestLike): string {
         );
     }
 
-    if (body.data !== null && (method !== "GET" || body.hasExplicitBody)) {
+    if (body.isMultipart) {
+        for (const entry of body.formDataEntries) {
+            parts.push(`-F ${shellSingleQuote(entry)}`);
+        }
+    } else if (body.data !== null && (method !== "GET" || body.hasExplicitBody)) {
         parts.push(`--data-raw ${shellSingleQuote(body.data)}`);
     }
 

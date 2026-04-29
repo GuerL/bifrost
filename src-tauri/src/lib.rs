@@ -10,7 +10,8 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .setup(|app| {
             #[cfg(desktop)]
-            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
             Ok(())
         })
         .manage(RequestRegistry::default())

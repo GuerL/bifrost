@@ -81,6 +81,30 @@ describe("parseCurlCommand", () => {
         expect(parsed.body).toEqual({ type: "raw", content: "a=1" });
     });
 
+    it("uses implicit POST when multipart form fields are present", () => {
+        const parsed = parseCurlCommand("curl https://example.com/upload -F 'name=value'");
+        expect(parsed.method).toBe("POST");
+        expect(parsed.body).toEqual({
+            type: "multipart",
+            fields: [{ kind: "text", name: "name", value: "value" }],
+        });
+    });
+
+    it("parses multipart text and file form fields", () => {
+        const parsed = parseCurlCommand(
+            "curl -X POST https://example.com/upload -F 'description=test' -F 'file=@/tmp/file.png'"
+        );
+
+        expect(parsed.method).toBe("POST");
+        expect(parsed.body).toEqual({
+            type: "multipart",
+            fields: [
+                { kind: "text", name: "description", value: "test" },
+                { kind: "file", name: "file", file_path: "/tmp/file.png" },
+            ],
+        });
+    });
+
     it("supports explicit methods", () => {
         const withHead = parseCurlCommand("curl -I https://example.com");
         const withPut = parseCurlCommand("curl --request PUT https://example.com/resource");
@@ -122,5 +146,41 @@ describe("parseCurlCommand", () => {
             type: "raw",
             content: "{\"name\":\"bifrost\"}",
         });
+    });
+
+    it("builds multipart cURL with text and file fields", () => {
+        const curl = buildCurlCommand({
+            method: "post",
+            url: "https://api.example.com/upload",
+            headers: [{ key: "Content-Type", value: "multipart/form-data" }],
+            body: {
+                type: "multipart",
+                fields: [
+                    { kind: "text", name: "description", value: "test" },
+                    { kind: "file", name: "file", file_path: "/tmp/image.png" },
+                ],
+            },
+        });
+
+        expect(curl).toContain("-F 'description=test'");
+        expect(curl).toContain("-F 'file=@/tmp/image.png'");
+        expect(curl).not.toContain("Content-Type: multipart/form-data");
+    });
+
+    it("escapes multipart cURL values safely", () => {
+        const curl = buildCurlCommand({
+            method: "post",
+            url: "https://api.example.com/upload",
+            body: {
+                type: "multipart",
+                fields: [
+                    { kind: "text", name: "note", value: "a'b" },
+                    { kind: "file", name: "file", file_path: "/tmp/it's.png" },
+                ],
+            },
+        });
+
+        expect(curl).toContain(`-F 'note=a'"'"'b'`);
+        expect(curl).toContain(`-F 'file=@/tmp/it'"'"'s.png'`);
     });
 });

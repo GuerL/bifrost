@@ -2,6 +2,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type {
     Body,
     KeyValue,
+    MultipartField,
     Request,
     RequestAuth,
     RequestScripts,
@@ -42,6 +43,29 @@ function isKeyValueArray(value: unknown): value is KeyValue[] {
     );
 }
 
+function isMultipartFieldArray(value: unknown): value is MultipartField[] {
+    return (
+        Array.isArray(value) &&
+        value.every((entry) => {
+            if (!isObject(entry)) return false;
+            if (typeof entry.id !== "string") return false;
+            if (typeof entry.enabled !== "boolean") return false;
+            if (typeof entry.name !== "string") return false;
+            if (entry.kind === "text") {
+                return typeof entry.value === "string";
+            }
+            if (entry.kind === "file") {
+                if (typeof entry.file_path !== "string") return false;
+                if (entry.file_name !== undefined && typeof entry.file_name !== "string") return false;
+                if (entry.mime_type !== undefined && typeof entry.mime_type !== "string") return false;
+                if (entry.size !== undefined && typeof entry.size !== "number") return false;
+                return true;
+            }
+            return false;
+        })
+    );
+}
+
 function parseBody(value: unknown): Body | null {
     if (!isObject(value) || typeof value.type !== "string") return null;
 
@@ -72,6 +96,14 @@ function parseBody(value: unknown): Body | null {
         if (!isKeyValueArray(value.fields)) return null;
         return {
             type: "form",
+            fields: value.fields,
+        };
+    }
+
+    if (value.type === "multipart") {
+        if (!isMultipartFieldArray(value.fields)) return null;
+        return {
+            type: "multipart",
             fields: value.fields,
         };
     }
