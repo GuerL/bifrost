@@ -4,7 +4,8 @@ use tauri::AppHandle;
 
 use crate::commands::collection::load_collection;
 use crate::model::collection::{
-    Auth, AuthLocation, Body, CollectionMeta, CollectionNode, HttpMethod, KeyValue, Request,
+    Auth, AuthLocation, Body, CollectionMeta, CollectionNode, HttpMethod, KeyValue, MultipartField,
+    Request,
 };
 
 #[derive(Debug, Serialize)]
@@ -76,8 +77,21 @@ pub struct PostmanBodyExportDto {
     pub raw: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub urlencoded: Vec<PostmanQueryExportDto>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub formdata: Vec<PostmanFormDataExportDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<PostmanBodyOptionsExportDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PostmanFormDataExportDto {
+    pub key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src: Option<String>,
+    #[serde(rename = "type")]
+    pub field_type: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -234,6 +248,7 @@ fn map_body(body: &Body) -> Option<PostmanBodyExportDto> {
             mode: "raw".to_string(),
             raw: Some(text.clone()),
             urlencoded: vec![],
+            formdata: vec![],
             options: Some(PostmanBodyOptionsExportDto {
                 raw: PostmanBodyRawOptionsExportDto {
                     language: if content_type.to_ascii_lowercase().contains("json") {
@@ -254,6 +269,7 @@ fn map_body(body: &Body) -> Option<PostmanBodyExportDto> {
                 mode: "raw".to_string(),
                 raw: Some(raw),
                 urlencoded: vec![],
+                formdata: vec![],
                 options: Some(PostmanBodyOptionsExportDto {
                     raw: PostmanBodyRawOptionsExportDto {
                         language: "json".to_string(),
@@ -270,6 +286,50 @@ fn map_body(body: &Body) -> Option<PostmanBodyExportDto> {
                 .map(|field| PostmanQueryExportDto {
                     key: field.key.clone(),
                     value: field.value.clone(),
+                })
+                .collect(),
+            formdata: vec![],
+            options: None,
+        }),
+        Body::Multipart { fields } => Some(PostmanBodyExportDto {
+            mode: "formdata".to_string(),
+            raw: None,
+            urlencoded: vec![],
+            formdata: fields
+                .iter()
+                .filter_map(|field| match field {
+                    MultipartField::Text {
+                        enabled,
+                        name,
+                        value,
+                        ..
+                    } => {
+                        if !*enabled || name.trim().is_empty() {
+                            return None;
+                        }
+                        Some(PostmanFormDataExportDto {
+                            key: name.clone(),
+                            value: Some(value.clone()),
+                            src: None,
+                            field_type: "text".to_string(),
+                        })
+                    }
+                    MultipartField::File {
+                        enabled,
+                        name,
+                        file_path,
+                        ..
+                    } => {
+                        if !*enabled || name.trim().is_empty() || file_path.trim().is_empty() {
+                            return None;
+                        }
+                        Some(PostmanFormDataExportDto {
+                            key: name.clone(),
+                            value: None,
+                            src: Some(file_path.clone()),
+                            field_type: "file".to_string(),
+                        })
+                    }
                 })
                 .collect(),
             options: None,

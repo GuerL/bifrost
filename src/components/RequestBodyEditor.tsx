@@ -5,6 +5,7 @@ import KeyValueTable from "../KeyValueTable.tsx";
 import VariableInput, { type VariableStatus } from "../VariableInput.tsx";
 import AppSelect from "./AppSelect.tsx";
 import type { Body, Request } from "../types.ts";
+import MultipartBodyEditor from "./MultipartBodyEditor.tsx";
 
 type RequestBodyEditorProps = {
     draft: Request;
@@ -116,6 +117,7 @@ const BODY_TYPE_OPTIONS = [
     { value: "json", label: "json" },
     { value: "raw", label: "raw" },
     { value: "form", label: "form" },
+    { value: "multipart", label: "multipart/form-data" },
 ];
 
 export default function RequestBodyEditor({
@@ -155,7 +157,9 @@ export default function RequestBodyEditor({
                                 ? { type: "json", value: {}, text: "{\n\n}" }
                                 : t === "raw"
                                     ? { type: "raw", content_type: "text/plain", text: "" }
-                                    : { type: "form", fields: [] };
+                                    : t === "form"
+                                        ? { type: "form", fields: [] }
+                                        : { type: "multipart", fields: [] };
 
                     onPatchDraft({ body });
                 }}
@@ -268,6 +272,21 @@ export default function RequestBodyEditor({
                         onSetFullDraft({
                             ...draft,
                             body: { type: "form", fields: next },
+                        })
+                    }
+                    resolveVariableStatus={resolveVariableStatus}
+                    resolveVariableValue={resolveVariableValue}
+                    variableSuggestions={variableSuggestions}
+                />
+            )}
+
+            {draft.body.type === "multipart" && (
+                <MultipartBodyEditor
+                    fields={draft.body.fields}
+                    onChange={(nextFields) =>
+                        onSetFullDraft({
+                            ...draft,
+                            body: { type: "multipart", fields: nextFields },
                         })
                     }
                     resolveVariableStatus={resolveVariableStatus}

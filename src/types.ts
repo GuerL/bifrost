@@ -1,3 +1,10 @@
+import type { MultipartField } from "./helpers/requestBodyTypes.ts";
+export type {
+    MultipartField,
+    MultipartFileField,
+    MultipartTextField,
+} from "./helpers/requestBodyTypes.ts";
+
 export type CollectionMeta = {
     version: number;
     id: string;
@@ -26,7 +33,8 @@ export type Body =
     | { type: "none" }
     | { type: "raw"; content_type: string; text: string }
     | { type: "json"; value: any; text?: string }
-    | { type: "form"; fields: KeyValue[] };
+    | { type: "form"; fields: KeyValue[] }
+    | { type: "multipart"; fields: MultipartField[] };
 
 export type RequestAuth =
     | { type: "none" }

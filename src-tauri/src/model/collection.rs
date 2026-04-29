@@ -6,6 +6,10 @@ pub struct KeyValue {
     pub value: String,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum HttpMethod {
@@ -33,6 +37,34 @@ pub enum Body {
     },
     Form {
         fields: Vec<KeyValue>,
+    },
+    Multipart {
+        fields: Vec<MultipartField>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum MultipartField {
+    Text {
+        id: String,
+        #[serde(default = "default_true")]
+        enabled: bool,
+        name: String,
+        value: String,
+    },
+    File {
+        id: String,
+        #[serde(default = "default_true")]
+        enabled: bool,
+        name: String,
+        file_path: String,
+        #[serde(default)]
+        file_name: Option<String>,
+        #[serde(default)]
+        mime_type: Option<String>,
+        #[serde(default)]
+        size: Option<u64>,
     },
 }
 

@@ -34,11 +34,16 @@ import {
     copyRequestToClipboard,
     isBifrostClipboardRequestPayload,
     parseBifrostClipboardPayload,
-    readRequestFromClipboard,
+    readTextFromClipboard,
     type BifrostClipboardRequestPayloadV1,
 } from "./helpers/ClipboardRequestTransfer.ts";
 import { buildCurlCommand } from "./helpers/CurlCommand.ts";
 import { parseCurlCommand } from "./helpers/CurlImport.ts";
+import {
+    createMultipartFileField,
+    createMultipartTextField,
+    prepareRequestForExecution,
+} from "./helpers/requestBodyUtils.ts";
 import {
     getRunnerSelectedRequestsForCollection,
     loadRunnerSelectedRequests,
@@ -1824,9 +1829,13 @@ export default function App() {
             if (isTypingContextActive()) return;
             if (isEditableKeyboardTarget(event.target)) return;
 
-            const clipboardText = event.clipboardData?.getData("text/plain");
-            if (typeof clipboardText !== "string") {
-                return;
+            let clipboardText = event.clipboardData?.getData("text/plain") ?? "";
+            if (clipboardText.trim().length === 0) {
+                try {
+                    clipboardText = await readTextFromClipboard();
+                } catch {
+                    return;
+                }
             }
             const trimmedClipboardText = clipboardText.trim();
             if (trimmedClipboardText.length === 0) return;
@@ -1835,15 +1844,9 @@ export default function App() {
             if (current && isBifrostClipboardRequestPayload(trimmedClipboardText)) {
                 event.preventDefault();
 
-                const payloadFromEvent = parseBifrostClipboardPayload(trimmedClipboardText);
-                if (!payloadFromEvent) return;
-
-                try {
-                    const payloadFromSystemClipboard = await readRequestFromClipboard();
-                    openClipboardImportModal(payloadFromSystemClipboard ?? payloadFromEvent);
-                } catch {
-                    openClipboardImportModal(payloadFromEvent);
-                }
+                const payload = parseBifrostClipboardPayload(trimmedClipboardText);
+                if (!payload) return;
+                openClipboardImportModal(payload);
                 return;
             }
 
@@ -1951,17 +1954,47 @@ export default function App() {
             runtimeVariables = preScript.runtimeVariables;
             setSessionVariables(runtimeVariables);
             const requestToSend = preScript.request;
+            const preparedRequest = prepareRequestForExecution(requestToSend);
+            if (!preparedRequest.ok) {
+                const environmentPersistError = await persistScriptEnvironmentMutations(
+                    scriptEnvironmentMutations
+                );
+                const environmentErrorSuffix = environmentPersistError
+                    ? " • environment save issue"
+                    : "";
+                const statusText = `❌ ${preparedRequest.message}${environmentErrorSuffix}`;
+                setScriptReportsByRequestId((previous) => ({
+                    ...previous,
+                    [selectedRequestId]: {
+                        preRequestError: preScript.error,
+                        postResponseError: null,
+                        tests: preScript.tests,
+                    },
+                }));
+                setStatus(statusText);
+                setResponsesByRequestId((previous) => ({
+                    ...previous,
+                    [selectedRequestId]: {
+                        response: previous[selectedRequestId]?.response ?? null,
+                        statusText,
+                        updatedAt: new Date().toISOString(),
+                    },
+                }));
+                notifyError(preparedRequest.message);
+                return;
+            }
+            const executableRequest = preparedRequest.request;
 
             const r = await invoke<HttpResponseDto>("send_request", {
                 requestId: selectedRequestId,
-                req: requestToSend,
+                req: executableRequest,
                 environmentId: activeEnvironmentId,
                 extraVariables: runtimeVariables,
             });
 
             const postScript = runPostResponseScript({
-                script: requestScriptsOrDefault(requestToSend).post_response,
-                request: requestToSend,
+                script: requestScriptsOrDefault(executableRequest).post_response,
+                request: executableRequest,
                 response: r,
                 runtimeVariables,
                 environmentValues: activeEnvironmentValues,
@@ -2278,18 +2311,55 @@ export default function App() {
             runVariables = preScript.runtimeVariables;
             setSessionVariables(runVariables);
             const executableRequest = preScript.request;
+            const preparedRequest = prepareRequestForExecution(executableRequest);
+
+            if (!preparedRequest.ok) {
+                const statusText = `❌ invalid_request: ${preparedRequest.message}`;
+                commitRun(
+                    updateExecutionAt(planItem.planIndex, {
+                        status: "failed",
+                        statusText,
+                        wasSent: false,
+                        finishedAt: new Date().toISOString(),
+                        errorCode: "invalid_request",
+                        errorMessage: preparedRequest.message,
+                        preRequestScriptError,
+                        postResponseScriptError: null,
+                        preRequestScriptTests,
+                        postResponseScriptTests: [],
+                    })
+                );
+                setScriptReportsByRequestId((previous) => ({
+                    ...previous,
+                    [planItem.requestId]: {
+                        preRequestError: preRequestScriptError,
+                        postResponseError: null,
+                        tests: preRequestScriptTests,
+                    },
+                }));
+
+                if (collectionRunStopOnFailure) {
+                    commitRun(
+                        skipRemainingFrom(planItem.planIndex, "Skipped (stopped on failure)")
+                    );
+                    break;
+                }
+                continue;
+            }
+
+            const preparedExecutableRequest = preparedRequest.request;
 
             try {
                 const response = await invoke<HttpResponseDto>("send_request", {
                     requestId: planItem.requestId,
-                    req: executableRequest,
+                    req: preparedExecutableRequest,
                     environmentId: activeEnvironmentId,
                     extraVariables: runVariables,
                 });
 
                 const postScript = runPostResponseScript({
-                    script: requestScriptsOrDefault(executableRequest).post_response,
-                    request: executableRequest,
+                    script: requestScriptsOrDefault(preparedExecutableRequest).post_response,
+                    request: preparedExecutableRequest,
                     response,
                     runtimeVariables: runVariables,
                     environmentValues: activeEnvironmentValues,
@@ -2777,6 +2847,33 @@ export default function App() {
             value: entry.value,
         }));
         const contentType = findHeaderValue(parsed.headers, "content-type") ?? "text/plain";
+        const body: Request["body"] =
+            parsed.body?.type === "raw"
+                ? {
+                    type: "raw",
+                    content_type: contentType,
+                    text: parsed.body.content,
+                }
+                : parsed.body?.type === "multipart"
+                    ? {
+                        type: "multipart",
+                        fields: parsed.body.fields.map((field) => {
+                            if (field.kind === "file") {
+                                const multipartFileField = createMultipartFileField(field.file_path);
+                                return {
+                                    ...multipartFileField,
+                                    name: field.name,
+                                };
+                            }
+                            const multipartTextField = createMultipartTextField();
+                            return {
+                                ...multipartTextField,
+                                name: field.name,
+                                value: field.value,
+                            };
+                        }),
+                    }
+                    : { type: "none" };
 
         return {
             id: crypto.randomUUID(),
@@ -2785,13 +2882,7 @@ export default function App() {
             url: parsed.url,
             headers,
             query: [],
-            body: parsed.body
-                ? {
-                    type: "raw",
-                    content_type: contentType,
-                    text: parsed.body.content,
-                }
-                : { type: "none" },
+            body,
             auth: { type: "none" },
             extractors: [],
             scripts: { pre_request: "", post_response: "" },

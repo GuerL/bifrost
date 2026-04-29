@@ -2,7 +2,8 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::model::collection::{
-    Auth, AuthLocation, Body, CollectionNode, HttpMethod, KeyValue, Request, RequestScripts,
+    Auth, AuthLocation, Body, CollectionNode, HttpMethod, KeyValue, MultipartField, Request,
+    RequestScripts,
 };
 use crate::model::environment::EnvironmentVariable;
 
@@ -136,6 +137,8 @@ pub struct PostmanFormDataDto {
     pub key: Option<String>,
     #[serde(default)]
     pub value: Option<serde_json::Value>,
+    #[serde(default)]
+    pub src: Option<serde_json::Value>,
     #[serde(default, rename = "type")]
     pub field_type: Option<String>,
     #[serde(default)]
@@ -599,19 +602,44 @@ fn map_body(
                 .map(|value| value.trim().to_ascii_lowercase())
                 .unwrap_or_else(|| "text".to_string());
             if field_type == "file" {
-                warnings.push(format!(
-                    "Request '{}' contains form-data file field '{}', skipped for MVP import",
-                    request_name, key
-                ));
+                let file_path = match entry.src.as_ref() {
+                    Some(serde_json::Value::String(value)) => value.trim().to_string(),
+                    Some(serde_json::Value::Array(values)) => values
+                        .iter()
+                        .find_map(|value| value.as_str())
+                        .map(|value| value.trim().to_string())
+                        .unwrap_or_default(),
+                    Some(other) => other.to_string(),
+                    None => json_value_to_string(entry.value.as_ref()),
+                };
+
+                if file_path.trim().is_empty() {
+                    warnings.push(format!(
+                        "Request '{}' contains form-data file field '{}' without a path",
+                        request_name, key
+                    ));
+                }
+
+                fields.push(MultipartField::File {
+                    id: format!("mp_{}", Uuid::new_v4().simple()),
+                    enabled: true,
+                    name: key,
+                    file_path: file_path.trim().to_string(),
+                    file_name: None,
+                    mime_type: None,
+                    size: None,
+                });
                 continue;
             }
 
-            fields.push(KeyValue {
-                key,
+            fields.push(MultipartField::Text {
+                id: format!("mp_{}", Uuid::new_v4().simple()),
+                enabled: true,
+                name: key,
                 value: json_value_to_string(entry.value.as_ref()),
             });
         }
-        return Body::Form { fields };
+        return Body::Multipart { fields };
     }
 
     Body::None

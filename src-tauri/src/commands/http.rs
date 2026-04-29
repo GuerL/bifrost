@@ -1,9 +1,12 @@
 use crate::commands::environment::load_environment_values;
 use crate::commands::state::{RequestRegistry, RunningRequest};
-use crate::model::collection::{Auth, AuthLocation, Body, HttpMethod, KeyValue, Request};
+use crate::model::collection::{
+    Auth, AuthLocation, Body, HttpMethod, KeyValue, MultipartField, Request,
+};
 use crate::model::http::{HttpErrorDto, HttpResponseDto};
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
 use tokio_util::sync::CancellationToken;
@@ -245,6 +248,51 @@ fn resolve_request_vars(
             }
             Body::Form { fields }
         }
+        Body::Multipart { mut fields } => {
+            for field in fields.iter_mut() {
+                match field {
+                    MultipartField::Text { name, value, .. } => {
+                        *name =
+                            replace_vars_in_text(name, vars, &mut unresolved, &mut dynamic_values);
+                        *value =
+                            replace_vars_in_text(value, vars, &mut unresolved, &mut dynamic_values);
+                    }
+                    MultipartField::File {
+                        name,
+                        file_path,
+                        file_name,
+                        mime_type,
+                        ..
+                    } => {
+                        *name =
+                            replace_vars_in_text(name, vars, &mut unresolved, &mut dynamic_values);
+                        *file_path = replace_vars_in_text(
+                            file_path,
+                            vars,
+                            &mut unresolved,
+                            &mut dynamic_values,
+                        );
+                        if let Some(value) = file_name.as_ref() {
+                            *file_name = Some(replace_vars_in_text(
+                                value,
+                                vars,
+                                &mut unresolved,
+                                &mut dynamic_values,
+                            ));
+                        }
+                        if let Some(value) = mime_type.as_ref() {
+                            *mime_type = Some(replace_vars_in_text(
+                                value,
+                                vars,
+                                &mut unresolved,
+                                &mut dynamic_values,
+                            ));
+                        }
+                    }
+                }
+            }
+            Body::Multipart { fields }
+        }
     };
 
     req.auth = match req.auth {
@@ -412,6 +460,113 @@ fn strip_json_comments(input: &str) -> String {
     out
 }
 
+fn build_multipart_form(
+    fields: &[MultipartField],
+) -> Result<reqwest::multipart::Form, HttpErrorDto> {
+    let mut form = reqwest::multipart::Form::new();
+
+    for field in fields {
+        match field {
+            MultipartField::Text {
+                enabled,
+                name,
+                value,
+                ..
+            } => {
+                if !*enabled {
+                    continue;
+                }
+                if name.trim().is_empty() {
+                    return Err(err(
+                        "invalid_request",
+                        "Enabled multipart rows must have a field name.",
+                        None,
+                        None,
+                    ));
+                }
+                form = form.text(name.clone(), value.clone());
+            }
+            MultipartField::File {
+                enabled,
+                name,
+                file_path,
+                file_name,
+                mime_type,
+                ..
+            } => {
+                if !*enabled {
+                    continue;
+                }
+
+                if name.trim().is_empty() {
+                    return Err(err(
+                        "invalid_request",
+                        "Enabled multipart rows must have a field name.",
+                        None,
+                        None,
+                    ));
+                }
+
+                let normalized_path = file_path.trim();
+                if normalized_path.is_empty() {
+                    return Err(err(
+                        "invalid_request",
+                        format!("File field '{name}' has no file selected."),
+                        None,
+                        None,
+                    ));
+                }
+
+                let file_bytes = std::fs::read(normalized_path).map_err(|e| {
+                    err(
+                        "file",
+                        "Failed to read multipart file",
+                        Some(format!("{normalized_path}: {e}")),
+                        None,
+                    )
+                })?;
+                let mut part = reqwest::multipart::Part::bytes(file_bytes);
+
+                let resolved_file_name = file_name
+                    .as_ref()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .or_else(|| {
+                        Path::new(normalized_path)
+                            .file_name()
+                            .and_then(|value| value.to_str())
+                            .map(|value| value.to_string())
+                    });
+                if let Some(value) = resolved_file_name {
+                    part = part.file_name(value);
+                }
+
+                if let Some(content_type) = mime_type
+                    .as_ref()
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                {
+                    part = part.mime_str(content_type).map_err(|e| {
+                        err(
+                            "invalid_request",
+                            format!(
+                                "Invalid mime type '{content_type}' for multipart field '{}'",
+                                name
+                            ),
+                            Some(e.to_string()),
+                            None,
+                        )
+                    })?;
+                }
+
+                form = form.part(name.clone(), part);
+            }
+        }
+    }
+
+    Ok(form)
+}
+
 pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpErrorDto> {
     apply_auth_to_request(&mut req);
     const REQUEST_TIMEOUT_SECONDS: u64 = 120;
@@ -446,10 +601,24 @@ pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpEr
     };
 
     // headers
+    let body_is_multipart = matches!(&req.body, Body::Multipart { .. });
     for h in &req.headers {
-        if !h.key.trim().is_empty() {
-            builder = builder.header(h.key.trim(), h.value.clone());
+        let header_name = h.key.trim();
+        if header_name.is_empty() {
+            continue;
         }
+
+        if body_is_multipart
+            && header_name.eq_ignore_ascii_case("content-type")
+            && h.value
+                .trim()
+                .to_ascii_lowercase()
+                .starts_with("multipart/form-data")
+        {
+            continue;
+        }
+
+        builder = builder.header(header_name, h.value.clone());
     }
 
     // query params
@@ -493,6 +662,10 @@ pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpEr
                 .map(|kv| (kv.key.clone(), kv.value.clone()))
                 .collect();
             builder.form(&pairs)
+        }
+        Body::Multipart { fields } => {
+            let multipart = build_multipart_form(fields)?;
+            builder.multipart(multipart)
         }
     };
 
