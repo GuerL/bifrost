@@ -34,7 +34,7 @@ import {
     copyRequestToClipboard,
     isBifrostClipboardRequestPayload,
     parseBifrostClipboardPayload,
-    readRequestFromClipboard,
+    readTextFromClipboard,
     type BifrostClipboardRequestPayloadV1,
 } from "./helpers/ClipboardRequestTransfer.ts";
 import { buildCurlCommand } from "./helpers/CurlCommand.ts";
@@ -1829,9 +1829,13 @@ export default function App() {
             if (isTypingContextActive()) return;
             if (isEditableKeyboardTarget(event.target)) return;
 
-            const clipboardText = event.clipboardData?.getData("text/plain");
-            if (typeof clipboardText !== "string") {
-                return;
+            let clipboardText = event.clipboardData?.getData("text/plain") ?? "";
+            if (clipboardText.trim().length === 0) {
+                try {
+                    clipboardText = await readTextFromClipboard();
+                } catch {
+                    return;
+                }
             }
             const trimmedClipboardText = clipboardText.trim();
             if (trimmedClipboardText.length === 0) return;
@@ -1840,15 +1844,9 @@ export default function App() {
             if (current && isBifrostClipboardRequestPayload(trimmedClipboardText)) {
                 event.preventDefault();
 
-                const payloadFromEvent = parseBifrostClipboardPayload(trimmedClipboardText);
-                if (!payloadFromEvent) return;
-
-                try {
-                    const payloadFromSystemClipboard = await readRequestFromClipboard();
-                    openClipboardImportModal(payloadFromSystemClipboard ?? payloadFromEvent);
-                } catch {
-                    openClipboardImportModal(payloadFromEvent);
-                }
+                const payload = parseBifrostClipboardPayload(trimmedClipboardText);
+                if (!payload) return;
+                openClipboardImportModal(payload);
                 return;
             }
 

@@ -1,4 +1,4 @@
-import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { readText as readTextFromPlugin, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type {
     Body,
     KeyValue,
@@ -56,9 +56,27 @@ function isMultipartFieldArray(value: unknown): value is MultipartField[] {
             }
             if (entry.kind === "file") {
                 if (typeof entry.file_path !== "string") return false;
-                if (entry.file_name !== undefined && typeof entry.file_name !== "string") return false;
-                if (entry.mime_type !== undefined && typeof entry.mime_type !== "string") return false;
-                if (entry.size !== undefined && typeof entry.size !== "number") return false;
+                if (
+                    entry.file_name !== undefined &&
+                    entry.file_name !== null &&
+                    typeof entry.file_name !== "string"
+                ) {
+                    return false;
+                }
+                if (
+                    entry.mime_type !== undefined &&
+                    entry.mime_type !== null &&
+                    typeof entry.mime_type !== "string"
+                ) {
+                    return false;
+                }
+                if (
+                    entry.size !== undefined &&
+                    entry.size !== null &&
+                    typeof entry.size !== "number"
+                ) {
+                    return false;
+                }
                 return true;
             }
             return false;
@@ -104,7 +122,16 @@ function parseBody(value: unknown): Body | null {
         if (!isMultipartFieldArray(value.fields)) return null;
         return {
             type: "multipart",
-            fields: value.fields,
+            fields: value.fields.map((field) =>
+                field.kind === "text"
+                    ? field
+                    : {
+                        ...field,
+                        file_name: field.file_name ?? undefined,
+                        mime_type: field.mime_type ?? undefined,
+                        size: field.size ?? undefined,
+                    }
+            ),
         };
     }
 
@@ -288,7 +315,7 @@ export function isBifrostClipboardRequestPayload(text: string): boolean {
 
 export async function copyRequestToClipboard(request: Request): Promise<void> {
     const serialized = serializeRequestForClipboard(request);
-    await writeText(serialized);
+    await copyTextToClipboard(serialized);
 }
 
 export async function copyTextToClipboard(text: string): Promise<void> {
@@ -334,7 +361,21 @@ export async function copyTextToClipboard(text: string): Promise<void> {
 }
 
 export async function readRequestFromClipboard(): Promise<BifrostClipboardRequestPayloadV1 | null> {
-    const text = await readText();
+    const text = await readTextFromClipboard();
     if (typeof text !== "string" || text.trim().length === 0) return null;
     return parseBifrostClipboardPayload(text);
+}
+
+export async function readTextFromClipboard(): Promise<string> {
+    try {
+        return await readTextFromPlugin();
+    } catch {
+        // Fall through to browser clipboard APIs when plugin clipboard is unavailable.
+    }
+
+    if (typeof navigator !== "undefined" && navigator.clipboard?.readText) {
+        return navigator.clipboard.readText();
+    }
+
+    throw new Error("Clipboard read API is unavailable.");
 }
