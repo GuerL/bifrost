@@ -38,6 +38,7 @@ import {
     type BifrostClipboardRequestPayloadV1,
 } from "./helpers/ClipboardRequestTransfer.ts";
 import { buildCurlCommand } from "./helpers/CurlCommand.ts";
+import { parseCurlCommand } from "./helpers/CurlImport.ts";
 import {
     getRunnerSelectedRequestsForCollection,
     loadRunnerSelectedRequests,
@@ -156,6 +157,11 @@ type ClipboardRequestImportModal = {
     targetFolderLabel: string | null;
 };
 
+type CurlImportModal = {
+    targetFolderId: string | null;
+    targetFolderLabel: string | null;
+};
+
 type UpdateRestartModal = {
     version: string;
 };
@@ -199,6 +205,7 @@ const SHORTCUT_LABELS = {
     newRequest: `${PRIMARY_SHORTCUT_MODIFIER} + T`,
     duplicateRequest: `${PRIMARY_SHORTCUT_MODIFIER} + D`,
     copyRequest: `${PRIMARY_SHORTCUT_MODIFIER} + C`,
+    copyAsCurl: `${PRIMARY_SHORTCUT_MODIFIER} + SHIFT + C`,
     closeTab: `${PRIMARY_SHORTCUT_MODIFIER} + W`,
     renameRequest: `${PRIMARY_SHORTCUT_MODIFIER} + E`,
     deleteRequest: IS_MACOS ? "CMD + Backspace" : "CTRL + Delete",
@@ -328,7 +335,26 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
     if (tagName === "input" || tagName === "textarea" || tagName === "select") return true;
     if (target.isContentEditable) return true;
     if (target.closest("[contenteditable='true']")) return true;
+    if (target.closest(".monaco-editor, .monaco-inputbox, [role='textbox']")) return true;
     return false;
+}
+
+function isTypingContextActive(): boolean {
+    const activeElement = document.activeElement;
+    if (!(activeElement instanceof HTMLElement)) return false;
+    if (activeElement instanceof HTMLInputElement) return true;
+    if (activeElement instanceof HTMLTextAreaElement) return true;
+    if (activeElement.isContentEditable) return true;
+    if (activeElement.closest("[contenteditable='true']")) return true;
+    return false;
+}
+
+function isCurlClipboardCommand(clipboardText: string): boolean {
+    const trimmed = clipboardText.trim();
+    if (trimmed.length <= 4) return false;
+    if (!trimmed.toLowerCase().startsWith("curl")) return false;
+    if (!/\s/.test(trimmed.slice(4, 5))) return false;
+    return trimmed.slice(4).trim().length > 0;
 }
 
 function readPersistedTabsState(): PersistedTabsState {
@@ -595,12 +621,17 @@ export default function App() {
     const [deleteRequestBusy, setDeleteRequestBusy] = useState(false);
     const [clipboardImportModal, setClipboardImportModal] = useState<ClipboardRequestImportModal | null>(null);
     const [clipboardImportBusy, setClipboardImportBusy] = useState(false);
+    const [curlImportModal, setCurlImportModal] = useState<CurlImportModal | null>(null);
+    const [curlImportCommand, setCurlImportCommand] = useState("");
+    const [curlImportBusy, setCurlImportBusy] = useState(false);
+    const [curlImportError, setCurlImportError] = useState("");
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
     const postmanImportInputRef = useRef<HTMLInputElement | null>(null);
     const portableImportInputRef = useRef<HTMLInputElement | null>(null);
+    const curlImportTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
     const expandedFoldersRef = useRef<Record<string, boolean>>({});
@@ -674,6 +705,10 @@ export default function App() {
         setDeleteRequestBusy(false);
         setClipboardImportModal(null);
         setClipboardImportBusy(false);
+        setCurlImportModal(null);
+        setCurlImportCommand("");
+        setCurlImportBusy(false);
+        setCurlImportError("");
         setDeleteEnvironmentModal(null);
         setDraftsById({});
         setCloseDraftModal(null);
@@ -1718,6 +1753,10 @@ export default function App() {
                 e.preventDefault();
                 setContextMenu(null);
                 setRootAddMenu(null);
+                if (e.shiftKey) {
+                    void onCopyAsCurl(selectedRequestId);
+                    return;
+                }
                 void onCopyRequest(selectedRequestId);
                 return;
             }
@@ -1776,38 +1815,48 @@ export default function App() {
         sidebarRows,
         sendSelected,
         onCopyRequest,
+        onCopyAsCurl,
     ]);
 
     useEffect(() => {
         async function onPaste(event: ClipboardEvent) {
-            if (!current || collectionRunPending) return;
+            if (collectionRunPending) return;
+            if (isTypingContextActive()) return;
+            if (isEditableKeyboardTarget(event.target)) return;
 
             const clipboardText = event.clipboardData?.getData("text/plain");
-            if (typeof clipboardText !== "string" || clipboardText.trim().length === 0) {
+            if (typeof clipboardText !== "string") {
+                return;
+            }
+            const trimmedClipboardText = clipboardText.trim();
+            if (trimmedClipboardText.length === 0) return;
+
+            // Priority 1: Bifrost clipboard payload import.
+            if (current && isBifrostClipboardRequestPayload(trimmedClipboardText)) {
+                event.preventDefault();
+
+                const payloadFromEvent = parseBifrostClipboardPayload(trimmedClipboardText);
+                if (!payloadFromEvent) return;
+
+                try {
+                    const payloadFromSystemClipboard = await readRequestFromClipboard();
+                    openClipboardImportModal(payloadFromSystemClipboard ?? payloadFromEvent);
+                } catch {
+                    openClipboardImportModal(payloadFromEvent);
+                }
                 return;
             }
 
-            // Only intercept normal paste when clipboard contains a valid Bifrost payload.
-            if (!isBifrostClipboardRequestPayload(clipboardText)) {
-                return;
-            }
-
-            event.preventDefault();
-
-            const payloadFromEvent = parseBifrostClipboardPayload(clipboardText);
-            if (!payloadFromEvent) return;
-
-            try {
-                const payloadFromSystemClipboard = await readRequestFromClipboard();
-                openClipboardImportModal(payloadFromSystemClipboard ?? payloadFromEvent);
-            } catch {
-                openClipboardImportModal(payloadFromEvent);
+            // Priority 2: cURL import modal.
+            if (isCurlClipboardCommand(trimmedClipboardText)) {
+                event.preventDefault();
+                openCurlImportModal(trimmedClipboardText);
             }
         }
 
         window.addEventListener("paste", onPaste);
         return () => window.removeEventListener("paste", onPaste);
-    }, [current, collectionRunPending, selectedRequestId, sidebarRows, collectionFolderOptions]);
+    }, [current, collectionRunPending, selectedRequestId, sidebarRows, collectionFolderOptions, collections.length]);
 
     useEffect(() => {
         if (!clipboardImportModal) return;
@@ -1832,6 +1881,34 @@ export default function App() {
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [clipboardImportModal, clipboardImportBusy]);
+
+    useEffect(() => {
+        if (!curlImportModal) return;
+
+        function onKeyDown(event: KeyboardEvent) {
+            if (curlImportBusy) return;
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            setCurlImportModal(null);
+            setCurlImportError("");
+        }
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [curlImportModal, curlImportBusy]);
+
+    useEffect(() => {
+        if (!curlImportModal) return;
+        const frame = window.requestAnimationFrame(() => {
+            const textarea = curlImportTextareaRef.current;
+            if (!textarea) return;
+            const cursor = textarea.value.length;
+            textarea.focus();
+            textarea.setSelectionRange(cursor, cursor);
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [curlImportModal]);
 
     async function sendSelected() {
         if (collectionRunPending) return;
@@ -2603,7 +2680,7 @@ export default function App() {
         return `${trimmedBase} (${counter})`;
     }
 
-    function resolveClipboardImportTargetFolderId(): string | null {
+    function resolveCurrentImportTargetFolderId(): string | null {
         if (!selectedRequestId) return null;
         const row = sidebarRows.find(
             (entry): entry is Extract<SidebarTreeRow, { kind: "request" }> =>
@@ -2612,12 +2689,14 @@ export default function App() {
         return row?.parentFolderId ?? null;
     }
 
+    function resolveImportTargetFolderLabel(targetFolderId: string | null): string | null {
+        if (!targetFolderId) return null;
+        return collectionFolderOptions.find((entry) => entry.folderId === targetFolderId)?.label ?? null;
+    }
+
     function openClipboardImportModal(payload: BifrostClipboardRequestPayloadV1) {
-        const targetFolderId = resolveClipboardImportTargetFolderId();
-        const targetFolderLabel =
-            targetFolderId
-                ? collectionFolderOptions.find((entry) => entry.folderId === targetFolderId)?.label ?? null
-                : null;
+        const targetFolderId = resolveCurrentImportTargetFolderId();
+        const targetFolderLabel = resolveImportTargetFolderLabel(targetFolderId);
 
         setClipboardImportModal({
             payload,
@@ -2658,6 +2737,124 @@ export default function App() {
             notifySuccess("Copied as cURL");
         } catch {
             notifyError("Failed to copy");
+        }
+    }
+
+    function normalizeImportedCurlMethod(methodInput: string): Request["method"] {
+        const method = methodInput.trim().toUpperCase();
+        if (method === "GET") return "get";
+        if (method === "POST") return "post";
+        if (method === "PUT") return "put";
+        if (method === "PATCH") return "patch";
+        if (method === "DELETE") return "delete";
+        if (method === "HEAD") return "head";
+        if (method === "OPTIONS") return "options";
+        throw new Error(`Unsupported HTTP method: ${method}`);
+    }
+
+    function findHeaderValue(
+        headers: { name: string; value: string; enabled: boolean }[],
+        headerName: string
+    ): string | null {
+        const targetName = headerName.trim().toLowerCase();
+        for (let index = headers.length - 1; index >= 0; index -= 1) {
+            const entry = headers[index];
+            if (entry.enabled === false) continue;
+            if (entry.name.trim().toLowerCase() !== targetName) continue;
+            const value = entry.value.trim();
+            return value.length > 0 ? value : null;
+        }
+        return null;
+    }
+
+    function buildRequestFromParsedCurl(
+        parsed: ReturnType<typeof parseCurlCommand>,
+        existingRequests: Request[]
+    ): Request {
+        const method = normalizeImportedCurlMethod(parsed.method);
+        const headers = parsed.headers.map((entry) => ({
+            key: entry.name,
+            value: entry.value,
+        }));
+        const contentType = findHeaderValue(parsed.headers, "content-type") ?? "text/plain";
+
+        return {
+            id: crypto.randomUUID(),
+            name: buildSafeImportedRequestName(parsed.name, existingRequests),
+            method,
+            url: parsed.url,
+            headers,
+            query: [],
+            body: parsed.body
+                ? {
+                    type: "raw",
+                    content_type: contentType,
+                    text: parsed.body.content,
+                }
+                : { type: "none" },
+            auth: { type: "none" },
+            extractors: [],
+            scripts: { pre_request: "", post_response: "" },
+        };
+    }
+
+    function openCurlImportModal(initialCommand = "") {
+        if (!current) {
+            if (collections.length === 0) {
+                openNoCollectionsModal();
+                notifyInfo("No collection available. Create one first");
+            } else {
+                notifyInfo("Select an active collection before importing a cURL request");
+            }
+            return;
+        }
+
+        const targetFolderId = resolveCurrentImportTargetFolderId();
+        const targetFolderLabel = resolveImportTargetFolderLabel(targetFolderId);
+
+        setCurlImportModal({ targetFolderId, targetFolderLabel });
+        setCurlImportCommand(initialCommand);
+        setCurlImportError("");
+    }
+
+    async function onConfirmImportCurlRequest() {
+        if (!current || !curlImportModal || curlImportBusy) return;
+
+        setCurlImportBusy(true);
+        setCurlImportError("");
+        try {
+            const parsed = parseCurlCommand(curlImportCommand);
+            const importedRequest = buildRequestFromParsedCurl(parsed, current.requests);
+
+            await invoke("create_request", {
+                collectionId: current.meta.id,
+                request: importedRequest,
+                parentFolderId: curlImportModal.targetFolderId,
+            });
+
+            await loadCollection(
+                current.meta.id,
+                importedRequest.id,
+                setCurrent,
+                setSelectedRequestId,
+                setResp
+            );
+
+            setSelection(importedRequest);
+            setCurlImportModal(null);
+            setCurlImportCommand("");
+            notifySuccess("Imported cURL request");
+
+            if (parsed.warnings.length === 1) {
+                notifyInfo(parsed.warnings[0]);
+            } else if (parsed.warnings.length > 1) {
+                notifyInfo(`Imported with ${parsed.warnings.length} warnings`);
+            }
+        } catch (error) {
+            setCurlImportError(errorMessage(error));
+            notifyError("Failed to import cURL");
+        } finally {
+            setCurlImportBusy(false);
         }
     }
 
@@ -3384,6 +3581,7 @@ export default function App() {
                 onSaveDraft={saveDraft}
                 onOpenRawJson={() => setTab("json")}
                 onOpenCollectionRunner={() => setRunnerModalOpen(true)}
+                onImportCurl={openCurlImportModal}
                 onImportPostman={openPostmanImportPicker}
                 onImportPortable={openPortableImportPicker}
                 onExportPortable={() => void onExportPortableCollection()}
@@ -4392,8 +4590,28 @@ export default function App() {
                                     setContextMenu(null);
                                     void onCopyAsCurl(row.requestId);
                                 }}
+                                title={`Copy as cURL (${SHORTCUT_LABELS.copyAsCurl})`}
                             >
-                                Copy as cURL
+                                <span
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "space-between",
+                                        gap: 12,
+                                        width: "100%",
+                                    }}
+                                >
+                                    <span>Copy as cURL</span>
+                                    <span
+                                        style={{
+                                            fontSize: 11,
+                                            color: "var(--pg-text-muted)",
+                                            fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
+                                        }}
+                                    >
+                                        {SHORTCUT_LABELS.copyAsCurl}
+                                    </span>
+                                </span>
                             </button>
                         )}
 
@@ -4931,6 +5149,97 @@ export default function App() {
                             </button>
                         </div>
                     </div>
+                </div>
+            )}
+
+            {curlImportModal && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1450,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onMouseDown={() => {
+                        if (!curlImportBusy) {
+                            setCurlImportModal(null);
+                            setCurlImportError("");
+                        }
+                    }}
+                >
+                    <form
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            void onConfirmImportCurlRequest();
+                        }}
+                        style={{
+                            width: "100%",
+                            maxWidth: 700,
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 12,
+                            background: "var(--pg-surface-1)",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <h3 style={{ margin: 0 }}>Import from cURL</h3>
+                        <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.5 }}>
+                            Paste a cURL command to create a request in{" "}
+                            <span style={{ color: "var(--pg-text)" }}>{current?.meta.name ?? "-"}</span>{" "}
+                            ({curlImportModal.targetFolderLabel ?? "Root"}).
+                        </div>
+                        <textarea
+                            ref={curlImportTextareaRef}
+                            value={curlImportCommand}
+                            onChange={(event) => setCurlImportCommand(event.target.value)}
+                            placeholder="curl https://api.example.com"
+                            disabled={curlImportBusy}
+                            autoFocus
+                            spellCheck={false}
+                            style={{
+                                width: "100%",
+                                minHeight: 180,
+                                resize: "vertical",
+                                boxSizing: "border-box",
+                                fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
+                                fontSize: 12,
+                                lineHeight: 1.5,
+                                padding: "10px 12px",
+                            }}
+                        />
+                        {curlImportError && (
+                            <div style={{ color: "var(--pg-danger)", fontSize: 13 }}>
+                                {curlImportError}
+                            </div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setCurlImportModal(null);
+                                    setCurlImportError("");
+                                }}
+                                disabled={curlImportBusy}
+                                style={buttonStyle(curlImportBusy)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={curlImportBusy}
+                                style={primaryButtonStyle(curlImportBusy)}
+                            >
+                                {curlImportBusy ? "Importing..." : "Import"}
+                            </button>
+                        </div>
+                    </form>
                 </div>
             )}
 
