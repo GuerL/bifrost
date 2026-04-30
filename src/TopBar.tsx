@@ -30,6 +30,7 @@ type TopBarProps = {
     onOpenRawJson: () => void;
     onOpenCollectionRunner: () => void;
     onImportCurl: () => void;
+    onImportOpenApi: () => void;
     onImportPostman: () => void;
     onImportPortable: () => void;
     onExportPortable: () => void;
@@ -53,6 +54,7 @@ export default function TopBar({
     onOpenRawJson,
     onOpenCollectionRunner,
     onImportCurl,
+    onImportOpenApi,
     onImportPostman,
     onImportPortable,
     onExportPortable,
@@ -128,10 +130,14 @@ export default function TopBar({
         }
     }
 
-    function runTransferAction(action: "importCurl" | "importPostman" | "importPortable" | "exportPortable") {
+    function runTransferAction(action: "importCurl" | "importOpenApi" | "importPostman" | "importPortable" | "exportPortable") {
         setIsTransferMenuOpen(false);
         if (action === "importCurl") {
             onImportCurl();
+            return;
+        }
+        if (action === "importOpenApi") {
+            onImportOpenApi();
             return;
         }
         if (action === "importPostman") {
@@ -393,7 +399,7 @@ export default function TopBar({
                                 position: "absolute",
                                 top: "calc(100% + 6px)",
                                 right: 0,
-                                minWidth: 190,
+                                minWidth: 230,
                                 display: "flex",
                                 flexDirection: "column",
                                 gap: 2,
@@ -412,6 +418,14 @@ export default function TopBar({
                                 style={transferMenuItemStyle()}
                             >
                                 Import from cURL
+                            </button>
+                            <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => runTransferAction("importOpenApi")}
+                                style={transferMenuItemStyle()}
+                            >
+                                Import OpenAPI / Swagger
                             </button>
                             <button
                                 type="button"

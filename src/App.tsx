@@ -101,6 +101,10 @@ import {
     notifySuccess,
 } from "./helpers/Toast.tsx";
 import { useTheme } from "./helpers/Theme.tsx";
+import OpenApiImportDialog from "./features/openapi-import/OpenApiImportDialog.tsx";
+import { parseOpenApiSpec } from "./features/openapi-import/openApiParser.ts";
+import { mapOpenApiToBifrost } from "./features/openapi-import/openApiToBifrost.ts";
+import type { OpenApiImportPlan } from "./features/openapi-import/openApiTypes.ts";
 
 type SidebarContextMenu = {
     x: number;
@@ -166,6 +170,11 @@ type ClipboardRequestImportModal = {
 type CurlImportModal = {
     targetFolderId: string | null;
     targetFolderLabel: string | null;
+};
+
+type OpenApiImportModal = {
+    fileName: string;
+    plan: OpenApiImportPlan;
 };
 
 type UpdateRestartModal = {
@@ -631,12 +640,16 @@ export default function App() {
     const [curlImportCommand, setCurlImportCommand] = useState("");
     const [curlImportBusy, setCurlImportBusy] = useState(false);
     const [curlImportError, setCurlImportError] = useState("");
+    const [openApiImportModal, setOpenApiImportModal] = useState<OpenApiImportModal | null>(null);
+    const [openApiImportBusy, setOpenApiImportBusy] = useState(false);
+    const [openApiImportError, setOpenApiImportError] = useState("");
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
     const postmanImportInputRef = useRef<HTMLInputElement | null>(null);
     const portableImportInputRef = useRef<HTMLInputElement | null>(null);
+    const openApiImportInputRef = useRef<HTMLInputElement | null>(null);
     const curlImportTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
@@ -715,6 +728,9 @@ export default function App() {
         setCurlImportCommand("");
         setCurlImportBusy(false);
         setCurlImportError("");
+        setOpenApiImportModal(null);
+        setOpenApiImportBusy(false);
+        setOpenApiImportError("");
         setDeleteEnvironmentModal(null);
         setDraftsById({});
         setCloseDraftModal(null);
@@ -1529,11 +1545,15 @@ export default function App() {
             if (!closeDraftBusy) {
                 setCloseDraftModal(null);
             }
+            if (!openApiImportBusy) {
+                setOpenApiImportModal(null);
+                setOpenApiImportError("");
+            }
         }
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [renameBusy, createFolderBusy, moveNodeBusy, envBusy, collectionBusy, closeDraftBusy]);
+    }, [renameBusy, createFolderBusy, moveNodeBusy, envBusy, collectionBusy, closeDraftBusy, openApiImportBusy]);
 
     useEffect(() => {
         if (!draggedRequestId && !draggedOpenTabRequestId) return;
@@ -3301,8 +3321,99 @@ export default function App() {
         postmanImportInputRef.current?.click();
     }
 
+    function openOpenApiImportPicker() {
+        openApiImportInputRef.current?.click();
+    }
+
     function openPortableImportPicker() {
         portableImportInputRef.current?.click();
+    }
+
+    async function onOpenApiImportFileSelected(event: ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+
+        try {
+            const fileText = await file.text();
+            const parsedSpec = parseOpenApiSpec(fileText);
+            const plan = mapOpenApiToBifrost(parsedSpec, file.name);
+            if (plan.requests.length === 0) {
+                throw new Error("No supported operations were found in this specification.");
+            }
+
+            setOpenApiImportModal({
+                fileName: file.name,
+                plan,
+            });
+            setOpenApiImportError("");
+        } catch (error) {
+            console.error("OpenAPI import parse failed", error);
+            setOpenApiImportModal(null);
+            setOpenApiImportError("");
+            notifyError("Failed to import OpenAPI file");
+            notifyInfo(errorMessage(error));
+        }
+    }
+
+    async function onConfirmImportOpenApiCollection() {
+        if (!openApiImportModal || openApiImportBusy) return;
+
+        setOpenApiImportBusy(true);
+        setOpenApiImportError("");
+        try {
+            const { plan } = openApiImportModal;
+            const createdCollection = await invoke<CollectionMeta>("create_collection", {
+                name: plan.collectionName,
+            });
+
+            const folderIdsByName = new Map<string, string>();
+            for (const generatedRequest of plan.requests) {
+                const folderName = generatedRequest.folderName?.trim() ?? "";
+                let parentFolderId: string | null = null;
+
+                if (folderName.length > 0) {
+                    const existingFolderId = folderIdsByName.get(folderName);
+                    if (existingFolderId) {
+                        parentFolderId = existingFolderId;
+                    } else {
+                        const folderId = await invoke<string>("create_folder", {
+                            collectionId: createdCollection.id,
+                            parentFolderId: null,
+                            name: folderName,
+                        });
+                        folderIdsByName.set(folderName, folderId);
+                        parentFolderId = folderId;
+                    }
+                }
+
+                await invoke("create_request", {
+                    collectionId: createdCollection.id,
+                    request: generatedRequest.request,
+                    parentFolderId,
+                });
+            }
+
+            await invoke("set_active_collection", {
+                collectionId: createdCollection.id,
+            });
+            await reloadCollectionsAndRestoreActive(createdCollection.id);
+
+            const firstRequestId = plan.requests[0]?.request.id ?? null;
+            if (firstRequestId) {
+                setSelectedRequestId(firstRequestId);
+            }
+
+            setOpenApiImportModal(null);
+            setOpenApiImportError("");
+            notifySuccess("Imported OpenAPI collection");
+        } catch (error) {
+            console.error("OpenAPI import failed", error);
+            setOpenApiImportError(errorMessage(error));
+            notifyError("Failed to import OpenAPI file");
+        } finally {
+            setOpenApiImportBusy(false);
+        }
     }
 
     async function onPostmanImportFileSelected(event: ChangeEvent<HTMLInputElement>) {
@@ -3679,6 +3790,7 @@ export default function App() {
                 onOpenRawJson={() => setTab("json")}
                 onOpenCollectionRunner={() => setRunnerModalOpen(true)}
                 onImportCurl={openCurlImportModal}
+                onImportOpenApi={openOpenApiImportPicker}
                 onImportPostman={openPostmanImportPicker}
                 onImportPortable={openPortableImportPicker}
                 onExportPortable={() => void onExportPortableCollection()}
@@ -3687,6 +3799,13 @@ export default function App() {
                 canOpenCollectionRunner={!!current}
                 canExportCollection={!!current}
                 isCollectionRunning={collectionRunPending}
+            />
+            <input
+                ref={openApiImportInputRef}
+                type="file"
+                accept=".json,.yaml,.yml,application/json,text/yaml,application/yaml"
+                style={{ display: "none" }}
+                onChange={(event) => void onOpenApiImportFileSelected(event)}
             />
             <input
                 ref={postmanImportInputRef}
@@ -5247,6 +5366,23 @@ export default function App() {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {openApiImportModal && (
+                <OpenApiImportDialog
+                    fileName={openApiImportModal.fileName}
+                    collectionName={openApiImportModal.plan.collectionName}
+                    preview={openApiImportModal.plan.preview}
+                    warnings={openApiImportModal.plan.warnings}
+                    error={openApiImportError}
+                    busy={openApiImportBusy}
+                    onCancel={() => {
+                        if (openApiImportBusy) return;
+                        setOpenApiImportModal(null);
+                        setOpenApiImportError("");
+                    }}
+                    onConfirm={() => void onConfirmImportOpenApiCollection()}
+                />
             )}
 
             {curlImportModal && (
