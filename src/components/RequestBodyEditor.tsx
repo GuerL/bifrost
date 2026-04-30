@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Editor, { type BeforeMount } from "@monaco-editor/react";
 import type * as MonacoApi from "monaco-editor";
 import KeyValueTable from "../KeyValueTable.tsx";
@@ -6,6 +6,7 @@ import VariableInput, { type VariableStatus } from "../VariableInput.tsx";
 import AppSelect from "./AppSelect.tsx";
 import type { Body, KeyValue, MultipartField, Request } from "../types.ts";
 import MultipartBodyEditor from "./MultipartBodyEditor.tsx";
+import ConfirmationModal from "./ConfirmationModal.tsx";
 
 type RequestBodyEditorProps = {
     draft: Request;
@@ -172,6 +173,11 @@ export default function RequestBodyEditor({
     const textDraftByRequestIdRef = useRef<Record<string, string>>({});
     const formDraftByRequestIdRef = useRef<Record<string, KeyValue[]>>({});
     const multipartDraftByRequestIdRef = useRef<Record<string, MultipartField[]>>({});
+    const [pendingBodyTypeSwitch, setPendingBodyTypeSwitch] = useState<{
+        nextType: Body["type"];
+        title: string;
+        message: string;
+    } | null>(null);
 
     useEffect(() => {
         submitShortcutRef.current = onSubmitShortcut;
@@ -200,6 +206,109 @@ export default function RequestBodyEditor({
         }
     }, [draft.body, selectedRequestId]);
 
+    function applyBodyTypeSwitch(nextType: Body["type"], skipConfirmation = false) {
+        const currentBody = draft.body;
+        if (nextType === currentBody.type) {
+            return;
+        }
+
+        const requestId = selectedRequestId ?? "__global__";
+        const rememberedText = textDraftByRequestIdRef.current[requestId] ?? "";
+        const rememberedForm = formDraftByRequestIdRef.current[requestId] ?? [];
+        const rememberedMultipart = multipartDraftByRequestIdRef.current[requestId] ?? [];
+        const currentText =
+            currentBody.type === "raw"
+                ? currentBody.text
+                : currentBody.type === "json"
+                    ? jsonTextFromBody(currentBody)
+                    : rememberedText;
+
+        if (!skipConfirmation) {
+            const isTextToDestructiveSwitch =
+                (currentBody.type === "raw" || currentBody.type === "json") &&
+                (nextType === "form" || nextType === "multipart") &&
+                currentText.trim().length > 0;
+            if (isTextToDestructiveSwitch) {
+                const targetLabel =
+                    nextType === "form" ? "Form URL Encoded" : "Multipart Form";
+                setPendingBodyTypeSwitch({
+                    nextType,
+                    title: "Switch body type?",
+                    message: `Switching to ${targetLabel} will discard the current text body in this mode.`,
+                });
+                return;
+            }
+
+            const isAnyDestructiveSwitch = nextType === "none" && bodyHasContent(currentBody);
+            if (isAnyDestructiveSwitch) {
+                setPendingBodyTypeSwitch({
+                    nextType,
+                    title: "Switch body type?",
+                    message: "Switching to None will clear the current request body.",
+                });
+                return;
+            }
+        }
+
+        let nextBody: Body;
+        if (nextType === "none") {
+            nextBody = { type: "none" };
+        } else if (nextType === "raw") {
+            const nextText =
+                currentBody.type === "raw"
+                    ? currentBody.text
+                    : currentBody.type === "json"
+                        ? jsonTextFromBody(currentBody)
+                        : rememberedText;
+            nextBody = {
+                type: "raw",
+                content_type:
+                    currentBody.type === "raw"
+                        ? currentBody.content_type
+                        : "text/plain",
+                text: nextText,
+            };
+        } else if (nextType === "json") {
+            const nextText =
+                currentBody.type === "raw"
+                    ? currentBody.text
+                    : currentBody.type === "json"
+                        ? jsonTextFromBody(currentBody)
+                        : rememberedText;
+            let parsedJson: unknown = currentBody.type === "json" ? currentBody.value : {};
+            if (nextText.trim().length > 0) {
+                try {
+                    parsedJson = parseJsonc(nextText);
+                } catch {
+                    // Keep mode switch non-destructive even if content is temporarily invalid JSON.
+                }
+            }
+            nextBody = {
+                type: "json",
+                value: parsedJson,
+                text: nextText,
+            };
+        } else if (nextType === "form") {
+            nextBody = {
+                type: "form",
+                fields:
+                    currentBody.type === "form"
+                        ? cloneKeyValues(currentBody.fields)
+                        : cloneKeyValues(rememberedForm),
+            };
+        } else {
+            nextBody = {
+                type: "multipart",
+                fields:
+                    currentBody.type === "multipart"
+                        ? cloneMultipartFields(currentBody.fields)
+                        : cloneMultipartFields(rememberedMultipart),
+            };
+        }
+
+        onPatchDraft({ body: nextBody });
+    }
+
     return (
         <>
             <AppSelect
@@ -207,105 +316,7 @@ export default function RequestBodyEditor({
                 options={BODY_TYPE_OPTIONS}
                 ariaLabel="Request body type"
                 onValueChange={(nextValue) => {
-                    const nextType = nextValue as Body["type"];
-                    const currentBody = draft.body;
-                    if (nextType === currentBody.type) {
-                        return;
-                    }
-
-                    const requestId = selectedRequestId ?? "__global__";
-                    const rememberedText = textDraftByRequestIdRef.current[requestId] ?? "";
-                    const rememberedForm = formDraftByRequestIdRef.current[requestId] ?? [];
-                    const rememberedMultipart = multipartDraftByRequestIdRef.current[requestId] ?? [];
-                    const currentText =
-                        currentBody.type === "raw"
-                            ? currentBody.text
-                            : currentBody.type === "json"
-                                ? jsonTextFromBody(currentBody)
-                                : rememberedText;
-
-                    const isTextToDestructiveSwitch =
-                        (currentBody.type === "raw" || currentBody.type === "json") &&
-                        (nextType === "form" || nextType === "multipart") &&
-                        currentText.trim().length > 0;
-                    if (isTextToDestructiveSwitch) {
-                        const targetLabel =
-                            nextType === "form" ? "Form URL Encoded" : "Multipart Form";
-                        const confirmed = window.confirm(
-                            `Switching to ${targetLabel} will discard the current text body in this mode. Continue?`
-                        );
-                        if (!confirmed) {
-                            return;
-                        }
-                    }
-
-                    const isAnyDestructiveSwitch = nextType === "none" && bodyHasContent(currentBody);
-                    if (isAnyDestructiveSwitch) {
-                        const confirmed = window.confirm(
-                            "Switching to None will clear the current request body. Continue?"
-                        );
-                        if (!confirmed) {
-                            return;
-                        }
-                    }
-
-                    let nextBody: Body;
-                    if (nextType === "none") {
-                        nextBody = { type: "none" };
-                    } else if (nextType === "raw") {
-                        const nextText =
-                            currentBody.type === "raw"
-                                ? currentBody.text
-                                : currentBody.type === "json"
-                                    ? jsonTextFromBody(currentBody)
-                                    : rememberedText;
-                        nextBody = {
-                            type: "raw",
-                            content_type:
-                                currentBody.type === "raw"
-                                    ? currentBody.content_type
-                                    : "text/plain",
-                            text: nextText,
-                        };
-                    } else if (nextType === "json") {
-                        const nextText =
-                            currentBody.type === "raw"
-                                ? currentBody.text
-                                : currentBody.type === "json"
-                                    ? jsonTextFromBody(currentBody)
-                                    : rememberedText;
-                        let parsedJson: unknown = currentBody.type === "json" ? currentBody.value : {};
-                        if (nextText.trim().length > 0) {
-                            try {
-                                parsedJson = parseJsonc(nextText);
-                            } catch {
-                                // Keep mode switch non-destructive even if content is temporarily invalid JSON.
-                            }
-                        }
-                        nextBody = {
-                            type: "json",
-                            value: parsedJson,
-                            text: nextText,
-                        };
-                    } else if (nextType === "form") {
-                        nextBody = {
-                            type: "form",
-                            fields:
-                                currentBody.type === "form"
-                                    ? cloneKeyValues(currentBody.fields)
-                                    : cloneKeyValues(rememberedForm),
-                        };
-                    } else {
-                        nextBody = {
-                            type: "multipart",
-                            fields:
-                                currentBody.type === "multipart"
-                                    ? cloneMultipartFields(currentBody.fields)
-                                    : cloneMultipartFields(rememberedMultipart),
-                        };
-                    }
-
-                    onPatchDraft({ body: nextBody });
+                    applyBodyTypeSwitch(nextValue as Body["type"]);
                 }}
             />
 
@@ -438,6 +449,24 @@ export default function RequestBodyEditor({
                     variableSuggestions={variableSuggestions}
                 />
             )}
+
+            <ConfirmationModal
+                open={!!pendingBodyTypeSwitch}
+                busy={false}
+                title={pendingBodyTypeSwitch?.title ?? ""}
+                message={pendingBodyTypeSwitch?.message ?? ""}
+                confirmLabel="Switch"
+                cancelLabel="Cancel"
+                onCancel={() => {
+                    setPendingBodyTypeSwitch(null);
+                }}
+                onConfirm={() => {
+                    const pendingSwitch = pendingBodyTypeSwitch;
+                    if (!pendingSwitch) return;
+                    setPendingBodyTypeSwitch(null);
+                    applyBodyTypeSwitch(pendingSwitch.nextType, true);
+                }}
+            />
         </>
     );
 }
