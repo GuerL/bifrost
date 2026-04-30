@@ -256,6 +256,12 @@ const REQUEST_API_KEY_LOCATION_OPTIONS = [
     { value: "header", label: "Header" },
     { value: "query", label: "Query" },
 ];
+const OPENAPI_SUPPORTED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
+const OPENAPI_RECOGNIZED_UNSUPPORTED_METHODS = ["TRACE", "CONNECT"] as const;
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === "object" && !Array.isArray(value);
+}
 
 function areExpandedFoldersEqual(
     left: Record<string, boolean>,
@@ -342,6 +348,99 @@ function parseHttpError(error: unknown): { kind: string; message: string; durati
 
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+function explainNoSupportedOpenApiOperations(document: Record<string, unknown>): string {
+    const paths = document.paths;
+    if (!isObjectRecord(paths)) {
+        return "No supported operations were found. The specification must contain a non-empty 'paths' object.";
+    }
+
+    const detectedSupportedMethods = new Set<string>();
+    const detectedUnsupportedMethods = new Set<string>();
+    const externalPathRefs: string[] = [];
+    const supportedLowercase = new Set(OPENAPI_SUPPORTED_METHODS.map((method) => method.toLowerCase()));
+    const unsupportedLowercase = new Set(
+        OPENAPI_RECOGNIZED_UNSUPPORTED_METHODS.map((method) => method.toLowerCase())
+    );
+
+    for (const pathItem of Object.values(paths)) {
+        if (!isObjectRecord(pathItem)) continue;
+        const pathItemRef = typeof pathItem.$ref === "string" ? pathItem.$ref.trim() : "";
+        if (pathItemRef && !pathItemRef.startsWith("#/")) {
+            externalPathRefs.push(pathItemRef);
+        }
+
+        for (const rawKey of Object.keys(pathItem)) {
+            const key = rawKey.toLowerCase();
+            if (
+                key === "parameters" ||
+                key === "servers" ||
+                key === "summary" ||
+                key === "description" ||
+                key === "$ref"
+            ) {
+                continue;
+            }
+
+            if (supportedLowercase.has(key)) {
+                detectedSupportedMethods.add(key.toUpperCase());
+                continue;
+            }
+
+            if (unsupportedLowercase.has(key)) {
+                detectedUnsupportedMethods.add(key.toUpperCase());
+            }
+        }
+    }
+
+    if (
+        externalPathRefs.length > 0 &&
+        detectedSupportedMethods.size === 0 &&
+        detectedUnsupportedMethods.size === 0
+    ) {
+        const previewRefs = externalPathRefs.slice(0, 3);
+        const examples = previewRefs.join(", ");
+        const suffix = externalPathRefs.length > previewRefs.length ? ", ..." : "";
+        return `No HTTP operations were detected because paths use external $ref files (${examples}${suffix}). This limitation is known: OpenAPI import currently supports local refs only (#/...). Please bundle your spec into a single file and retry.`;
+    }
+
+    if (detectedSupportedMethods.size > 0) {
+        return `No supported operations were found after parsing paths. Supported methods: ${OPENAPI_SUPPORTED_METHODS.join(", ")}.`;
+    }
+
+    if (detectedUnsupportedMethods.size > 0) {
+        return `Only unsupported methods were detected: ${Array.from(detectedUnsupportedMethods).join(", ")}. Supported methods: ${OPENAPI_SUPPORTED_METHODS.join(", ")}.`;
+    }
+
+    return `No HTTP operations were detected in paths. Supported methods: ${OPENAPI_SUPPORTED_METHODS.join(", ")}.`;
+}
+
+function summarizeOpenApiImportFailure(error: unknown): string {
+    const raw = errorMessage(error).trim();
+    if (!raw) {
+        return "Unknown OpenAPI import error.";
+    }
+
+    if (/unsupported openapi version/i.test(raw)) {
+        return "Unsupported OpenAPI version. Supported versions are OpenAPI 3.0.x and 3.1.x.";
+    }
+    if (/unsupported swagger version/i.test(raw)) {
+        return "Unsupported Swagger version. Supported version is Swagger 2.0.";
+    }
+    if (/missing 'openapi' or 'swagger' field/i.test(raw)) {
+        return "Missing 'openapi' or 'swagger' field in the specification.";
+    }
+    if (/could not parse file as json or yaml/i.test(raw)) {
+        return "Invalid JSON/YAML syntax. Please validate the file and retry.";
+    }
+    if (/no supported operations were found/i.test(raw)) {
+        return raw.includes("Supported methods:")
+            ? raw
+            : `${raw} Supported methods: ${OPENAPI_SUPPORTED_METHODS.join(", ")}.`;
+    }
+
+    return raw.length > 260 ? `${raw.slice(0, 257)}...` : raw;
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
@@ -3339,7 +3438,7 @@ export default function App() {
             const parsedSpec = parseOpenApiSpec(fileText);
             const plan = mapOpenApiToBifrost(parsedSpec, file.name);
             if (plan.requests.length === 0) {
-                throw new Error("No supported operations were found in this specification.");
+                throw new Error(explainNoSupportedOpenApiOperations(parsedSpec.document));
             }
 
             setOpenApiImportModal({
@@ -3352,7 +3451,7 @@ export default function App() {
             setOpenApiImportModal(null);
             setOpenApiImportError("");
             notifyError("Failed to import OpenAPI file");
-            notifyInfo(errorMessage(error));
+            notifyInfo(summarizeOpenApiImportFailure(error));
         }
     }
 
