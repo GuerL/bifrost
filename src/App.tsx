@@ -62,6 +62,7 @@ import {
     parseRunnerHttpError,
     toResponseSnapshot,
 } from "./runner/mappers.ts";
+import { notifyRunnerCompletion } from "./runner/runnerNotifications.ts";
 import { summarizeRunnerExecutions } from "./runner/stats.ts";
 import { readRunnerRunForCollection, writeRunnerRunForCollection } from "./runner/storage.ts";
 import {
@@ -2499,6 +2500,11 @@ export default function App() {
                     ? "failed"
                     : "completed";
         commitRun(currentExecutions, finalStatus, finishedAt);
+        void notifyRunnerCompletion({
+            runId,
+            status: finalStatus,
+            summary: finalSummary,
+        });
 
         const environmentPersistError = await persistScriptEnvironmentMutations(
             runScriptEnvironmentMutations
