@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import Editor, { type BeforeMount } from "@monaco-editor/react";
 import type * as MonacoApi from "monaco-editor";
 import KeyValueTable from "../KeyValueTable.tsx";
@@ -6,7 +6,6 @@ import VariableInput, { type VariableStatus } from "../VariableInput.tsx";
 import AppSelect from "./AppSelect.tsx";
 import type { Body, KeyValue, MultipartField, Request } from "../types.ts";
 import MultipartBodyEditor from "./MultipartBodyEditor.tsx";
-import ConfirmationModal from "./ConfirmationModal.tsx";
 
 type RequestBodyEditorProps = {
     draft: Request;
@@ -140,28 +139,6 @@ function cloneMultipartFields(fields: MultipartField[]): MultipartField[] {
     return fields.map((field) => ({ ...field }));
 }
 
-function bodyHasContent(body: Body): boolean {
-    if (body.type === "none") return false;
-    if (body.type === "raw") return body.text.trim().length > 0;
-    if (body.type === "json") return jsonTextFromBody(body).trim().length > 0;
-    if (body.type === "form") return body.fields.some((field) => field.key.trim() || field.value.trim());
-    return body.fields.some((field) => {
-        if (field.kind === "text") {
-            return field.name.trim() || field.value.trim();
-        }
-        return field.name.trim() || field.file_path.trim();
-    });
-}
-
-function isTextBodyType(type: Body["type"]): boolean {
-    return type === "json" || type === "raw";
-}
-
-function areBodyTypesCompatible(currentType: Body["type"], nextType: Body["type"]): boolean {
-    if (currentType === nextType) return true;
-    return isTextBodyType(currentType) && isTextBodyType(nextType);
-}
-
 export default function RequestBodyEditor({
     draft,
     selectedRequestId,
@@ -182,11 +159,6 @@ export default function RequestBodyEditor({
     const textDraftByRequestIdRef = useRef<Record<string, string>>({});
     const formDraftByRequestIdRef = useRef<Record<string, KeyValue[]>>({});
     const multipartDraftByRequestIdRef = useRef<Record<string, MultipartField[]>>({});
-    const [pendingBodyTypeSwitch, setPendingBodyTypeSwitch] = useState<{
-        nextType: Body["type"];
-        title: string;
-        message: string;
-    } | null>(null);
 
     useEffect(() => {
         submitShortcutRef.current = onSubmitShortcut;
@@ -215,7 +187,7 @@ export default function RequestBodyEditor({
         }
     }, [draft.body, selectedRequestId]);
 
-    function applyBodyTypeSwitch(nextType: Body["type"], skipConfirmation = false) {
+    function applyBodyTypeSwitch(nextType: Body["type"]) {
         const currentBody = draft.body;
         if (nextType === currentBody.type) {
             return;
@@ -225,29 +197,6 @@ export default function RequestBodyEditor({
         const rememberedText = textDraftByRequestIdRef.current[requestId] ?? "";
         const rememberedForm = formDraftByRequestIdRef.current[requestId] ?? [];
         const rememberedMultipart = multipartDraftByRequestIdRef.current[requestId] ?? [];
-        const currentText =
-            currentBody.type === "raw"
-                ? currentBody.text
-                : currentBody.type === "json"
-                    ? jsonTextFromBody(currentBody)
-                    : rememberedText;
-
-        if (!skipConfirmation) {
-            const hasExistingContent =
-                currentText.trim().length > 0 || bodyHasContent(currentBody);
-            const shouldWarnForIncompatibleSwitch =
-                hasExistingContent &&
-                !areBodyTypesCompatible(currentBody.type, nextType);
-            if (shouldWarnForIncompatibleSwitch) {
-                setPendingBodyTypeSwitch({
-                    nextType,
-                    title: "Switch body type?",
-                    message:
-                        "This body type uses a different format. Your current body content will be preserved if you switch back, but only the selected body type will be sent.",
-                });
-                return;
-            }
-        }
 
         let nextBody: Body;
         if (nextType === "none") {
@@ -318,6 +267,15 @@ export default function RequestBodyEditor({
                     applyBodyTypeSwitch(nextValue as Body["type"]);
                 }}
             />
+            <div
+                style={{
+                    marginTop: 6,
+                    fontSize: 12,
+                    color: "var(--pg-text-muted)",
+                }}
+            >
+                Only the selected body type is sent.
+            </div>
 
             {draft.body.type === "json" && (() => {
                 const jsonBody = draft.body;
@@ -448,24 +406,6 @@ export default function RequestBodyEditor({
                     variableSuggestions={variableSuggestions}
                 />
             )}
-
-            <ConfirmationModal
-                open={!!pendingBodyTypeSwitch}
-                busy={false}
-                title={pendingBodyTypeSwitch?.title ?? ""}
-                message={pendingBodyTypeSwitch?.message ?? ""}
-                confirmLabel="Switch"
-                cancelLabel="Cancel"
-                onCancel={() => {
-                    setPendingBodyTypeSwitch(null);
-                }}
-                onConfirm={() => {
-                    const pendingSwitch = pendingBodyTypeSwitch;
-                    if (!pendingSwitch) return;
-                    setPendingBodyTypeSwitch(null);
-                    applyBodyTypeSwitch(pendingSwitch.nextType, true);
-                }}
-            />
         </>
     );
 }
