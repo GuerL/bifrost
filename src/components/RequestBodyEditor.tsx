@@ -4,7 +4,7 @@ import type * as MonacoApi from "monaco-editor";
 import KeyValueTable from "../KeyValueTable.tsx";
 import VariableInput, { type VariableStatus } from "../VariableInput.tsx";
 import AppSelect from "./AppSelect.tsx";
-import type { Body, Request } from "../types.ts";
+import type { Body, KeyValue, MultipartField, Request } from "../types.ts";
 import MultipartBodyEditor from "./MultipartBodyEditor.tsx";
 
 type RequestBodyEditorProps = {
@@ -113,12 +113,31 @@ function parseJsonc(text: string): unknown {
 }
 
 const BODY_TYPE_OPTIONS = [
-    { value: "none", label: "none" },
-    { value: "json", label: "json" },
-    { value: "raw", label: "raw" },
-    { value: "form", label: "form" },
-    { value: "multipart", label: "multipart/form-data" },
+    { value: "none", label: "None" },
+    { value: "json", label: "JSON" },
+    { value: "raw", label: "Raw" },
+    { value: "form", label: "Form URL Encoded" },
+    { value: "multipart", label: "Multipart Form" },
 ];
+
+function jsonTextFromBody(body: Extract<Body, { type: "json" }>): string {
+    if (typeof body.text === "string" && body.text.trim().length > 0) {
+        return body.text;
+    }
+    try {
+        return JSON.stringify(body.value ?? {}, null, 2);
+    } catch {
+        return "{}";
+    }
+}
+
+function cloneKeyValues(fields: KeyValue[]): KeyValue[] {
+    return fields.map((field) => ({ ...field }));
+}
+
+function cloneMultipartFields(fields: MultipartField[]): MultipartField[] {
+    return fields.map((field) => ({ ...field }));
+}
 
 export default function RequestBodyEditor({
     draft,
@@ -137,10 +156,106 @@ export default function RequestBodyEditor({
     onSubmitShortcut,
 }: RequestBodyEditorProps) {
     const submitShortcutRef = useRef(onSubmitShortcut);
+    const textDraftByRequestIdRef = useRef<Record<string, string>>({});
+    const formDraftByRequestIdRef = useRef<Record<string, KeyValue[]>>({});
+    const multipartDraftByRequestIdRef = useRef<Record<string, MultipartField[]>>({});
 
     useEffect(() => {
         submitShortcutRef.current = onSubmitShortcut;
     }, [onSubmitShortcut]);
+
+    useEffect(() => {
+        if (!selectedRequestId) return;
+
+        if (draft.body.type === "raw") {
+            textDraftByRequestIdRef.current[selectedRequestId] = draft.body.text;
+            return;
+        }
+
+        if (draft.body.type === "json") {
+            textDraftByRequestIdRef.current[selectedRequestId] = jsonTextFromBody(draft.body);
+            return;
+        }
+
+        if (draft.body.type === "form") {
+            formDraftByRequestIdRef.current[selectedRequestId] = cloneKeyValues(draft.body.fields);
+            return;
+        }
+
+        if (draft.body.type === "multipart") {
+            multipartDraftByRequestIdRef.current[selectedRequestId] = cloneMultipartFields(draft.body.fields);
+        }
+    }, [draft.body, selectedRequestId]);
+
+    function applyBodyTypeSwitch(nextType: Body["type"]) {
+        const currentBody = draft.body;
+        if (nextType === currentBody.type) {
+            return;
+        }
+
+        const requestId = selectedRequestId ?? "__global__";
+        const rememberedText = textDraftByRequestIdRef.current[requestId] ?? "";
+        const rememberedForm = formDraftByRequestIdRef.current[requestId] ?? [];
+        const rememberedMultipart = multipartDraftByRequestIdRef.current[requestId] ?? [];
+
+        let nextBody: Body;
+        if (nextType === "none") {
+            nextBody = { type: "none" };
+        } else if (nextType === "raw") {
+            const nextText =
+                currentBody.type === "raw"
+                    ? currentBody.text
+                    : currentBody.type === "json"
+                        ? jsonTextFromBody(currentBody)
+                        : rememberedText;
+            nextBody = {
+                type: "raw",
+                content_type:
+                    currentBody.type === "raw"
+                        ? currentBody.content_type
+                        : "text/plain",
+                text: nextText,
+            };
+        } else if (nextType === "json") {
+            const nextText =
+                currentBody.type === "raw"
+                    ? currentBody.text
+                    : currentBody.type === "json"
+                        ? jsonTextFromBody(currentBody)
+                        : rememberedText;
+            let parsedJson: unknown = currentBody.type === "json" ? currentBody.value : {};
+            if (nextText.trim().length > 0) {
+                try {
+                    parsedJson = parseJsonc(nextText);
+                } catch {
+                    // Keep mode switch non-destructive even if content is temporarily invalid JSON.
+                }
+            }
+            nextBody = {
+                type: "json",
+                value: parsedJson,
+                text: nextText,
+            };
+        } else if (nextType === "form") {
+            nextBody = {
+                type: "form",
+                fields:
+                    currentBody.type === "form"
+                        ? cloneKeyValues(currentBody.fields)
+                        : cloneKeyValues(rememberedForm),
+            };
+        } else {
+            nextBody = {
+                type: "multipart",
+                fields:
+                    currentBody.type === "multipart"
+                        ? cloneMultipartFields(currentBody.fields)
+                        : cloneMultipartFields(rememberedMultipart),
+            };
+        }
+
+        onPatchDraft({ body: nextBody });
+    }
 
     return (
         <>
@@ -149,21 +264,18 @@ export default function RequestBodyEditor({
                 options={BODY_TYPE_OPTIONS}
                 ariaLabel="Request body type"
                 onValueChange={(nextValue) => {
-                    const t = nextValue as Body["type"];
-                    const body: Body =
-                        t === "none"
-                            ? { type: "none" }
-                            : t === "json"
-                                ? { type: "json", value: {}, text: "{\n\n}" }
-                                : t === "raw"
-                                    ? { type: "raw", content_type: "text/plain", text: "" }
-                                    : t === "form"
-                                        ? { type: "form", fields: [] }
-                                        : { type: "multipart", fields: [] };
-
-                    onPatchDraft({ body });
+                    applyBodyTypeSwitch(nextValue as Body["type"]);
                 }}
             />
+            <div
+                style={{
+                    marginTop: 6,
+                    fontSize: 12,
+                    color: "var(--pg-text-muted)",
+                }}
+            >
+                Only the selected body type is sent.
+            </div>
 
             {draft.body.type === "json" && (() => {
                 const jsonBody = draft.body;
