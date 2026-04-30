@@ -153,6 +153,15 @@ function bodyHasContent(body: Body): boolean {
     });
 }
 
+function isTextBodyType(type: Body["type"]): boolean {
+    return type === "json" || type === "raw";
+}
+
+function areBodyTypesCompatible(currentType: Body["type"], nextType: Body["type"]): boolean {
+    if (currentType === nextType) return true;
+    return isTextBodyType(currentType) && isTextBodyType(nextType);
+}
+
 export default function RequestBodyEditor({
     draft,
     selectedRequestId,
@@ -224,27 +233,17 @@ export default function RequestBodyEditor({
                     : rememberedText;
 
         if (!skipConfirmation) {
-            const isTextToDestructiveSwitch =
-                (currentBody.type === "raw" || currentBody.type === "json") &&
-                (nextType === "form" || nextType === "multipart") &&
-                currentText.trim().length > 0;
-            if (isTextToDestructiveSwitch) {
-                const targetLabel =
-                    nextType === "form" ? "Form URL Encoded" : "Multipart Form";
+            const hasExistingContent =
+                currentText.trim().length > 0 || bodyHasContent(currentBody);
+            const shouldWarnForIncompatibleSwitch =
+                hasExistingContent &&
+                !areBodyTypesCompatible(currentBody.type, nextType);
+            if (shouldWarnForIncompatibleSwitch) {
                 setPendingBodyTypeSwitch({
                     nextType,
                     title: "Switch body type?",
-                    message: `Switching to ${targetLabel} will discard the current text body in this mode.`,
-                });
-                return;
-            }
-
-            const isAnyDestructiveSwitch = nextType === "none" && bodyHasContent(currentBody);
-            if (isAnyDestructiveSwitch) {
-                setPendingBodyTypeSwitch({
-                    nextType,
-                    title: "Switch body type?",
-                    message: "Switching to None will clear the current request body.",
+                    message:
+                        "This body type uses a different format. Your current body content will be preserved if you switch back, but only the selected body type will be sent.",
                 });
                 return;
             }
