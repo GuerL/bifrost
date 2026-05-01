@@ -257,11 +257,6 @@ const REQUEST_API_KEY_LOCATION_OPTIONS = [
     { value: "query", label: "Query" },
 ];
 const OPENAPI_SUPPORTED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
-const OPENAPI_RECOGNIZED_UNSUPPORTED_METHODS = ["TRACE", "CONNECT"] as const;
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === "object" && !Array.isArray(value);
-}
 
 function areExpandedFoldersEqual(
     left: Record<string, boolean>,
@@ -350,70 +345,23 @@ function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
-function explainNoSupportedOpenApiOperations(document: Record<string, unknown>): string {
-    const paths = document.paths;
-    if (!isObjectRecord(paths)) {
-        return "No supported operations were found. The specification must contain a non-empty 'paths' object.";
+function explainNoSupportedOpenApiOperations(plan: OpenApiImportPlan): string {
+    const { totalPaths, skippedExternalPathRefs, skippedUnsupportedPaths } = plan.stats;
+    const supportedMethods = OPENAPI_SUPPORTED_METHODS.join(", ");
+
+    if (totalPaths > 0 && skippedExternalPathRefs === totalPaths) {
+        return `No importable operations were found. All ${totalPaths} path(s) use external $ref files, which are not supported yet. Import a bundled single-file spec (or inline those path items) and retry.`;
     }
 
-    const detectedSupportedMethods = new Set<string>();
-    const detectedUnsupportedMethods = new Set<string>();
-    const externalPathRefs: string[] = [];
-    const supportedLowercase = new Set(OPENAPI_SUPPORTED_METHODS.map((method) => method.toLowerCase()));
-    const unsupportedLowercase = new Set(
-        OPENAPI_RECOGNIZED_UNSUPPORTED_METHODS.map((method) => method.toLowerCase())
-    );
-
-    for (const pathItem of Object.values(paths)) {
-        if (!isObjectRecord(pathItem)) continue;
-        const pathItemRef = typeof pathItem.$ref === "string" ? pathItem.$ref.trim() : "";
-        if (pathItemRef && !pathItemRef.startsWith("#/")) {
-            externalPathRefs.push(pathItemRef);
-        }
-
-        for (const rawKey of Object.keys(pathItem)) {
-            const key = rawKey.toLowerCase();
-            if (
-                key === "parameters" ||
-                key === "servers" ||
-                key === "summary" ||
-                key === "description" ||
-                key === "$ref"
-            ) {
-                continue;
-            }
-
-            if (supportedLowercase.has(key)) {
-                detectedSupportedMethods.add(key.toUpperCase());
-                continue;
-            }
-
-            if (unsupportedLowercase.has(key)) {
-                detectedUnsupportedMethods.add(key.toUpperCase());
-            }
-        }
+    if (skippedExternalPathRefs > 0 && skippedUnsupportedPaths > 0) {
+        return `No importable operations were found. Skipped ${skippedExternalPathRefs} external-ref path(s) and ${skippedUnsupportedPaths} additional path(s) without supported operations. Supported methods: ${supportedMethods}.`;
     }
 
-    if (
-        externalPathRefs.length > 0 &&
-        detectedSupportedMethods.size === 0 &&
-        detectedUnsupportedMethods.size === 0
-    ) {
-        const previewRefs = externalPathRefs.slice(0, 3);
-        const examples = previewRefs.join(", ");
-        const suffix = externalPathRefs.length > previewRefs.length ? ", ..." : "";
-        return `No HTTP operations were detected because paths use external $ref files (${examples}${suffix}). This limitation is known: OpenAPI import currently supports local refs only (#/...). Please bundle your spec into a single file and retry.`;
+    if (skippedExternalPathRefs > 0) {
+        return `No importable operations were found. Skipped ${skippedExternalPathRefs} path(s) using external $ref files. Supported methods: ${supportedMethods}.`;
     }
 
-    if (detectedSupportedMethods.size > 0) {
-        return `No supported operations were found after parsing paths. Supported methods: ${OPENAPI_SUPPORTED_METHODS.join(", ")}.`;
-    }
-
-    if (detectedUnsupportedMethods.size > 0) {
-        return `Only unsupported methods were detected: ${Array.from(detectedUnsupportedMethods).join(", ")}. Supported methods: ${OPENAPI_SUPPORTED_METHODS.join(", ")}.`;
-    }
-
-    return `No HTTP operations were detected in paths. Supported methods: ${OPENAPI_SUPPORTED_METHODS.join(", ")}.`;
+    return `No supported HTTP operations were found in paths. Supported methods: ${supportedMethods}.`;
 }
 
 function summarizeOpenApiImportFailure(error: unknown): string {
@@ -438,6 +386,9 @@ function summarizeOpenApiImportFailure(error: unknown): string {
         return raw.includes("Supported methods:")
             ? raw
             : `${raw} Supported methods: ${OPENAPI_SUPPORTED_METHODS.join(", ")}.`;
+    }
+    if (/no importable operations were found/i.test(raw)) {
+        return raw;
     }
 
     return raw.length > 260 ? `${raw.slice(0, 257)}...` : raw;
@@ -3438,7 +3389,7 @@ export default function App() {
             const parsedSpec = parseOpenApiSpec(fileText);
             const plan = mapOpenApiToBifrost(parsedSpec, file.name);
             if (plan.requests.length === 0) {
-                throw new Error(explainNoSupportedOpenApiOperations(parsedSpec.document));
+                throw new Error(explainNoSupportedOpenApiOperations(plan));
             }
 
             setOpenApiImportModal({
@@ -3506,6 +3457,13 @@ export default function App() {
             setOpenApiImportModal(null);
             setOpenApiImportError("");
             notifySuccess("Imported OpenAPI collection");
+            if (plan.stats.skippedExternalPathRefs > 0) {
+                notifyInfo(
+                    `Imported ${plan.stats.importedOperations} requests. Skipped ${plan.stats.skippedExternalPathRefs} paths using external refs.`
+                );
+            } else if (plan.warnings.length > 0) {
+                notifyInfo(`Imported with ${plan.warnings.length} warning(s)`);
+            }
         } catch (error) {
             console.error("OpenAPI import failed", error);
             setOpenApiImportError(errorMessage(error));

@@ -30,11 +30,19 @@ export type OpenApiImportPreview = {
     serverUrl: string | null;
 };
 
+export type OpenApiImportStats = {
+    totalPaths: number;
+    importedOperations: number;
+    skippedExternalPathRefs: number;
+    skippedUnsupportedPaths: number;
+};
+
 export type OpenApiImportPlan = {
     collectionName: string;
     specKind: OpenApiSpecKind;
     specVersion: string;
     preview: OpenApiImportPreview;
+    stats: OpenApiImportStats;
     grouping: OpenApiGroupingStrategy;
     requests: OpenApiGeneratedRequest[];
     warnings: string[];

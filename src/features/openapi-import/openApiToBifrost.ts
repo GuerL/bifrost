@@ -706,6 +706,10 @@ function fileNameWithoutExtension(input: string): string {
     return lastSegment.replace(/\.(json|yaml|yml)$/i, "").trim() || "OpenAPI Collection";
 }
 
+function isExternalRef(input: unknown): input is string {
+    return typeof input === "string" && input.trim().length > 0 && !input.trim().startsWith("#/");
+}
+
 export function mapOpenApiToBifrost(
     parsedSpec: OpenApiParsedSpec,
     sourceFileName: string
@@ -729,17 +733,38 @@ export function mapOpenApiToBifrost(
         parsedSpec.kind === "swagger2"
             ? listMediaTypes(parsedSpec.document.produces)
             : [];
+    let skippedExternalPathRefs = 0;
+    let skippedUnsupportedPaths = 0;
 
     for (const [rawPath, pathItemInput] of Object.entries(paths)) {
-        if (!isObject(pathItemInput)) continue;
-        const pathItem = pathItemInput;
+        if (!isObject(pathItemInput)) {
+            skippedUnsupportedPaths += 1;
+            continue;
+        }
+
+        const rawPathRef = asString(pathItemInput.$ref);
+        if (isExternalRef(rawPathRef)) {
+            skippedExternalPathRefs += 1;
+            addWarning(`Skipped path '${rawPath}' because external path $ref is not supported (${rawPathRef}).`);
+            continue;
+        }
+
+        const pathItem =
+            resolver.resolveObjectRef(pathItemInput) ??
+            pathItemInput;
+        if (!pathItem) {
+            skippedUnsupportedPaths += 1;
+            continue;
+        }
         const pathParameters = extractParameters(pathItem.parameters, resolver);
         const pathFolderName = firstPathSegment(rawPath);
+        let pathImportedOperations = 0;
 
         for (const methodDef of SUPPORTED_METHODS) {
             const operationInput = pathItem[methodDef.key];
             const operation = resolver.resolveObjectRef(operationInput);
             if (!operation) continue;
+            pathImportedOperations += 1;
 
             const operationParameters = extractParameters(operation.parameters, resolver);
             const mergedParameters = mergeParameters(pathParameters, operationParameters);
@@ -823,6 +848,18 @@ export function mapOpenApiToBifrost(
             if (!last) continue;
             last.generated.folderName = primaryTag ?? pathFolderName;
         }
+
+        if (pathImportedOperations === 0) {
+            skippedUnsupportedPaths += 1;
+        }
+    }
+
+    if (skippedExternalPathRefs > 0) {
+        addWarning(`Skipped ${skippedExternalPathRefs} path(s) using external refs.`);
+    }
+
+    if (skippedUnsupportedPaths > 0) {
+        addWarning(`Skipped ${skippedUnsupportedPaths} path(s) with no importable supported HTTP operations.`);
     }
 
     const grouping = chooseGrouping(mappedOperations);
@@ -848,6 +885,12 @@ export function mapOpenApiToBifrost(
         grouping,
         requests,
         warnings: Array.from(warnings),
+        stats: {
+            totalPaths: Object.keys(paths).length,
+            importedOperations: requests.length,
+            skippedExternalPathRefs,
+            skippedUnsupportedPaths,
+        },
         preview: {
             title,
             version: apiVersion,

@@ -397,3 +397,93 @@ describe("OpenAPI parser validation", () => {
     });
 });
 
+describe("OpenAPI external path ref handling", () => {
+    it("marks all external path refs as skipped and produces zero importable operations", () => {
+        const spec = JSON.stringify({
+            openapi: "3.1.0",
+            info: { title: "External Paths API", version: "1.0.0" },
+            paths: {
+                "/users/{username}": { $ref: "paths/users_{username}.yaml" },
+                "/user": { $ref: "paths/user.yaml" },
+            },
+        });
+
+        const plan = importSpec(spec, "external-only.yaml");
+
+        expect(plan.requests).toHaveLength(0);
+        expect(plan.stats).toEqual({
+            totalPaths: 2,
+            importedOperations: 0,
+            skippedExternalPathRefs: 2,
+            skippedUnsupportedPaths: 0,
+        });
+        expect(
+            plan.warnings.some((warning) =>
+                warning.includes("Skipped 2 path(s) using external refs")
+            )
+        ).toBe(true);
+    });
+
+    it("imports inline operations while skipping external path refs", () => {
+        const spec = JSON.stringify({
+            openapi: "3.1.0",
+            info: { title: "Mixed API", version: "1.0.0" },
+            paths: {
+                "/users/{username}": { $ref: "paths/users_{username}.yaml" },
+                "/health": {
+                    get: {
+                        operationId: "healthCheck",
+                        responses: { "200": { description: "ok" } },
+                    },
+                },
+                "/trace-only": {
+                    trace: {
+                        responses: { "200": { description: "ok" } },
+                    },
+                },
+            },
+        });
+
+        const plan = importSpec(spec, "mixed-external.yaml");
+
+        expect(plan.requests).toHaveLength(1);
+        expect(plan.stats).toEqual({
+            totalPaths: 3,
+            importedOperations: 1,
+            skippedExternalPathRefs: 1,
+            skippedUnsupportedPaths: 1,
+        });
+        expect(requestByName(plan.requests, "healthCheck").url).toContain("/health");
+    });
+
+    it("keeps normal inline path import behavior unchanged", () => {
+        const spec = JSON.stringify({
+            openapi: "3.0.3",
+            info: { title: "Inline API", version: "1.0.0" },
+            paths: {
+                "/ping": {
+                    get: {
+                        operationId: "ping",
+                        responses: { "200": { description: "ok" } },
+                    },
+                },
+                "/pong": {
+                    post: {
+                        operationId: "pong",
+                        responses: { "200": { description: "ok" } },
+                    },
+                },
+            },
+        });
+
+        const plan = importSpec(spec, "inline-only.yaml");
+
+        expect(plan.requests).toHaveLength(2);
+        expect(plan.stats).toEqual({
+            totalPaths: 2,
+            importedOperations: 2,
+            skippedExternalPathRefs: 0,
+            skippedUnsupportedPaths: 0,
+        });
+    });
+});
