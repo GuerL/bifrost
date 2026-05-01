@@ -101,6 +101,10 @@ import {
     notifySuccess,
 } from "./helpers/Toast.tsx";
 import { useTheme } from "./helpers/Theme.tsx";
+import OpenApiImportDialog from "./features/openapi-import/OpenApiImportDialog.tsx";
+import { parseOpenApiSpec } from "./features/openapi-import/openApiParser.ts";
+import { mapOpenApiToBifrost } from "./features/openapi-import/openApiToBifrost.ts";
+import type { OpenApiImportPlan } from "./features/openapi-import/openApiTypes.ts";
 
 type SidebarContextMenu = {
     x: number;
@@ -166,6 +170,11 @@ type ClipboardRequestImportModal = {
 type CurlImportModal = {
     targetFolderId: string | null;
     targetFolderLabel: string | null;
+};
+
+type OpenApiImportModal = {
+    fileName: string;
+    plan: OpenApiImportPlan;
 };
 
 type UpdateRestartModal = {
@@ -247,6 +256,7 @@ const REQUEST_API_KEY_LOCATION_OPTIONS = [
     { value: "header", label: "Header" },
     { value: "query", label: "Query" },
 ];
+const OPENAPI_SUPPORTED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 
 function areExpandedFoldersEqual(
     left: Record<string, boolean>,
@@ -333,6 +343,55 @@ function parseHttpError(error: unknown): { kind: string; message: string; durati
 
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+function explainNoSupportedOpenApiOperations(plan: OpenApiImportPlan): string {
+    const { totalPaths, skippedExternalPathRefs, skippedUnsupportedPaths } = plan.stats;
+    const supportedMethods = OPENAPI_SUPPORTED_METHODS.join(", ");
+
+    if (totalPaths > 0 && skippedExternalPathRefs === totalPaths) {
+        return `No importable operations were found. All ${totalPaths} path(s) use external $ref files, which are not supported yet. Import a bundled single-file spec (or inline those path items) and retry.`;
+    }
+
+    if (skippedExternalPathRefs > 0 && skippedUnsupportedPaths > 0) {
+        return `No importable operations were found. Skipped ${skippedExternalPathRefs} external-ref path(s) and ${skippedUnsupportedPaths} additional path(s) without supported operations. Supported methods: ${supportedMethods}.`;
+    }
+
+    if (skippedExternalPathRefs > 0) {
+        return `No importable operations were found. Skipped ${skippedExternalPathRefs} path(s) using external $ref files. Supported methods: ${supportedMethods}.`;
+    }
+
+    return `No supported HTTP operations were found in paths. Supported methods: ${supportedMethods}.`;
+}
+
+function summarizeOpenApiImportFailure(error: unknown): string {
+    const raw = errorMessage(error).trim();
+    if (!raw) {
+        return "Unknown OpenAPI import error.";
+    }
+
+    if (/unsupported openapi version/i.test(raw)) {
+        return "Unsupported OpenAPI version. Supported versions are OpenAPI 3.0.x and 3.1.x.";
+    }
+    if (/unsupported swagger version/i.test(raw)) {
+        return "Unsupported Swagger version. Supported version is Swagger 2.0.";
+    }
+    if (/missing 'openapi' or 'swagger' field/i.test(raw)) {
+        return "Missing 'openapi' or 'swagger' field in the specification.";
+    }
+    if (/could not parse file as json or yaml/i.test(raw)) {
+        return "Invalid JSON/YAML syntax. Please validate the file and retry.";
+    }
+    if (/no supported operations were found/i.test(raw)) {
+        return raw.includes("Supported methods:")
+            ? raw
+            : `${raw} Supported methods: ${OPENAPI_SUPPORTED_METHODS.join(", ")}.`;
+    }
+    if (/no importable operations were found/i.test(raw)) {
+        return raw;
+    }
+
+    return raw.length > 260 ? `${raw.slice(0, 257)}...` : raw;
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
@@ -631,12 +690,16 @@ export default function App() {
     const [curlImportCommand, setCurlImportCommand] = useState("");
     const [curlImportBusy, setCurlImportBusy] = useState(false);
     const [curlImportError, setCurlImportError] = useState("");
+    const [openApiImportModal, setOpenApiImportModal] = useState<OpenApiImportModal | null>(null);
+    const [openApiImportBusy, setOpenApiImportBusy] = useState(false);
+    const [openApiImportError, setOpenApiImportError] = useState("");
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
     const postmanImportInputRef = useRef<HTMLInputElement | null>(null);
     const portableImportInputRef = useRef<HTMLInputElement | null>(null);
+    const openApiImportInputRef = useRef<HTMLInputElement | null>(null);
     const curlImportTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
@@ -715,6 +778,9 @@ export default function App() {
         setCurlImportCommand("");
         setCurlImportBusy(false);
         setCurlImportError("");
+        setOpenApiImportModal(null);
+        setOpenApiImportBusy(false);
+        setOpenApiImportError("");
         setDeleteEnvironmentModal(null);
         setDraftsById({});
         setCloseDraftModal(null);
@@ -1529,11 +1595,15 @@ export default function App() {
             if (!closeDraftBusy) {
                 setCloseDraftModal(null);
             }
+            if (!openApiImportBusy) {
+                setOpenApiImportModal(null);
+                setOpenApiImportError("");
+            }
         }
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [renameBusy, createFolderBusy, moveNodeBusy, envBusy, collectionBusy, closeDraftBusy]);
+    }, [renameBusy, createFolderBusy, moveNodeBusy, envBusy, collectionBusy, closeDraftBusy, openApiImportBusy]);
 
     useEffect(() => {
         if (!draggedRequestId && !draggedOpenTabRequestId) return;
@@ -3301,8 +3371,106 @@ export default function App() {
         postmanImportInputRef.current?.click();
     }
 
+    function openOpenApiImportPicker() {
+        openApiImportInputRef.current?.click();
+    }
+
     function openPortableImportPicker() {
         portableImportInputRef.current?.click();
+    }
+
+    async function onOpenApiImportFileSelected(event: ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+
+        try {
+            const fileText = await file.text();
+            const parsedSpec = parseOpenApiSpec(fileText);
+            const plan = mapOpenApiToBifrost(parsedSpec, file.name);
+            if (plan.requests.length === 0) {
+                throw new Error(explainNoSupportedOpenApiOperations(plan));
+            }
+
+            setOpenApiImportModal({
+                fileName: file.name,
+                plan,
+            });
+            setOpenApiImportError("");
+        } catch (error) {
+            console.error("OpenAPI import parse failed", error);
+            setOpenApiImportModal(null);
+            setOpenApiImportError("");
+            notifyError("Failed to import OpenAPI file");
+            notifyInfo(summarizeOpenApiImportFailure(error));
+        }
+    }
+
+    async function onConfirmImportOpenApiCollection() {
+        if (!openApiImportModal || openApiImportBusy) return;
+
+        setOpenApiImportBusy(true);
+        setOpenApiImportError("");
+        try {
+            const { plan } = openApiImportModal;
+            const createdCollection = await invoke<CollectionMeta>("create_collection", {
+                name: plan.collectionName,
+            });
+
+            const folderIdsByName = new Map<string, string>();
+            for (const generatedRequest of plan.requests) {
+                const folderName = generatedRequest.folderName?.trim() ?? "";
+                let parentFolderId: string | null = null;
+
+                if (folderName.length > 0) {
+                    const existingFolderId = folderIdsByName.get(folderName);
+                    if (existingFolderId) {
+                        parentFolderId = existingFolderId;
+                    } else {
+                        const folderId = await invoke<string>("create_folder", {
+                            collectionId: createdCollection.id,
+                            parentFolderId: null,
+                            name: folderName,
+                        });
+                        folderIdsByName.set(folderName, folderId);
+                        parentFolderId = folderId;
+                    }
+                }
+
+                await invoke("create_request", {
+                    collectionId: createdCollection.id,
+                    request: generatedRequest.request,
+                    parentFolderId,
+                });
+            }
+
+            await invoke("set_active_collection", {
+                collectionId: createdCollection.id,
+            });
+            await reloadCollectionsAndRestoreActive(createdCollection.id);
+
+            const firstRequestId = plan.requests[0]?.request.id ?? null;
+            if (firstRequestId) {
+                setSelectedRequestId(firstRequestId);
+            }
+
+            setOpenApiImportModal(null);
+            setOpenApiImportError("");
+            notifySuccess("Imported OpenAPI collection");
+            if (plan.stats.skippedExternalPathRefs > 0) {
+                notifyInfo(
+                    `Imported ${plan.stats.importedOperations} requests. Skipped ${plan.stats.skippedExternalPathRefs} paths using external refs.`
+                );
+            } else if (plan.warnings.length > 0) {
+                notifyInfo(`Imported with ${plan.warnings.length} warning(s)`);
+            }
+        } catch (error) {
+            console.error("OpenAPI import failed", error);
+            setOpenApiImportError(errorMessage(error));
+            notifyError("Failed to import OpenAPI file");
+        } finally {
+            setOpenApiImportBusy(false);
+        }
     }
 
     async function onPostmanImportFileSelected(event: ChangeEvent<HTMLInputElement>) {
@@ -3679,6 +3847,7 @@ export default function App() {
                 onOpenRawJson={() => setTab("json")}
                 onOpenCollectionRunner={() => setRunnerModalOpen(true)}
                 onImportCurl={openCurlImportModal}
+                onImportOpenApi={openOpenApiImportPicker}
                 onImportPostman={openPostmanImportPicker}
                 onImportPortable={openPortableImportPicker}
                 onExportPortable={() => void onExportPortableCollection()}
@@ -3687,6 +3856,13 @@ export default function App() {
                 canOpenCollectionRunner={!!current}
                 canExportCollection={!!current}
                 isCollectionRunning={collectionRunPending}
+            />
+            <input
+                ref={openApiImportInputRef}
+                type="file"
+                accept=".json,.yaml,.yml,application/json,text/yaml,application/yaml"
+                style={{ display: "none" }}
+                onChange={(event) => void onOpenApiImportFileSelected(event)}
             />
             <input
                 ref={postmanImportInputRef}
@@ -5247,6 +5423,23 @@ export default function App() {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {openApiImportModal && (
+                <OpenApiImportDialog
+                    fileName={openApiImportModal.fileName}
+                    collectionName={openApiImportModal.plan.collectionName}
+                    preview={openApiImportModal.plan.preview}
+                    warnings={openApiImportModal.plan.warnings}
+                    error={openApiImportError}
+                    busy={openApiImportBusy}
+                    onCancel={() => {
+                        if (openApiImportBusy) return;
+                        setOpenApiImportModal(null);
+                        setOpenApiImportError("");
+                    }}
+                    onConfirm={() => void onConfirmImportOpenApiCollection()}
+                />
             )}
 
             {curlImportModal && (
