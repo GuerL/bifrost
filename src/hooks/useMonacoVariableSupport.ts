@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { BeforeMount } from "@monaco-editor/react";
 import type * as MonacoApi from "monaco-editor";
+import { sanitizeJsonForValidation } from "../helpers/jsonValidationSanitizer.ts";
 
 const TEMPLATE_VARIABLE_PATTERN = /{{\s*([^{}]+?)\s*}}/g;
 const BODY_MODEL_PATH_SEGMENT = "/bifrost-body/";
 const SCRIPT_MODEL_PATH_SEGMENT = "/bifrost-script/";
+const MONACO_JSON_VALIDATION_OWNER = "json";
+const BIFROST_JSON_VALIDATION_OWNER = "bifrost-json-validation";
 
 type TemplateVariableMatch = {
     name: string;
@@ -100,12 +103,44 @@ function truncateForHover(value: string, maxLen = 180): string {
     return `${normalized.slice(0, maxLen)}…`;
 }
 
+function markerDataSignature(markers: MonacoApi.editor.IMarkerData[]): string {
+    return markers
+        .map((marker) =>
+            [
+                marker.startLineNumber,
+                marker.startColumn,
+                marker.endLineNumber,
+                marker.endColumn,
+                marker.severity,
+                marker.code ? String(marker.code) : "",
+                marker.message,
+            ].join("|")
+        )
+        .join("||");
+}
+
+function toMarkerData(markers: MonacoApi.editor.IMarker[]): MonacoApi.editor.IMarkerData[] {
+    return markers.map((marker) => ({
+        startLineNumber: marker.startLineNumber,
+        startColumn: marker.startColumn,
+        endLineNumber: marker.endLineNumber,
+        endColumn: marker.endColumn,
+        message: marker.message,
+        code: marker.code,
+        severity: marker.severity,
+        source: marker.source,
+        tags: marker.tags,
+        relatedInformation: marker.relatedInformation,
+    }));
+}
+
 export function useMonacoVariableSupport({
     variableSuggestions,
     variableValues,
     resolvedTheme,
 }: UseMonacoVariableSupportArgs): UseMonacoVariableSupportResult {
     const monacoProvidersRef = useRef<MonacoApi.IDisposable[]>([]);
+    const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
     const monacoFeaturesRegisteredRef = useRef(false);
     const variableSuggestionsRef = useRef<string[]>([]);
     const variableValuesRef = useRef<Map<string, string>>(new Map());
@@ -115,6 +150,12 @@ export function useMonacoVariableSupport({
     const bodyRawDecorationsRef = useRef<string[]>([]);
     const bodyJsonContentListenerRef = useRef<MonacoApi.IDisposable | null>(null);
     const bodyRawContentListenerRef = useRef<MonacoApi.IDisposable | null>(null);
+    const bodyJsonEditorDisposeListenerRef = useRef<MonacoApi.IDisposable | null>(null);
+    const bodyJsonValidationMirrorModelRef = useRef<MonacoApi.editor.ITextModel | null>(null);
+    const bodyJsonValidatedModelRef = useRef<MonacoApi.editor.ITextModel | null>(null);
+    const bodyJsonValidationModelListenerRef = useRef<MonacoApi.IDisposable | null>(null);
+    const bodyJsonValidationMarkersListenerRef = useRef<MonacoApi.IDisposable | null>(null);
+    const bodyJsonValidationMarkersSignatureRef = useRef("");
 
     const getVariableValueForDisplay = useCallback((name: string): string | undefined => {
         const direct = variableValuesRef.current.get(name);
@@ -166,16 +207,123 @@ export function useMonacoVariableSupport({
         [getVariableValueForDisplay]
     );
 
+    const disposeBodyJsonValidationBridge = useCallback(() => {
+        const monaco = monacoRef.current;
+        const validatedModel = bodyJsonValidatedModelRef.current;
+
+        bodyJsonValidationModelListenerRef.current?.dispose();
+        bodyJsonValidationModelListenerRef.current = null;
+        bodyJsonValidationMarkersListenerRef.current?.dispose();
+        bodyJsonValidationMarkersListenerRef.current = null;
+
+        if (monaco && validatedModel) {
+            monaco.editor.setModelMarkers(validatedModel, BIFROST_JSON_VALIDATION_OWNER, []);
+            monaco.editor.setModelMarkers(validatedModel, MONACO_JSON_VALIDATION_OWNER, []);
+        }
+
+        bodyJsonValidationMirrorModelRef.current?.dispose();
+        bodyJsonValidationMirrorModelRef.current = null;
+        bodyJsonValidatedModelRef.current = null;
+        bodyJsonValidationMarkersSignatureRef.current = "";
+    }, []);
+
+    const syncBodyJsonValidationMarkers = useCallback(() => {
+        const monaco = monacoRef.current;
+        const bodyModel = bodyJsonValidatedModelRef.current;
+        const mirrorModel = bodyJsonValidationMirrorModelRef.current;
+        if (!monaco || !bodyModel || !mirrorModel) return;
+
+        const mirrorMarkers = monaco.editor.getModelMarkers({
+            resource: mirrorModel.uri,
+            owner: MONACO_JSON_VALIDATION_OWNER,
+        });
+        const nextMarkers = toMarkerData(mirrorMarkers);
+        const nextSignature = markerDataSignature(nextMarkers);
+
+        if (nextSignature !== bodyJsonValidationMarkersSignatureRef.current) {
+            bodyJsonValidationMarkersSignatureRef.current = nextSignature;
+            monaco.editor.setModelMarkers(bodyModel, BIFROST_JSON_VALIDATION_OWNER, nextMarkers);
+        }
+
+        const bodyMonacoJsonMarkers = monaco.editor.getModelMarkers({
+            resource: bodyModel.uri,
+            owner: MONACO_JSON_VALIDATION_OWNER,
+        });
+        if (bodyMonacoJsonMarkers.length > 0) {
+            monaco.editor.setModelMarkers(bodyModel, MONACO_JSON_VALIDATION_OWNER, []);
+        }
+    }, []);
+
+    const bindBodyJsonValidationBridge = useCallback(
+        (editor: MonacoApi.editor.IStandaloneCodeEditor) => {
+            disposeBodyJsonValidationBridge();
+
+            const monaco = monacoRef.current;
+            const model = editor.getModel();
+            if (!monaco || !model || !isBodyMonacoModel(model) || model.getLanguageId() !== "json") {
+                return;
+            }
+
+            bodyJsonValidatedModelRef.current = model;
+
+            const mirrorUri = monaco.Uri.parse(`inmemory://bifrost-json-validation${model.uri.path}`);
+            const existingMirrorModel = monaco.editor.getModel(mirrorUri);
+            if (existingMirrorModel) {
+                existingMirrorModel.dispose();
+            }
+
+            const mirrorModel = monaco.editor.createModel(
+                sanitizeJsonForValidation(model.getValue()),
+                "json",
+                mirrorUri
+            );
+            bodyJsonValidationMirrorModelRef.current = mirrorModel;
+
+            bodyJsonValidationModelListenerRef.current = model.onDidChangeContent(() => {
+                const currentMirrorModel = bodyJsonValidationMirrorModelRef.current;
+                if (!currentMirrorModel) return;
+                currentMirrorModel.setValue(sanitizeJsonForValidation(model.getValue()));
+                syncBodyJsonValidationMarkers();
+            });
+
+            const bodyUri = model.uri.toString();
+            const mirrorUriString = mirrorModel.uri.toString();
+            bodyJsonValidationMarkersListenerRef.current = monaco.editor.onDidChangeMarkers(
+                (resources) => {
+                    if (!resources.some((resource) => {
+                        const value = resource.toString();
+                        return value === bodyUri || value === mirrorUriString;
+                    })) {
+                        return;
+                    }
+                    syncBodyJsonValidationMarkers();
+                }
+            );
+
+            syncBodyJsonValidationMarkers();
+        },
+        [disposeBodyJsonValidationBridge, syncBodyJsonValidationMarkers]
+    );
+
     const bindBodyJsonEditor = useCallback(
         (editor: MonacoApi.editor.IStandaloneCodeEditor) => {
             bodyJsonEditorRef.current = editor;
+            bodyJsonEditorDisposeListenerRef.current?.dispose();
+            bodyJsonEditorDisposeListenerRef.current = editor.onDidDispose(() => {
+                if (bodyJsonEditorRef.current === editor) {
+                    bodyJsonEditorRef.current = null;
+                }
+                disposeBodyJsonValidationBridge();
+            });
+
             bodyJsonContentListenerRef.current?.dispose();
             bodyJsonContentListenerRef.current = editor.onDidChangeModelContent(() => {
                 refreshEditorVariableDecorations(editor, bodyJsonDecorationsRef);
             });
             refreshEditorVariableDecorations(editor, bodyJsonDecorationsRef);
+            bindBodyJsonValidationBridge(editor);
         },
-        [refreshEditorVariableDecorations]
+        [bindBodyJsonValidationBridge, disposeBodyJsonValidationBridge, refreshEditorVariableDecorations]
     );
 
     const bindBodyRawEditor = useCallback(
@@ -191,6 +339,8 @@ export function useMonacoVariableSupport({
     );
 
     const beforeMountMonaco = useCallback<BeforeMount>((monaco) => {
+        monacoRef.current = monaco;
+
         monaco.editor.defineTheme("bifrost-midnight", {
             base: "vs-dark",
             inherit: true,
@@ -484,8 +634,11 @@ declare const pg: BifrostScriptingApi;`;
             monacoProvidersRef.current = [];
             bodyJsonContentListenerRef.current?.dispose();
             bodyRawContentListenerRef.current?.dispose();
+            bodyJsonEditorDisposeListenerRef.current?.dispose();
+            disposeBodyJsonValidationBridge();
+            monacoRef.current = null;
         };
-    }, []);
+    }, [disposeBodyJsonValidationBridge]);
 
     return {
         beforeMountMonaco,
