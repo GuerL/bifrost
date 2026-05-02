@@ -71,6 +71,14 @@ import {
     type ScriptEnvironmentMutation,
     type ScriptTestResult,
 } from "./helpers/RequestScriptsRuntime.ts";
+import {
+    decidePgToBfPrompt,
+    findLegacyPgScriptLocations,
+    listRequestScriptFields,
+    migrateRequestScriptsFromPgToBf,
+    readPgToBfPromptedFlag,
+    writePgToBfPromptedFlag,
+} from "./helpers/ScriptingPrefixMigration.ts";
 import type {
     RunnerExecutionResult,
     RunnerIterationMode,
@@ -185,6 +193,11 @@ type UpdateDownloadModal = {
     version: string;
 };
 
+type PgToBfMigrationModal = {
+    legacyRequestCount: number;
+    legacyScriptCount: number;
+};
+
 type PersistedTabsEntry = {
     openRequestIds: string[];
     activeRequestId: string | null;
@@ -257,6 +270,7 @@ const REQUEST_API_KEY_LOCATION_OPTIONS = [
     { value: "query", label: "Query" },
 ];
 const OPENAPI_SUPPORTED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
+const PG_TO_BF_DEBUG_PREFIX = "[pg->bf migration]";
 
 function areExpandedFoldersEqual(
     left: Record<string, boolean>,
@@ -680,6 +694,8 @@ export default function App() {
     const [updateDownloadBusy, setUpdateDownloadBusy] = useState(false);
     const [updateRestartModal, setUpdateRestartModal] = useState<UpdateRestartModal | null>(null);
     const [updateRestartBusy, setUpdateRestartBusy] = useState(false);
+    const [pgToBfMigrationModal, setPgToBfMigrationModal] = useState<PgToBfMigrationModal | null>(null);
+    const [pgToBfMigrationBusy, setPgToBfMigrationBusy] = useState(false);
     const [deleteFolderModal, setDeleteFolderModal] = useState<DeleteFolderModal | null>(null);
     const [deleteFolderBusy, setDeleteFolderBusy] = useState(false);
     const [deleteRequestModal, setDeleteRequestModal] = useState<DeleteRequestModal | null>(null);
@@ -711,6 +727,7 @@ export default function App() {
     const hydratedRunnerCollectionIdRef = useRef<string | null>(null);
     const hydratedRunnerSelectionCollectionIdRef = useRef<string | null>(null);
     const noCollectionsModalShownRef = useRef(false);
+    const pgToBfMigrationCheckStartedRef = useRef(false);
     const runnerSelectedRequestsStateRef = useRef<RunnerSelectedRequestsState>(
         loadRunnerSelectedRequests()
     );
@@ -822,6 +839,218 @@ export default function App() {
             );
         } catch (e) {
             notifyError(`Failed to load collections: ${errorMessage(e)}`);
+        }
+    }
+
+    function debugPgToBfMigration(message: string, details?: unknown) {
+        if (!import.meta.env.DEV) return;
+        if (details === undefined) {
+            console.info(`${PG_TO_BF_DEBUG_PREFIX} ${message}`);
+            return;
+        }
+        console.info(`${PG_TO_BF_DEBUG_PREFIX} ${message}`, details);
+    }
+
+    async function maybePromptPgToBfMigration(options?: { force?: boolean; source?: string }) {
+        const force = options?.force === true;
+        const source = options?.source ?? "startup";
+        const promptedFlag = readPgToBfPromptedFlag();
+
+        debugPgToBfMigration(`scan requested`, {
+            source,
+            force,
+            promptedFlag,
+            alreadyStarted: pgToBfMigrationCheckStartedRef.current,
+        });
+
+        if (!force && pgToBfMigrationCheckStartedRef.current) {
+            debugPgToBfMigration(`scan skipped`, {
+                source,
+                reason: "scan_already_started",
+            });
+            return;
+        }
+
+        pgToBfMigrationCheckStartedRef.current = true;
+
+        const requestCountByCollection: Record<string, number> = {};
+        const scriptFieldsChecked = new Set<string>();
+        let collectionsListed = 0;
+        let collectionsLoaded = 0;
+        let requestsScanned = 0;
+        let scriptsScanned = 0;
+        let legacyScriptCount = 0;
+        const legacyRequestIds = new Set<string>();
+
+        try {
+            const list = await invoke<CollectionMeta[]>("list_collections");
+            collectionsListed = list.length;
+            debugPgToBfMigration(`collections listed`, {
+                source,
+                collectionsListed,
+                collectionIds: list.map((entry) => entry.id),
+            });
+
+            for (const collectionMeta of list) {
+                try {
+                    const collection = await invoke<CollectionLoaded>("load_collection", {
+                        id: collectionMeta.id,
+                    });
+                    collectionsLoaded += 1;
+                    requestCountByCollection[collectionMeta.id] = collection.requests.length;
+                    requestsScanned += collection.requests.length;
+
+                    for (const request of collection.requests) {
+                        const fields = listRequestScriptFields(request);
+                        for (const field of fields) {
+                            scriptFieldsChecked.add(field);
+                            scriptsScanned += 1;
+                        }
+                    }
+
+                    const locations = findLegacyPgScriptLocations(collection.requests);
+                    if (locations.length === 0) continue;
+                    legacyScriptCount += locations.length;
+                    for (const location of locations) {
+                        legacyRequestIds.add(`${collectionMeta.id}:${location.requestId}`);
+                    }
+
+                    debugPgToBfMigration(`legacy scripts detected in collection`, {
+                        source,
+                        collectionId: collectionMeta.id,
+                        legacyScriptCountInCollection: locations.length,
+                        locations,
+                    });
+                } catch (error) {
+                    debugPgToBfMigration(`collection scan failed`, {
+                        source,
+                        collectionId: collectionMeta.id,
+                        error: errorMessage(error),
+                    });
+                }
+            }
+
+            const promptDecision = decidePgToBfPrompt({
+                promptedFlag,
+                legacyScriptCount,
+            });
+
+            debugPgToBfMigration(`scan completed`, {
+                source,
+                collectionsListed,
+                collectionsLoaded,
+                requestCountByCollection,
+                requestsScanned,
+                scriptsScanned,
+                scriptFieldsChecked: Array.from(scriptFieldsChecked).sort(),
+                legacyScriptCount,
+                legacyRequestCount: legacyRequestIds.size,
+                promptDecision,
+            });
+
+            if (promptDecision.shouldShowPrompt) {
+                setPgToBfMigrationModal({
+                    legacyRequestCount: legacyRequestIds.size,
+                    legacyScriptCount,
+                });
+                debugPgToBfMigration(`modal shown`, {
+                    source,
+                    legacyScriptCount,
+                    legacyRequestCount: legacyRequestIds.size,
+                });
+                return;
+            }
+
+            debugPgToBfMigration(`modal not shown`, {
+                source,
+                reason: promptDecision.reason,
+            });
+        } catch (error) {
+            debugPgToBfMigration(`scan failed`, {
+                source,
+                error: errorMessage(error),
+            });
+        }
+    }
+
+    async function migrateLegacyPgScriptsToBf() {
+        const list = await invoke<CollectionMeta[]>("list_collections");
+        const rollbackQueue: Array<{ collectionId: string; request: Request }> = [];
+        let migratedScriptCount = 0;
+
+        try {
+            for (const collectionMeta of list) {
+                const collection = await invoke<CollectionLoaded>("load_collection", {
+                    id: collectionMeta.id,
+                });
+
+                for (const request of collection.requests) {
+                    const migrated = migrateRequestScriptsFromPgToBf(request);
+                    if (!migrated.changed) continue;
+
+                    const legacyLocationsForRequest = findLegacyPgScriptLocations([request]);
+                    migratedScriptCount += legacyLocationsForRequest.length;
+
+                    await invoke("update_request", {
+                        collectionId: collectionMeta.id,
+                        request: migrated.request,
+                    });
+
+                    rollbackQueue.push({
+                        collectionId: collectionMeta.id,
+                        request,
+                    });
+                }
+            }
+        } catch (error) {
+            for (let index = rollbackQueue.length - 1; index >= 0; index -= 1) {
+                const entry = rollbackQueue[index];
+                try {
+                    await invoke("update_request", {
+                        collectionId: entry.collectionId,
+                        request: entry.request,
+                    });
+                } catch {
+                    // best-effort rollback only
+                }
+            }
+
+            throw error;
+        }
+
+        return migratedScriptCount;
+    }
+
+    function onKeepPgForNow() {
+        debugPgToBfMigration(`user action`, { action: "keep_pg_for_now", setPromptedFlag: true });
+        writePgToBfPromptedFlag(true);
+        setPgToBfMigrationModal(null);
+    }
+
+    async function onConfirmMigratePgToBf() {
+        if (pgToBfMigrationBusy) return;
+        setPgToBfMigrationBusy(true);
+
+        try {
+            await migrateLegacyPgScriptsToBf();
+            debugPgToBfMigration(`user action`, { action: "migrate_to_bf", setPromptedFlag: true });
+            writePgToBfPromptedFlag(true);
+            setPgToBfMigrationModal(null);
+            notifySuccess("Scripts migrated to bf");
+
+            if (current) {
+                await loadCollection(
+                    current.meta.id,
+                    selectedRequestId,
+                    setCurrent,
+                    setSelectedRequestId,
+                    setResp
+                );
+            }
+        } catch (error) {
+            notifyError(`Failed to migrate scripts: ${errorMessage(error)}`);
+        } finally {
+            setPgToBfMigrationBusy(false);
         }
     }
 
@@ -1134,6 +1363,55 @@ export default function App() {
         };
     }, []);
 
+    useEffect(() => {
+        if (!current) return;
+        if (pgToBfMigrationModal) {
+            debugPgToBfMigration(`current-collection fallback skipped`, {
+                reason: "modal_already_open",
+                collectionId: current.meta.id,
+            });
+            return;
+        }
+
+        const promptedFlag = readPgToBfPromptedFlag();
+        const locations = findLegacyPgScriptLocations(current.requests);
+        const legacyRequestIds = new Set(locations.map((entry) => entry.requestId));
+        const scriptFieldsChecked = new Set<string>();
+        for (const request of current.requests) {
+            for (const field of listRequestScriptFields(request)) {
+                scriptFieldsChecked.add(field);
+            }
+        }
+        const promptDecision = decidePgToBfPrompt({
+            promptedFlag,
+            legacyScriptCount: locations.length,
+        });
+
+        debugPgToBfMigration(`current-collection fallback evaluated`, {
+            collectionId: current.meta.id,
+            promptedFlag,
+            requestsScanned: current.requests.length,
+            scriptFieldsChecked: Array.from(scriptFieldsChecked).sort(),
+            legacyScriptCount: locations.length,
+            legacyRequestCount: legacyRequestIds.size,
+            locations,
+            promptDecision,
+        });
+
+        if (!promptDecision.shouldShowPrompt) return;
+
+        setPgToBfMigrationModal({
+            legacyRequestCount: legacyRequestIds.size,
+            legacyScriptCount: locations.length,
+        });
+        debugPgToBfMigration(`modal shown`, {
+            source: "current_collection_fallback",
+            collectionId: current.meta.id,
+            legacyScriptCount: locations.length,
+            legacyRequestCount: legacyRequestIds.size,
+        });
+    }, [current?.meta.id, current?.requests, pgToBfMigrationModal]);
+
     async function onConfirmDownloadAndInstallUpdate() {
         setUpdateDownloadBusy(true);
 
@@ -1166,11 +1444,52 @@ export default function App() {
     }
 
     useEffect(() => {
+        let cancelled = false;
+
         (async () => {
             await reloadCollectionsAndRestoreActive();
             await reloadEnvironments();
+            if (!cancelled) {
+                await maybePromptPgToBfMigration({ source: "startup" });
+            }
         })();
+
+        return () => {
+            cancelled = true;
+        };
     }, []);
+
+    useEffect(() => {
+        if (!import.meta.env.DEV) return;
+        if (typeof window === "undefined") return;
+
+        const globalWindow = window as unknown as Record<string, unknown>;
+
+        const debugApi = {
+            runScan: async () => {
+                await maybePromptPgToBfMigration({ force: true, source: "manual_debug_trigger" });
+            },
+            clearPromptFlag: () => {
+                writePgToBfPromptedFlag(false);
+                debugPgToBfMigration(`manual debug`, {
+                    action: "clear_prompt_flag",
+                    key: "bifrost.migrations.pgToBfPrompted",
+                });
+            },
+            getPromptFlag: () => readPgToBfPromptedFlag(),
+        };
+
+        globalWindow.__bifrostPgToBfMigrationDebug = debugApi;
+        debugPgToBfMigration(`debug helper installed`, {
+            global: "window.__bifrostPgToBfMigrationDebug",
+            methods: Object.keys(debugApi),
+        });
+
+        return () => {
+            delete globalWindow.__bifrostPgToBfMigrationDebug;
+        };
+    }, []);
+
     useEffect(() => {
         if (!current) return;
         (async () => {
@@ -5419,6 +5738,64 @@ export default function App() {
                                 style={primaryButtonStyle(updateRestartBusy)}
                             >
                                 {updateRestartBusy ? "Restarting..." : "Restart now"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {pgToBfMigrationModal && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1380,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                >
+                    <div
+                        onMouseDown={(event) => event.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 520,
+                            border: "1px solid var(--pg-border)",
+                            borderRadius: 12,
+                            background: "var(--pg-surface-1)",
+                            padding: 16,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <h3 style={{ margin: 0 }}>Update scripting API?</h3>
+                        <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.5 }}>
+                            Bifrost now uses `bf` as the scripting API prefix. Your existing `pg`
+                            scripts will continue to work, but you can update them to `bf` now.
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                            Legacy usage detected in {pgToBfMigrationModal.legacyScriptCount} script
+                            {pgToBfMigrationModal.legacyScriptCount === 1 ? "" : "s"} across{" "}
+                            {pgToBfMigrationModal.legacyRequestCount} request
+                            {pgToBfMigrationModal.legacyRequestCount === 1 ? "" : "s"}.
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <button
+                                onClick={() => onKeepPgForNow()}
+                                disabled={pgToBfMigrationBusy}
+                                style={buttonStyle(pgToBfMigrationBusy)}
+                            >
+                                Keep pg for now
+                            </button>
+                            <button
+                                onClick={() => void onConfirmMigratePgToBf()}
+                                disabled={pgToBfMigrationBusy}
+                                style={primaryButtonStyle(pgToBfMigrationBusy)}
+                            >
+                                {pgToBfMigrationBusy ? "Migrating..." : "Migrate to bf"}
                             </button>
                         </div>
                     </div>

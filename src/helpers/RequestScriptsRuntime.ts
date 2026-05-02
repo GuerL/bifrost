@@ -114,10 +114,10 @@ function createResponseApi(response: HttpResponseDto | null) {
             headers: createHeadersApi([]),
             body: "",
             text: () => {
-                throw noResponseError("pg.response.text()");
+                throw noResponseError("bf.response.text()");
             },
             json: () => {
-                throw noResponseError("pg.response.json()");
+                throw noResponseError("bf.response.json()");
             },
         };
     }
@@ -139,7 +139,7 @@ function createResponseApi(response: HttpResponseDto | null) {
                 jsonParsed = true;
                 return cachedJson;
             } catch {
-                throw new Error("pg.response.json(): response body is not valid JSON");
+                throw new Error("bf.response.json(): response body is not valid JSON");
             }
         },
     };
@@ -213,7 +213,7 @@ function runScript({
         toObject: () => ({ ...runtime }),
     };
 
-    const pg = {
+    const scriptingApi = {
         environment: environmentApi,
         collectionVariables: collectionVariablesApi,
         globals: collectionVariablesApi,
@@ -235,13 +235,16 @@ function runScript({
         },
     };
 
+    const bf = scriptingApi;
+    const pg = scriptingApi;
+
     const normalizedScript = script
         .replace(/[“”]/g, "\"")
         .replace(/[‘’]/g, "'");
 
     try {
-        const fn = new Function("pg", `"use strict";\n${normalizedScript}`);
-        fn(pg);
+        const fn = new Function("bf", "pg", `"use strict";\n${normalizedScript}`);
+        fn(bf, pg);
         return {
             request: mutableRequest,
             runtimeVariables: runtime,
