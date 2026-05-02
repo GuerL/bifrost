@@ -28,8 +28,8 @@ export default function RequestScriptsEditor({
     return (
         <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
             <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
-                Available APIs: <code>pg.environment.get/set/unset</code>, <code>pg.request</code>,{" "}
-                <code>pg.response</code>.
+                Available APIs: <code>bf.environment.get/set/unset</code>, <code>bf.request</code>,{" "}
+                <code>bf.response</code> (<code>pg</code> is still supported).
             </div>
             <div style={{ display: "flex", gap: 12, minHeight: 0 }}>
                 <div
@@ -64,8 +64,8 @@ export default function RequestScriptsEditor({
                                 fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
                             }}
                         >
-                            {`const response = pg.response?.json();
-pg.environment.set("accessToken", response?.token ?? "");`}
+                            {`const response = bf.response?.json();
+bf.environment.set("accessToken", response?.token ?? "");`}
                         </pre>
                     </div>
                 </div>

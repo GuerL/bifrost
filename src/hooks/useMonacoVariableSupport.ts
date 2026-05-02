@@ -250,7 +250,7 @@ export function useMonacoVariableSupport({
         monacoFeaturesRegisteredRef.current = true;
 
         const scriptApiDts = `
-declare const pg: {
+type BifrostScriptingApi = {
   environment: {
     get(name: string): string | undefined;
     set(name: string, value: unknown): void;
@@ -289,14 +289,16 @@ declare const pg: {
     toBeTruthy(): void;
     toBeFalsy(): void;
   };
-};`;
+};
+declare const bf: BifrostScriptingApi;
+declare const pg: BifrostScriptingApi;`;
         monaco.languages.typescript.javascriptDefaults.addExtraLib(
             scriptApiDts,
-            "file:///bifrost/pg-scripting.d.ts"
+            "file:///bifrost/scripting-api.d.ts"
         );
         monaco.languages.typescript.typescriptDefaults.addExtraLib(
             scriptApiDts,
-            "file:///bifrost/pg-scripting.d.ts"
+            "file:///bifrost/scripting-api.d.ts"
         );
 
         const languagesWithTemplateSupport = [
@@ -321,11 +323,15 @@ declare const pg: {
                         return { suggestions: [] };
                     }
 
-                    const suggestions = variableSuggestionsRef.current;
-                    if (!suggestions.length) return { suggestions: [] };
-
                     if (isScriptMonacoModel(model)) {
                         const jsSuggestions = [
+                            "bf.response.json()",
+                            "bf.response.text()",
+                            "bf.response.headers.get(\"Authorization\")",
+                            "bf.environment.get(\"key\")",
+                            "bf.environment.set(\"key\", \"value\")",
+                            "bf.collectionVariables.set(\"foo\", \"bar\")",
+                            "bf.test(\"name\", () => {})",
                             "pg.response.json()",
                             "pg.response.text()",
                             "pg.response.headers.get(\"Authorization\")",
@@ -343,6 +349,9 @@ declare const pg: {
                             })),
                         };
                     }
+
+                    const suggestions = variableSuggestionsRef.current;
+                    if (!suggestions.length) return { suggestions: [] };
 
                     const text = model.getValue();
                     const offset = model.getOffsetAt(position);
