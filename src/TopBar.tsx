@@ -30,6 +30,7 @@ type TopBarProps = {
     onOpenRawJson: () => void;
     onOpenCollectionRunner: () => void;
     onImportCurl: () => void;
+    onImportBruno: () => void;
     onImportOpenApi: () => void;
     onImportPostman: () => void;
     onImportPortable: () => void;
@@ -54,6 +55,7 @@ export default function TopBar({
     onOpenRawJson,
     onOpenCollectionRunner,
     onImportCurl,
+    onImportBruno,
     onImportOpenApi,
     onImportPostman,
     onImportPortable,
@@ -130,10 +132,14 @@ export default function TopBar({
         }
     }
 
-    function runTransferAction(action: "importCurl" | "importOpenApi" | "importPostman" | "importPortable" | "exportPortable") {
+    function runTransferAction(action: "importCurl" | "importBruno" | "importOpenApi" | "importPostman" | "importPortable" | "exportPortable") {
         setIsTransferMenuOpen(false);
         if (action === "importCurl") {
             onImportCurl();
+            return;
+        }
+        if (action === "importBruno") {
+            onImportBruno();
             return;
         }
         if (action === "importOpenApi") {
@@ -418,6 +424,14 @@ export default function TopBar({
                                 style={transferMenuItemStyle()}
                             >
                                 Import from cURL
+                            </button>
+                            <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => runTransferAction("importBruno")}
+                                style={transferMenuItemStyle()}
+                            >
+                                Import Bruno
                             </button>
                             <button
                                 type="button"

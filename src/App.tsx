@@ -113,6 +113,10 @@ import OpenApiImportDialog from "./features/openapi-import/OpenApiImportDialog.t
 import { parseOpenApiSpec } from "./features/openapi-import/openApiParser.ts";
 import { mapOpenApiToBifrost } from "./features/openapi-import/openApiToBifrost.ts";
 import type { OpenApiImportPlan } from "./features/openapi-import/openApiTypes.ts";
+import BrunoImportDialog from "./features/bruno-import/BrunoImportDialog.tsx";
+import { parseBrunoYamlCollection } from "./features/bruno-import/brunoYamlParser.ts";
+import { mapBrunoToBifrost } from "./features/bruno-import/brunoToBifrost.ts";
+import type { BrunoImportPlan } from "./features/bruno-import/brunoTypes.ts";
 
 type SidebarContextMenu = {
     x: number;
@@ -183,6 +187,11 @@ type CurlImportModal = {
 type OpenApiImportModal = {
     fileName: string;
     plan: OpenApiImportPlan;
+};
+
+type BrunoImportModal = {
+    fileName: string;
+    plan: BrunoImportPlan;
 };
 
 type UpdateRestartModal = {
@@ -402,6 +411,25 @@ function summarizeOpenApiImportFailure(error: unknown): string {
             : `${raw} Supported methods: ${OPENAPI_SUPPORTED_METHODS.join(", ")}.`;
     }
     if (/no importable operations were found/i.test(raw)) {
+        return raw;
+    }
+
+    return raw.length > 260 ? `${raw.slice(0, 257)}...` : raw;
+}
+
+function summarizeBrunoImportFailure(error: unknown): string {
+    const raw = errorMessage(error).trim();
+    if (!raw) {
+        return "Unknown Bruno import error.";
+    }
+
+    if (/invalid yaml syntax/i.test(raw)) {
+        return "Invalid YAML syntax. Please validate the file and retry.";
+    }
+    if (/unsupported bruno\/opencollection shape/i.test(raw)) {
+        return raw;
+    }
+    if (/no importable http requests were found/i.test(raw)) {
         return raw;
     }
 
@@ -709,6 +737,9 @@ export default function App() {
     const [openApiImportModal, setOpenApiImportModal] = useState<OpenApiImportModal | null>(null);
     const [openApiImportBusy, setOpenApiImportBusy] = useState(false);
     const [openApiImportError, setOpenApiImportError] = useState("");
+    const [brunoImportModal, setBrunoImportModal] = useState<BrunoImportModal | null>(null);
+    const [brunoImportBusy, setBrunoImportBusy] = useState(false);
+    const [brunoImportError, setBrunoImportError] = useState("");
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
@@ -716,6 +747,7 @@ export default function App() {
     const postmanImportInputRef = useRef<HTMLInputElement | null>(null);
     const portableImportInputRef = useRef<HTMLInputElement | null>(null);
     const openApiImportInputRef = useRef<HTMLInputElement | null>(null);
+    const brunoImportInputRef = useRef<HTMLInputElement | null>(null);
     const curlImportTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
@@ -798,6 +830,9 @@ export default function App() {
         setOpenApiImportModal(null);
         setOpenApiImportBusy(false);
         setOpenApiImportError("");
+        setBrunoImportModal(null);
+        setBrunoImportBusy(false);
+        setBrunoImportError("");
         setDeleteEnvironmentModal(null);
         setDraftsById({});
         setCloseDraftModal(null);
@@ -3694,8 +3729,109 @@ export default function App() {
         openApiImportInputRef.current?.click();
     }
 
+    function openBrunoImportPicker() {
+        brunoImportInputRef.current?.click();
+    }
+
     function openPortableImportPicker() {
         portableImportInputRef.current?.click();
+    }
+
+    async function onBrunoImportFileSelected(event: ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+
+        try {
+            const fileText = await file.text();
+            const parsed = parseBrunoYamlCollection(fileText);
+            const plan = mapBrunoToBifrost(parsed, file.name);
+            setBrunoImportModal({
+                fileName: file.name,
+                plan,
+            });
+            setBrunoImportError("");
+        } catch (error) {
+            console.error("Bruno import parse failed", error);
+            setBrunoImportModal(null);
+            setBrunoImportError("");
+            notifyError("Failed to import Bruno collection");
+            notifyInfo(summarizeBrunoImportFailure(error));
+        }
+    }
+
+    async function onConfirmImportBrunoCollection() {
+        if (!brunoImportModal || brunoImportBusy) return;
+
+        setBrunoImportBusy(true);
+        setBrunoImportError("");
+        try {
+            const { plan } = brunoImportModal;
+            const createdCollection = await invoke<CollectionMeta>("create_collection", {
+                name: plan.collectionName,
+            });
+
+            const folderIdByPath = new Map<string, string>();
+            const ensureFolderPath = async (folderPath: string[]): Promise<string | null> => {
+                if (folderPath.length === 0) {
+                    return null;
+                }
+
+                let parentFolderId: string | null = null;
+                const pathSegments: string[] = [];
+                for (const segment of folderPath) {
+                    pathSegments.push(segment);
+                    const key = pathSegments.join("\u0000");
+                    const existing = folderIdByPath.get(key);
+                    if (existing) {
+                        parentFolderId = existing;
+                        continue;
+                    }
+
+                    const createdFolderId: string = await invoke("create_folder", {
+                        collectionId: createdCollection.id,
+                        parentFolderId,
+                        name: segment,
+                    });
+                    folderIdByPath.set(key, createdFolderId);
+                    parentFolderId = createdFolderId;
+                }
+
+                return parentFolderId;
+            };
+
+            for (const generatedRequest of plan.requests) {
+                const parentFolderId = await ensureFolderPath(generatedRequest.folderPath);
+                await invoke("create_request", {
+                    collectionId: createdCollection.id,
+                    request: generatedRequest.request,
+                    parentFolderId,
+                });
+            }
+
+            await invoke("set_active_collection", {
+                collectionId: createdCollection.id,
+            });
+            await reloadCollectionsAndRestoreActive(createdCollection.id);
+
+            const firstRequestId = plan.requests[0]?.request.id ?? null;
+            if (firstRequestId) {
+                setSelectedRequestId(firstRequestId);
+            }
+
+            setBrunoImportModal(null);
+            setBrunoImportError("");
+            notifySuccess("Imported Bruno collection");
+            if (plan.warnings.length > 0) {
+                notifyInfo(`Imported with ${plan.warnings.length} warning(s)`);
+            }
+        } catch (error) {
+            console.error("Bruno import failed", error);
+            setBrunoImportError(errorMessage(error));
+            notifyError("Failed to import Bruno collection");
+        } finally {
+            setBrunoImportBusy(false);
+        }
     }
 
     async function onOpenApiImportFileSelected(event: ChangeEvent<HTMLInputElement>) {
@@ -4166,6 +4302,7 @@ export default function App() {
                 onOpenRawJson={() => setTab("json")}
                 onOpenCollectionRunner={() => setRunnerModalOpen(true)}
                 onImportCurl={openCurlImportModal}
+                onImportBruno={openBrunoImportPicker}
                 onImportOpenApi={openOpenApiImportPicker}
                 onImportPostman={openPostmanImportPicker}
                 onImportPortable={openPortableImportPicker}
@@ -4175,6 +4312,13 @@ export default function App() {
                 canOpenCollectionRunner={!!current}
                 canExportCollection={!!current}
                 isCollectionRunning={collectionRunPending}
+            />
+            <input
+                ref={brunoImportInputRef}
+                type="file"
+                accept=".yaml,.yml,text/yaml,application/yaml,application/x-yaml"
+                style={{ display: "none" }}
+                onChange={(event) => void onBrunoImportFileSelected(event)}
             />
             <input
                 ref={openApiImportInputRef}
@@ -5816,6 +5960,23 @@ export default function App() {
                         setOpenApiImportError("");
                     }}
                     onConfirm={() => void onConfirmImportOpenApiCollection()}
+                />
+            )}
+
+            {brunoImportModal && (
+                <BrunoImportDialog
+                    fileName={brunoImportModal.fileName}
+                    collectionName={brunoImportModal.plan.collectionName}
+                    preview={brunoImportModal.plan.preview}
+                    warnings={brunoImportModal.plan.warnings}
+                    error={brunoImportError}
+                    busy={brunoImportBusy}
+                    onCancel={() => {
+                        if (brunoImportBusy) return;
+                        setBrunoImportModal(null);
+                        setBrunoImportError("");
+                    }}
+                    onConfirm={() => void onConfirmImportBrunoCollection()}
                 />
             )}
 
