@@ -2,6 +2,10 @@ import {
     createMultipartFileField,
     createMultipartTextField,
 } from "../../helpers/requestBodyUtils.ts";
+import {
+    migrateScriptApiPrefix,
+    scriptContainsApiPrefix,
+} from "../../helpers/ScriptingPrefixMigration.ts";
 import type { KeyValue, Request, RequestAuth } from "../../types.ts";
 import type {
     BrunoGeneratedRequest,
@@ -31,6 +35,14 @@ type ImportContext = {
     folderPath: string[];
     inheritedHeaders: KeyValue[];
     inheritedAuth: unknown | null;
+};
+
+type ScriptMappingResult = {
+    scripts: Request["scripts"];
+    importedAny: boolean;
+    convertedBruPrefix: boolean;
+    containsBruPrefix: boolean;
+    unknownTypesDetected: boolean;
 };
 
 function isObject(value: unknown): value is JsonObject {
@@ -577,6 +589,99 @@ function mapBody(
     return { type: "none" };
 }
 
+function mapRuntimeScripts(
+    runtimeInput: unknown,
+    location: string,
+    addWarning: (message: string) => void
+): ScriptMappingResult {
+    const preRequestParts: string[] = [];
+    const postResponseParts: string[] = [];
+    let importedAny = false;
+    let unknownTypesDetected = false;
+
+    if (!isObject(runtimeInput)) {
+        return {
+            scripts: { pre_request: "", post_response: "" },
+            importedAny,
+            convertedBruPrefix: false,
+            containsBruPrefix: false,
+            unknownTypesDetected,
+        };
+    }
+
+    const scriptsInput = runtimeInput.scripts;
+    if (scriptsInput === undefined || scriptsInput === null) {
+        return {
+            scripts: { pre_request: "", post_response: "" },
+            importedAny,
+            convertedBruPrefix: false,
+            containsBruPrefix: false,
+            unknownTypesDetected,
+        };
+    }
+
+    if (!Array.isArray(scriptsInput)) {
+        addWarning(`Ignored invalid scripts at ${location}. Expected an array.`);
+        return {
+            scripts: { pre_request: "", post_response: "" },
+            importedAny,
+            convertedBruPrefix: false,
+            containsBruPrefix: false,
+            unknownTypesDetected,
+        };
+    }
+
+    for (const [index, entry] of scriptsInput.entries()) {
+        if (!isObject(entry)) {
+            addWarning(`Ignored invalid script block at ${location}[${index}].`);
+            continue;
+        }
+
+        const code = asString(entry.code);
+        if (code === null || code.length === 0) {
+            continue;
+        }
+
+        importedAny = true;
+        const scriptType = asTrimmedString(entry.type)?.toLowerCase() ?? "";
+        if (scriptType === "before-request") {
+            preRequestParts.push(code);
+            continue;
+        }
+
+        if (scriptType === "after-response" || scriptType === "tests") {
+            postResponseParts.push(code);
+            continue;
+        }
+
+        unknownTypesDetected = true;
+        postResponseParts.push(code);
+        addWarning(
+            `Imported unsupported Bruno script type '${scriptType || "unknown"}' into post-response script at ${location}.`
+        );
+    }
+
+    const preRequestScript = preRequestParts.join("\n\n");
+    const postResponseScript = postResponseParts.join("\n\n");
+
+    const preContainsBruPrefix = scriptContainsApiPrefix(preRequestScript, "bru");
+    const postContainsBruPrefix = scriptContainsApiPrefix(postResponseScript, "bru");
+
+    const migratedPre = migrateScriptApiPrefix(preRequestScript, "bru", "bf");
+    const migratedPost = migrateScriptApiPrefix(postResponseScript, "bru", "bf");
+
+    return {
+        scripts: {
+            pre_request: migratedPre.script,
+            post_response: migratedPost.script,
+        },
+        importedAny,
+        convertedBruPrefix: migratedPre.changed || migratedPost.changed,
+        containsBruPrefix: preContainsBruPrefix || postContainsBruPrefix,
+        unknownTypesDetected,
+    };
+}
+
 function applyPathParamsToUrl(url: string, params: MappedParam[]): string {
     let nextUrl = url;
     for (const param of params) {
@@ -626,6 +731,10 @@ export function mapBrunoToBifrost(
     let totalItems = 0;
     let skippedItems = 0;
     let folderCount = 0;
+    let importedScriptCount = 0;
+    let containsBruScriptCount = 0;
+    let convertedBruScriptCount = 0;
+    let unknownScriptTypeCount = 0;
 
     const visitItems = (itemsInput: unknown, context: ImportContext) => {
         if (!Array.isArray(itemsInput)) {
@@ -711,6 +820,24 @@ export function mapBrunoToBifrost(
                 addWarning
             );
 
+            const scriptMapping = mapRuntimeScripts(
+                itemInput.runtime,
+                `request '${requestName}' runtime.scripts`,
+                addWarning
+            );
+            if (scriptMapping.importedAny) {
+                importedScriptCount += 1;
+            }
+            if (scriptMapping.containsBruPrefix) {
+                containsBruScriptCount += 1;
+            }
+            if (scriptMapping.convertedBruPrefix) {
+                convertedBruScriptCount += 1;
+            }
+            if (scriptMapping.unknownTypesDetected) {
+                unknownScriptTypeCount += 1;
+            }
+
             if (isObject(itemInput.runtime) && Array.isArray(itemInput.runtime.variables)) {
                 addWarning(`Runtime variables for '${requestName}' were not imported as collection variables.`);
             }
@@ -727,7 +854,7 @@ export function mapBrunoToBifrost(
                     body,
                     auth,
                     extractors: [],
-                    scripts: { pre_request: "", post_response: "" },
+                    scripts: scriptMapping.scripts,
                 },
             });
         }
@@ -742,6 +869,18 @@ export function mapBrunoToBifrost(
 
     if (generatedRequests.length === 0) {
         throw new Error("No importable HTTP requests were found in the Bruno/OpenCollection file.");
+    }
+
+    if (importedScriptCount > 0) {
+        addWarning("Imported Bruno scripts with best-effort bru -> bf conversion. Please review them.");
+    }
+    if (containsBruScriptCount > 0 && convertedBruScriptCount === 0) {
+        addWarning("Detected bru-prefixed scripts that could not be converted safely. Please review them.");
+    }
+    if (unknownScriptTypeCount > 0) {
+        addWarning(
+            `Imported ${unknownScriptTypeCount} request(s) with non-standard Bruno script types into post-response scripts.`
+        );
     }
 
     return {

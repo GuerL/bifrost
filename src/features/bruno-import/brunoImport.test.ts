@@ -55,6 +55,14 @@ items:
           auth:
             type: bearer
             token: "{{token}}"
+        runtime:
+          scripts:
+            - type: before-request
+              code: bru.setEnvVar("traceId", "abc");
+            - type: after-response
+              code: const payload = bru.response.json();
+            - type: tests
+              code: bru.expect(res.status).to.equal(200);
       - info:
           name: Update Note
           type: http
@@ -69,6 +77,13 @@ items:
             type: text
             data: "hello {{noteBody}}"
           auth: inherit
+        runtime:
+          scripts:
+            - type: before-request
+              code: |
+                const literal = "bru.response.json()";
+                // bru.setEnvVar("x", "1")
+                const token = bru.response.json()?.token ?? "";
       - info:
           name: Profiles
           type: folder
@@ -97,6 +112,10 @@ items:
               - name: ignored
                 value: "1"
                 disabled: true
+        runtime:
+          scripts:
+            - type: before-request
+              code: bf.environment.set("noop", "1");
       - info:
           name: Upload Avatar
           type: http
@@ -240,6 +259,44 @@ items:
             throw new Error("Expected bearer auth");
         }
         expect(createUser.auth.token).toBe("{{token}}");
+    });
+
+    it("imports pre-request script and converts bru. to bf.", () => {
+        const plan = importBrunoCollection(VALID_BRUNO_SINGLE_FILE_YAML);
+        const createUser = requestByName(plan.requests, "Create User").request;
+        expect(createUser.scripts.pre_request).toContain(`bf.setEnvVar("traceId", "abc");`);
+    });
+
+    it("imports post-response and tests scripts into post-response field", () => {
+        const plan = importBrunoCollection(VALID_BRUNO_SINGLE_FILE_YAML);
+        const createUser = requestByName(plan.requests, "Create User").request;
+        expect(createUser.scripts.post_response).toContain("const payload = bf.response.json();");
+        expect(createUser.scripts.post_response).toContain("bf.expect(res.status).to.equal(200);");
+    });
+
+    it("does not alter bru. inside strings/comments during conversion", () => {
+        const plan = importBrunoCollection(VALID_BRUNO_SINGLE_FILE_YAML);
+        const updateNote = requestByName(plan.requests, "Update Note").request;
+        expect(updateNote.scripts.pre_request).toContain(`const literal = "bru.response.json()";`);
+        expect(updateNote.scripts.pre_request).toContain(`// bru.setEnvVar("x", "1")`);
+        expect(updateNote.scripts.pre_request).toContain(
+            "const token = bf.response.json()?.token ?? \"\";"
+        );
+    });
+
+    it("preserves scripts when no bru. prefix is present", () => {
+        const plan = importBrunoCollection(VALID_BRUNO_SINGLE_FILE_YAML);
+        const submitForm = requestByName(plan.requests, "Submit Form").request;
+        expect(submitForm.scripts.pre_request).toBe(`bf.environment.set("noop", "1");`);
+    });
+
+    it("adds warning when scripts are imported", () => {
+        const plan = importBrunoCollection(VALID_BRUNO_SINGLE_FILE_YAML);
+        expect(
+            plan.warnings.some((warning) =>
+                warning.includes("Imported Bruno scripts with best-effort bru -> bf conversion")
+            )
+        ).toBe(true);
     });
 
     it("rejects invalid YAML", () => {

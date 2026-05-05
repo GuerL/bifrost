@@ -400,25 +400,21 @@ export function useMonacoVariableSupport({
         monacoFeaturesRegisteredRef.current = true;
 
         const scriptApiDts = `
+type BifrostVariableApi = {
+  get(name: string): string | undefined;
+  set(name: string, value: unknown): void;
+  unset(name: string): void;
+  toObject(): Record<string, string>;
+};
 type BifrostScriptingApi = {
-  environment: {
-    get(name: string): string | undefined;
-    set(name: string, value: unknown): void;
-    unset(name: string): void;
-    toObject(): Record<string, string>;
-  };
-  collectionVariables: {
-    get(name: string): string | undefined;
-    set(name: string, value: unknown): void;
-    unset(name: string): void;
-    toObject(): Record<string, string>;
-  };
-  globals: {
-    get(name: string): string | undefined;
-    set(name: string, value: unknown): void;
-    unset(name: string): void;
-    toObject(): Record<string, string>;
-  };
+  runtime: BifrostVariableApi;
+  env: BifrostVariableApi;
+  /** @deprecated Use bf.env */
+  environment: BifrostVariableApi;
+  /** @deprecated Use bf.runtime */
+  collectionVariables: BifrostVariableApi;
+  /** @deprecated Use bf.runtime */
+  globals: BifrostVariableApi;
   response: {
     status: { toBe(expected: unknown): void; toEqual(expected: unknown): void };
     statusCode: number | null;
@@ -475,19 +471,29 @@ declare const pg: BifrostScriptingApi;`;
 
                     if (isScriptMonacoModel(model)) {
                         const jsSuggestions = [
+                            "bf.runtime.get(\"key\")",
+                            "bf.runtime.set(\"key\", \"value\")",
+                            "bf.runtime.unset(\"key\")",
+                            "bf.env.get(\"key\")",
+                            "bf.env.set(\"key\", \"value\")",
+                            "bf.env.unset(\"key\")",
                             "bf.response.json()",
                             "bf.response.text()",
                             "bf.response.headers.get(\"Authorization\")",
+                            "bf.test(\"name\", () => {})",
                             "bf.environment.get(\"key\")",
                             "bf.environment.set(\"key\", \"value\")",
                             "bf.collectionVariables.set(\"foo\", \"bar\")",
-                            "bf.test(\"name\", () => {})",
+                            "bf.globals.set(\"foo\", \"bar\")",
+                            "pg.runtime.set(\"key\", \"value\")",
+                            "pg.env.set(\"key\", \"value\")",
                             "pg.response.json()",
                             "pg.response.text()",
                             "pg.response.headers.get(\"Authorization\")",
                             "pg.environment.get(\"key\")",
                             "pg.environment.set(\"key\", \"value\")",
                             "pg.collectionVariables.set(\"foo\", \"bar\")",
+                            "pg.globals.set(\"foo\", \"bar\")",
                             "pg.test(\"name\", () => {})",
                         ];
                         return {

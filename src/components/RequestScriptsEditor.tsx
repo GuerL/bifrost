@@ -28,8 +28,12 @@ export default function RequestScriptsEditor({
     return (
         <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
             <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
-                Available APIs: <code>bf.environment.get/set/unset</code>, <code>bf.request</code>,{" "}
-                <code>bf.response</code> (<code>pg</code> is still supported).
+                Available APIs: <code>bf.runtime.get/set/unset</code>, <code>bf.env.get/set/unset</code>,{" "}
+                <code>bf.request</code>, <code>bf.response</code> (<code>pg</code> is still supported).
+            </div>
+            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                <code>bf.environment</code> and <code>bf.collectionVariables</code> are still supported
+                for backward compatibility.
             </div>
             <div style={{ display: "flex", gap: 12, minHeight: 0 }}>
                 <div
@@ -65,7 +69,8 @@ export default function RequestScriptsEditor({
                             }}
                         >
                             {`const response = bf.response?.json();
-bf.environment.set("accessToken", response?.token ?? "");`}
+bf.runtime.set("accessToken", response?.token ?? "");
+bf.env.set("lastAccessToken", response?.token ?? "");`}
                         </pre>
                     </div>
                 </div>

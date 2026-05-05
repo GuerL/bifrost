@@ -191,7 +191,12 @@ function parsePunctuation(script: string, index: number): { token: string; nextI
     return { token: script[index], nextIndex: index + 1 };
 }
 
-function transformLegacyPrefix(script: string, replace: boolean): ScriptMigrationResult {
+function transformApiPrefix(
+    script: string,
+    sourcePrefix: string,
+    targetPrefix: string,
+    replace: boolean
+): ScriptMigrationResult {
     if (!script) {
         return { script, changed: false, legacyUsageDetected: false };
     }
@@ -404,13 +409,13 @@ function transformLegacyPrefix(script: string, replace: boolean): ScriptMigratio
                 end += 1;
             }
             const identifier = script.slice(index, end);
-            const hasLegacyMemberAccess = identifier === "pg" && script[end] === ".";
+            const hasLegacyMemberAccess = identifier === sourcePrefix && script[end] === ".";
             if (hasLegacyMemberAccess) {
                 legacyUsageDetected = true;
             }
 
             if (replace && hasLegacyMemberAccess) {
-                output += "bf";
+                output += targetPrefix;
                 changed = true;
             } else {
                 output += identifier;
@@ -453,12 +458,28 @@ function transformLegacyPrefix(script: string, replace: boolean): ScriptMigratio
     };
 }
 
+export function scriptContainsApiPrefix(script: string, prefix: string): boolean {
+    if (!prefix.trim()) return false;
+    return transformApiPrefix(script, prefix, prefix, false).legacyUsageDetected;
+}
+
+export function migrateScriptApiPrefix(
+    script: string,
+    sourcePrefix: string,
+    targetPrefix: string
+): ScriptMigrationResult {
+    if (!sourcePrefix.trim() || !targetPrefix.trim() || sourcePrefix === targetPrefix) {
+        return { script, changed: false, legacyUsageDetected: false };
+    }
+    return transformApiPrefix(script, sourcePrefix, targetPrefix, true);
+}
+
 export function scriptContainsLegacyPgPrefix(script: string): boolean {
-    return transformLegacyPrefix(script, false).legacyUsageDetected;
+    return scriptContainsApiPrefix(script, "pg");
 }
 
 export function migrateScriptFromPgToBf(script: string): ScriptMigrationResult {
-    return transformLegacyPrefix(script, true);
+    return migrateScriptApiPrefix(script, "pg", "bf");
 }
 
 export function findLegacyPgScriptLocations(requests: Request[]): LegacyScriptLocation[] {
