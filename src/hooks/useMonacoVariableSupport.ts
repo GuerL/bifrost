@@ -400,21 +400,24 @@ export function useMonacoVariableSupport({
         monacoFeaturesRegisteredRef.current = true;
 
         const scriptApiDts = `
-type BifrostVariableApi = {
+type BifrostEnvVariableApi = {
   get(name: string): string | undefined;
   set(name: string, value: unknown): void;
   unset(name: string): void;
   toObject(): Record<string, string>;
 };
+type BifrostRuntimeVariableApi = BifrostEnvVariableApi & {
+  clear(): void;
+};
 type BifrostScriptingApi = {
-  runtime: BifrostVariableApi;
-  env: BifrostVariableApi;
+  runtime: BifrostRuntimeVariableApi;
+  env: BifrostEnvVariableApi;
   /** @deprecated Use bf.env */
-  environment: BifrostVariableApi;
+  environment: BifrostEnvVariableApi;
   /** @deprecated Use bf.runtime */
-  collectionVariables: BifrostVariableApi;
+  collectionVariables: BifrostRuntimeVariableApi;
   /** @deprecated Use bf.runtime */
-  globals: BifrostVariableApi;
+  globals: BifrostRuntimeVariableApi;
   response: {
     status: { toBe(expected: unknown): void; toEqual(expected: unknown): void };
     statusCode: number | null;
@@ -474,6 +477,7 @@ declare const pg: BifrostScriptingApi;`;
                             "bf.runtime.get(\"key\")",
                             "bf.runtime.set(\"key\", \"value\")",
                             "bf.runtime.unset(\"key\")",
+                            "bf.runtime.clear()",
                             "bf.env.get(\"key\")",
                             "bf.env.set(\"key\", \"value\")",
                             "bf.env.unset(\"key\")",
@@ -483,17 +487,36 @@ declare const pg: BifrostScriptingApi;`;
                             "bf.test(\"name\", () => {})",
                             "bf.environment.get(\"key\")",
                             "bf.environment.set(\"key\", \"value\")",
+                            "bf.environment.unset(\"key\")",
+                            "bf.collectionVariables.get(\"key\")",
                             "bf.collectionVariables.set(\"foo\", \"bar\")",
+                            "bf.collectionVariables.unset(\"key\")",
+                            "bf.collectionVariables.clear()",
+                            "bf.globals.get(\"key\")",
                             "bf.globals.set(\"foo\", \"bar\")",
+                            "bf.globals.unset(\"key\")",
+                            "bf.globals.clear()",
+                            "pg.runtime.get(\"key\")",
                             "pg.runtime.set(\"key\", \"value\")",
+                            "pg.runtime.unset(\"key\")",
+                            "pg.runtime.clear()",
+                            "pg.env.get(\"key\")",
                             "pg.env.set(\"key\", \"value\")",
+                            "pg.env.unset(\"key\")",
                             "pg.response.json()",
                             "pg.response.text()",
                             "pg.response.headers.get(\"Authorization\")",
                             "pg.environment.get(\"key\")",
                             "pg.environment.set(\"key\", \"value\")",
+                            "pg.environment.unset(\"key\")",
+                            "pg.collectionVariables.get(\"key\")",
                             "pg.collectionVariables.set(\"foo\", \"bar\")",
+                            "pg.collectionVariables.unset(\"key\")",
+                            "pg.collectionVariables.clear()",
+                            "pg.globals.get(\"key\")",
                             "pg.globals.set(\"foo\", \"bar\")",
+                            "pg.globals.unset(\"key\")",
+                            "pg.globals.clear()",
                             "pg.test(\"name\", () => {})",
                         ];
                         return {

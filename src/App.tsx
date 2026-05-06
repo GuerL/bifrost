@@ -71,6 +71,7 @@ import {
     type ScriptEnvironmentMutation,
     type ScriptTestResult,
 } from "./helpers/RequestScriptsRuntime.ts";
+import { buildExecutionVariableValues } from "./helpers/executionRuntimeVariables.ts";
 import {
     decidePgToBfPrompt,
     findLegacyPgScriptLocations,
@@ -672,7 +673,7 @@ export default function App() {
         useState<RunnerIterationMode>("collection_iteration");
     const [runnerIterations, setRunnerIterations] = useState(1);
     const [collectionRunStopOnFailure, setCollectionRunStopOnFailure] = useState(true);
-    const [sessionVariables, setSessionVariables] = useState<Record<string, string>>({});
+    const [executionRuntimeVariables, setExecutionRuntimeVariables] = useState<Record<string, string>>({});
     const [responseTab, setResponseTab] = useState<ResponseTabId>("body");
     const [draftsById, setDraftsById] = useState<Record<string, Request>>({});
     const [pending, setPending] = useState(false);
@@ -766,6 +767,13 @@ export default function App() {
     const collectionRunCancelRef = useRef(false);
     const collectionRunActiveRequestIdRef = useRef<string | null>(null);
     const collectionRunPending = runnerRun?.status === "running";
+    const executionRuntimeActive = pending || collectionRunPending;
+
+    useEffect(() => {
+        if (executionRuntimeActive) return;
+        if (Object.keys(executionRuntimeVariables).length === 0) return;
+        setExecutionRuntimeVariables({});
+    }, [executionRuntimeActive, executionRuntimeVariables]);
 
     function resetCollapsedFoldersHydrationRefs() {
         hydratedCollapsedFoldersCollectionIdRef.current = null;
@@ -811,7 +819,7 @@ export default function App() {
         setOpenTabDropIndicator(null);
         setResponsesByRequestId({});
         setScriptReportsByRequestId({});
-        setSessionVariables({});
+        setExecutionRuntimeVariables({});
         setRunnerRun(null);
         collectionRunCancelRef.current = false;
         collectionRunActiveRequestIdRef.current = null;
@@ -1232,14 +1240,12 @@ export default function App() {
     }, [activeEnvironment]);
 
     const runtimeVariableValues = useMemo(() => {
-        const values = new Map(activeEnvironmentValues);
-        for (const [key, value] of Object.entries(sessionVariables)) {
-            const trimmed = key.trim();
-            if (!trimmed) continue;
-            values.set(trimmed, value);
-        }
-        return values;
-    }, [activeEnvironmentValues, sessionVariables]);
+        return buildExecutionVariableValues({
+            environmentValues: activeEnvironmentValues,
+            runtimeVariables: executionRuntimeVariables,
+            runtimeActive: executionRuntimeActive,
+        });
+    }, [activeEnvironmentValues, executionRuntimeActive, executionRuntimeVariables]);
 
     const variableValuesWithDynamic = useMemo(() => {
         const values = new Map(runtimeVariableValues);
@@ -2362,7 +2368,8 @@ export default function App() {
         }));
         let preScriptError: string | null = null;
         let preScriptTests: ScriptTestResult[] = [];
-        let runtimeVariables = { ...sessionVariables };
+        let runtimeVariables: Record<string, string> = {};
+        setExecutionRuntimeVariables(runtimeVariables);
         const requestScripts = requestScriptsOrDefault(req);
         const scriptEnvironmentMutations: ScriptEnvironmentMutation[] = [];
 
@@ -2377,7 +2384,7 @@ export default function App() {
             preScriptTests = preScript.tests;
             scriptEnvironmentMutations.push(...preScript.environmentMutations);
             runtimeVariables = preScript.runtimeVariables;
-            setSessionVariables(runtimeVariables);
+            setExecutionRuntimeVariables(runtimeVariables);
             const requestToSend = preScript.request;
             const preparedRequest = prepareRequestForExecution(requestToSend);
             if (!preparedRequest.ok) {
@@ -2426,7 +2433,7 @@ export default function App() {
             });
             scriptEnvironmentMutations.push(...postScript.environmentMutations);
             runtimeVariables = postScript.runtimeVariables;
-            setSessionVariables(runtimeVariables);
+            setExecutionRuntimeVariables(runtimeVariables);
             const scriptTests = [...preScript.tests, ...postScript.tests];
             const failedScriptTests = scriptTests.filter((test) => test.status === "failed").length;
             setScriptReportsByRequestId((previous) => ({
@@ -2496,6 +2503,9 @@ export default function App() {
         } finally {
             const p = await isPending(selectedRequestId).catch(() => false);
             setPending(p);
+            if (!p) {
+                setExecutionRuntimeVariables({});
+            }
         }
     }
 
@@ -2520,6 +2530,9 @@ export default function App() {
         } finally {
             const p = await isPending(selectedRequestId).catch(() => false);
             setPending(p);
+            if (!p) {
+                setExecutionRuntimeVariables({});
+            }
         }
     }
 
@@ -2607,7 +2620,8 @@ export default function App() {
         const startedAt = new Date().toISOString();
         let cancelledByUser = false;
         let currentExecutions = plan.map((item) => createQueuedExecutionResult(runId, item));
-        let runVariables: Record<string, string> = { ...sessionVariables };
+        setExecutionRuntimeVariables({});
+        let runVariables: Record<string, string> = {};
         const runScriptEnvironmentMutations: ScriptEnvironmentMutation[] = [];
 
         const initialRun: RunnerRun = {
@@ -2682,279 +2696,281 @@ export default function App() {
         collectionRunCancelRef.current = false;
         collectionRunActiveRequestIdRef.current = null;
 
-        for (let index = 0; index < plan.length; index += 1) {
-            const planItem = plan[index];
+        try {
+            for (let index = 0; index < plan.length; index += 1) {
+                const planItem = plan[index];
 
-            if (collectionRunCancelRef.current) {
-                cancelledByUser = true;
-                commitRun(skipRemainingFrom(planItem.planIndex - 1, "Skipped (run cancelled)"));
-                break;
-            }
-
-            commitRun(
-                updateExecutionAt(planItem.planIndex, {
-                    status: "running",
-                    statusText: "Running...",
-                    startedAt: new Date().toISOString(),
-                    finishedAt: null,
-                    errorCode: null,
-                    errorMessage: null,
-                })
-            );
-
-            collectionRunActiveRequestIdRef.current = planItem.requestId;
-
-            const requestToSend = requestById.get(planItem.requestId);
-            if (!requestToSend) {
-                const nextExecutions = updateExecutionAt(planItem.planIndex, {
-                    status: "failed",
-                    statusText: "❌ missing_request: Request not found in collection",
-                    wasSent: false,
-                    finishedAt: new Date().toISOString(),
-                    errorCode: "missing_request",
-                    errorMessage: "Request not found in collection",
-                });
-                commitRun(nextExecutions);
-                if (collectionRunStopOnFailure) {
-                    commitRun(
-                        skipRemainingFrom(planItem.planIndex, "Skipped (stopped on failure)")
-                    );
+                if (collectionRunCancelRef.current) {
+                    cancelledByUser = true;
+                    commitRun(skipRemainingFrom(planItem.planIndex - 1, "Skipped (run cancelled)"));
                     break;
                 }
-                continue;
-            }
 
-            const preScript = runPreRequestScript({
-                script: requestScriptsOrDefault(requestToSend).pre_request,
-                request: requestToSend,
-                runtimeVariables: runVariables,
-                environmentValues: activeEnvironmentValues,
-            });
-            const preRequestScriptError = preScript.error;
-            const preRequestScriptTests = preScript.tests;
-            runScriptEnvironmentMutations.push(...preScript.environmentMutations);
-            runVariables = preScript.runtimeVariables;
-            setSessionVariables(runVariables);
-            const executableRequest = preScript.request;
-            const preparedRequest = prepareRequestForExecution(executableRequest);
-
-            if (!preparedRequest.ok) {
-                const statusText = `❌ invalid_request: ${preparedRequest.message}`;
                 commitRun(
                     updateExecutionAt(planItem.planIndex, {
-                        status: "failed",
-                        statusText,
-                        wasSent: false,
-                        finishedAt: new Date().toISOString(),
-                        errorCode: "invalid_request",
-                        errorMessage: preparedRequest.message,
-                        preRequestScriptError,
-                        postResponseScriptError: null,
-                        preRequestScriptTests,
-                        postResponseScriptTests: [],
+                        status: "running",
+                        statusText: "Running...",
+                        startedAt: new Date().toISOString(),
+                        finishedAt: null,
+                        errorCode: null,
+                        errorMessage: null,
                     })
                 );
-                setScriptReportsByRequestId((previous) => ({
-                    ...previous,
-                    [planItem.requestId]: {
-                        preRequestError: preRequestScriptError,
-                        postResponseError: null,
-                        tests: preRequestScriptTests,
-                    },
-                }));
 
-                if (collectionRunStopOnFailure) {
-                    commitRun(
-                        skipRemainingFrom(planItem.planIndex, "Skipped (stopped on failure)")
-                    );
-                    break;
+                collectionRunActiveRequestIdRef.current = planItem.requestId;
+
+                const requestToSend = requestById.get(planItem.requestId);
+                if (!requestToSend) {
+                    const nextExecutions = updateExecutionAt(planItem.planIndex, {
+                        status: "failed",
+                        statusText: "❌ missing_request: Request not found in collection",
+                        wasSent: false,
+                        finishedAt: new Date().toISOString(),
+                        errorCode: "missing_request",
+                        errorMessage: "Request not found in collection",
+                    });
+                    commitRun(nextExecutions);
+                    if (collectionRunStopOnFailure) {
+                        commitRun(
+                            skipRemainingFrom(planItem.planIndex, "Skipped (stopped on failure)")
+                        );
+                        break;
+                    }
+                    continue;
                 }
-                continue;
-            }
 
-            const preparedExecutableRequest = preparedRequest.request;
-
-            try {
-                const response = await invoke<HttpResponseDto>("send_request", {
-                    requestId: planItem.requestId,
-                    req: preparedExecutableRequest,
-                    environmentId: activeEnvironmentId,
-                    extraVariables: runVariables,
-                });
-
-                const postScript = runPostResponseScript({
-                    script: requestScriptsOrDefault(preparedExecutableRequest).post_response,
-                    request: preparedExecutableRequest,
-                    response,
+                const preScript = runPreRequestScript({
+                    script: requestScriptsOrDefault(requestToSend).pre_request,
+                    request: requestToSend,
                     runtimeVariables: runVariables,
                     environmentValues: activeEnvironmentValues,
                 });
-                const postResponseScriptError = postScript.error;
-                const postResponseScriptTests = postScript.tests;
-                runScriptEnvironmentMutations.push(...postScript.environmentMutations);
-                runVariables = postScript.runtimeVariables;
-                setSessionVariables(runVariables);
+                const preRequestScriptError = preScript.error;
+                const preRequestScriptTests = preScript.tests;
+                runScriptEnvironmentMutations.push(...preScript.environmentMutations);
+                runVariables = preScript.runtimeVariables;
+                setExecutionRuntimeVariables(runVariables);
+                const executableRequest = preScript.request;
+                const preparedRequest = prepareRequestForExecution(executableRequest);
 
-                const scriptIssues = [preRequestScriptError, postResponseScriptError].filter(
-                    (entry) => !!entry
-                );
-                const totalScriptTests = preRequestScriptTests.length + postResponseScriptTests.length;
-                const failedScriptTests = [...preRequestScriptTests, ...postResponseScriptTests].filter(
-                    (test) => test.status === "failed"
-                ).length;
-                const scriptErrorsSuffix =
-                    scriptIssues.length > 0 ? ` • script issues ${scriptIssues.length}` : "";
-                const scriptTestsSuffix =
-                    totalScriptTests > 0
-                        ? ` • tests ${totalScriptTests - failedScriptTests}/${totalScriptTests}`
-                        : "";
-                const isHttpFailure = response.status >= 400;
-                const statusText = isHttpFailure
-                    ? `❌ HTTP ${response.status} in ${response.duration_ms}ms${scriptErrorsSuffix}${scriptTestsSuffix}`
-                    : `✅ ${response.status} in ${response.duration_ms}ms${scriptErrorsSuffix}${scriptTestsSuffix}`;
-                commitRun(
-                    updateExecutionAt(planItem.planIndex, {
-                        status: isHttpFailure ? "failed" : "success",
-                        statusText,
-                        wasSent: true,
-                        finishedAt: new Date().toISOString(),
-                        durationMs: response.duration_ms,
-                        httpStatus: response.status,
-                        errorCode: isHttpFailure ? "http_status" : null,
-                        errorMessage: isHttpFailure
-                            ? `Request returned HTTP ${response.status}`
-                            : null,
-                        response: toResponseSnapshot(response),
-                        extractedVariables: [],
-                        extractionErrors: [],
-                        preRequestScriptError,
-                        postResponseScriptError,
-                        preRequestScriptTests,
-                        postResponseScriptTests,
-                    })
-                );
-                setResponsesByRequestId((previous) => ({
-                    ...previous,
-                    [planItem.requestId]: {
-                        response,
-                        statusText,
-                        updatedAt: new Date().toISOString(),
-                    },
-                }));
-                setScriptReportsByRequestId((previous) => ({
-                    ...previous,
-                    [planItem.requestId]: {
-                        preRequestError: preRequestScriptError,
-                        postResponseError: postResponseScriptError,
-                        tests: [...preRequestScriptTests, ...postResponseScriptTests],
-                    },
-                }));
-
-                if (isHttpFailure && collectionRunStopOnFailure) {
+                if (!preparedRequest.ok) {
+                    const statusText = `❌ invalid_request: ${preparedRequest.message}`;
                     commitRun(
-                        skipRemainingFrom(planItem.planIndex, "Skipped (stopped on failure)")
+                        updateExecutionAt(planItem.planIndex, {
+                            status: "failed",
+                            statusText,
+                            wasSent: false,
+                            finishedAt: new Date().toISOString(),
+                            errorCode: "invalid_request",
+                            errorMessage: preparedRequest.message,
+                            preRequestScriptError,
+                            postResponseScriptError: null,
+                            preRequestScriptTests,
+                            postResponseScriptTests: [],
+                        })
                     );
-                    break;
-                }
-            } catch (error) {
-                const parsed = parseRunnerHttpError(error);
-                const requestWasCancelled = parsed.code === "cancelled" || collectionRunCancelRef.current;
-                const statusText = requestWasCancelled
-                    ? `⛔ ${parsed.message}${parsed.durationMs != null ? ` (${parsed.durationMs}ms)` : ""}`
-                    : `❌ ${parsed.code}: ${parsed.message}${parsed.durationMs != null ? ` (${parsed.durationMs}ms)` : ""}`;
+                    setScriptReportsByRequestId((previous) => ({
+                        ...previous,
+                        [planItem.requestId]: {
+                            preRequestError: preRequestScriptError,
+                            postResponseError: null,
+                            tests: preRequestScriptTests,
+                        },
+                    }));
 
-                if (requestWasCancelled) {
-                    cancelledByUser = true;
+                    if (collectionRunStopOnFailure) {
+                        commitRun(
+                            skipRemainingFrom(planItem.planIndex, "Skipped (stopped on failure)")
+                        );
+                        break;
+                    }
+                    continue;
                 }
+                const preparedExecutableRequest = preparedRequest.request;
 
-                commitRun(
-                    updateExecutionAt(planItem.planIndex, {
-                        status: requestWasCancelled ? "cancelled" : "failed",
-                        statusText,
-                        wasSent: parsed.durationMs != null,
-                        finishedAt: new Date().toISOString(),
-                        durationMs: parsed.durationMs,
-                        httpStatus: null,
-                        errorCode: parsed.code,
-                        errorMessage: parsed.message,
-                        response: null,
-                        extractedVariables: [],
-                        extractionErrors: [],
-                        preRequestScriptError,
-                        postResponseScriptError: null,
-                        preRequestScriptTests,
-                        postResponseScriptTests: [],
-                    })
-                );
-                setResponsesByRequestId((previous) => ({
-                    ...previous,
-                    [planItem.requestId]: {
-                        response: previous[planItem.requestId]?.response ?? null,
-                        statusText,
-                        updatedAt: new Date().toISOString(),
-                    },
-                }));
-                setScriptReportsByRequestId((previous) => ({
-                    ...previous,
-                    [planItem.requestId]: {
-                        preRequestError: preRequestScriptError,
-                        postResponseError: null,
-                        tests: preRequestScriptTests,
-                    },
-                }));
+                try {
+                    const response = await invoke<HttpResponseDto>("send_request", {
+                        requestId: planItem.requestId,
+                        req: preparedExecutableRequest,
+                        environmentId: activeEnvironmentId,
+                        extraVariables: runVariables,
+                    });
 
-                if (requestWasCancelled || collectionRunStopOnFailure) {
-                    const reason = requestWasCancelled
-                        ? "Skipped (run cancelled)"
-                        : "Skipped (stopped on failure)";
-                    commitRun(skipRemainingFrom(planItem.planIndex, reason));
-                    break;
+                    const postScript = runPostResponseScript({
+                        script: requestScriptsOrDefault(preparedExecutableRequest).post_response,
+                        request: preparedExecutableRequest,
+                        response,
+                        runtimeVariables: runVariables,
+                        environmentValues: activeEnvironmentValues,
+                    });
+                    const postResponseScriptError = postScript.error;
+                    const postResponseScriptTests = postScript.tests;
+                    runScriptEnvironmentMutations.push(...postScript.environmentMutations);
+                    runVariables = postScript.runtimeVariables;
+                    setExecutionRuntimeVariables(runVariables);
+
+                    const scriptIssues = [preRequestScriptError, postResponseScriptError].filter(
+                        (entry) => !!entry
+                    );
+                    const totalScriptTests = preRequestScriptTests.length + postResponseScriptTests.length;
+                    const failedScriptTests = [...preRequestScriptTests, ...postResponseScriptTests].filter(
+                        (test) => test.status === "failed"
+                    ).length;
+                    const scriptErrorsSuffix =
+                        scriptIssues.length > 0 ? ` • script issues ${scriptIssues.length}` : "";
+                    const scriptTestsSuffix =
+                        totalScriptTests > 0
+                            ? ` • tests ${totalScriptTests - failedScriptTests}/${totalScriptTests}`
+                            : "";
+                    const isHttpFailure = response.status >= 400;
+                    const statusText = isHttpFailure
+                        ? `❌ HTTP ${response.status} in ${response.duration_ms}ms${scriptErrorsSuffix}${scriptTestsSuffix}`
+                        : `✅ ${response.status} in ${response.duration_ms}ms${scriptErrorsSuffix}${scriptTestsSuffix}`;
+                    commitRun(
+                        updateExecutionAt(planItem.planIndex, {
+                            status: isHttpFailure ? "failed" : "success",
+                            statusText,
+                            wasSent: true,
+                            finishedAt: new Date().toISOString(),
+                            durationMs: response.duration_ms,
+                            httpStatus: response.status,
+                            errorCode: isHttpFailure ? "http_status" : null,
+                            errorMessage: isHttpFailure
+                                ? `Request returned HTTP ${response.status}`
+                                : null,
+                            response: toResponseSnapshot(response),
+                            extractedVariables: [],
+                            extractionErrors: [],
+                            preRequestScriptError,
+                            postResponseScriptError,
+                            preRequestScriptTests,
+                            postResponseScriptTests,
+                        })
+                    );
+                    setResponsesByRequestId((previous) => ({
+                        ...previous,
+                        [planItem.requestId]: {
+                            response,
+                            statusText,
+                            updatedAt: new Date().toISOString(),
+                        },
+                    }));
+                    setScriptReportsByRequestId((previous) => ({
+                        ...previous,
+                        [planItem.requestId]: {
+                            preRequestError: preRequestScriptError,
+                            postResponseError: postResponseScriptError,
+                            tests: [...preRequestScriptTests, ...postResponseScriptTests],
+                        },
+                    }));
+
+                    if (isHttpFailure && collectionRunStopOnFailure) {
+                        commitRun(
+                            skipRemainingFrom(planItem.planIndex, "Skipped (stopped on failure)")
+                        );
+                        break;
+                    }
+                } catch (error) {
+                    const parsed = parseRunnerHttpError(error);
+                    const requestWasCancelled = parsed.code === "cancelled" || collectionRunCancelRef.current;
+                    const statusText = requestWasCancelled
+                        ? `⛔ ${parsed.message}${parsed.durationMs != null ? ` (${parsed.durationMs}ms)` : ""}`
+                        : `❌ ${parsed.code}: ${parsed.message}${parsed.durationMs != null ? ` (${parsed.durationMs}ms)` : ""}`;
+
+                    if (requestWasCancelled) {
+                        cancelledByUser = true;
+                    }
+
+                    commitRun(
+                        updateExecutionAt(planItem.planIndex, {
+                            status: requestWasCancelled ? "cancelled" : "failed",
+                            statusText,
+                            wasSent: parsed.durationMs != null,
+                            finishedAt: new Date().toISOString(),
+                            durationMs: parsed.durationMs,
+                            httpStatus: null,
+                            errorCode: parsed.code,
+                            errorMessage: parsed.message,
+                            response: null,
+                            extractedVariables: [],
+                            extractionErrors: [],
+                            preRequestScriptError,
+                            postResponseScriptError: null,
+                            preRequestScriptTests,
+                            postResponseScriptTests: [],
+                        })
+                    );
+                    setResponsesByRequestId((previous) => ({
+                        ...previous,
+                        [planItem.requestId]: {
+                            response: previous[planItem.requestId]?.response ?? null,
+                            statusText,
+                            updatedAt: new Date().toISOString(),
+                        },
+                    }));
+                    setScriptReportsByRequestId((previous) => ({
+                        ...previous,
+                        [planItem.requestId]: {
+                            preRequestError: preRequestScriptError,
+                            postResponseError: null,
+                            tests: preRequestScriptTests,
+                        },
+                    }));
+
+                    if (requestWasCancelled || collectionRunStopOnFailure) {
+                        const reason = requestWasCancelled
+                            ? "Skipped (run cancelled)"
+                            : "Skipped (stopped on failure)";
+                        commitRun(skipRemainingFrom(planItem.planIndex, reason));
+                        break;
+                    }
+                } finally {
+                    collectionRunActiveRequestIdRef.current = null;
                 }
-            } finally {
-                collectionRunActiveRequestIdRef.current = null;
             }
-        }
 
-        const finishedAt = new Date().toISOString();
-        const finalSummary = summarizeRunnerExecutions(currentExecutions, cancelledByUser);
-        const finalStatus: RunnerRun["status"] =
-            cancelledByUser
-                ? "cancelled"
-                : finalSummary.failed > 0
-                    ? "failed"
-                    : "completed";
-        commitRun(currentExecutions, finalStatus, finishedAt);
-        void notifyRunnerCompletion({
-            runId,
-            status: finalStatus,
-            summary: finalSummary,
-        });
+            const finishedAt = new Date().toISOString();
+            const finalSummary = summarizeRunnerExecutions(currentExecutions, cancelledByUser);
+            const finalStatus: RunnerRun["status"] =
+                cancelledByUser
+                    ? "cancelled"
+                    : finalSummary.failed > 0
+                        ? "failed"
+                        : "completed";
+            commitRun(currentExecutions, finalStatus, finishedAt);
+            void notifyRunnerCompletion({
+                runId,
+                status: finalStatus,
+                summary: finalSummary,
+            });
 
-        const environmentPersistError = await persistScriptEnvironmentMutations(
-            runScriptEnvironmentMutations
-        );
-        const environmentErrorSuffix = environmentPersistError
-            ? " • environment save issue"
-            : "";
-
-        collectionRunActiveRequestIdRef.current = null;
-        collectionRunCancelRef.current = false;
-
-        if (finalSummary.wasCancelledByUser) {
-            setStatus(
-                `⛔ Run cancelled: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.cancelled} cancelled, ${finalSummary.skipped} skipped${environmentErrorSuffix}`
+            const environmentPersistError = await persistScriptEnvironmentMutations(
+                runScriptEnvironmentMutations
             );
-            return;
-        }
+            const environmentErrorSuffix = environmentPersistError
+                ? " • environment save issue"
+                : "";
 
-        if (finalSummary.failed > 0) {
-            setStatus(
-                `❌ Run complete: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.skipped} skipped${environmentErrorSuffix}`
-            );
-            return;
-        }
+            if (finalSummary.wasCancelledByUser) {
+                setStatus(
+                    `⛔ Run cancelled: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.cancelled} cancelled, ${finalSummary.skipped} skipped${environmentErrorSuffix}`
+                );
+                return;
+            }
 
-        setStatus(`✅ Run complete: ${finalSummary.success}/${finalSummary.total} success${environmentErrorSuffix}`);
+            if (finalSummary.failed > 0) {
+                setStatus(
+                    `❌ Run complete: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.skipped} skipped${environmentErrorSuffix}`
+                );
+                return;
+            }
+
+            setStatus(`✅ Run complete: ${finalSummary.success}/${finalSummary.total} success${environmentErrorSuffix}`);
+        } finally {
+            collectionRunActiveRequestIdRef.current = null;
+            collectionRunCancelRef.current = false;
+            setExecutionRuntimeVariables({});
+        }
     }
 
     async function cancelCollectionRun() {
@@ -5087,8 +5103,8 @@ export default function App() {
                                 response={resp}
                                 statusText={selectedResponseStatusText}
                                 scriptReport={selectedScriptReport}
-                                runtimeVariables={sessionVariables}
-                                onClearRuntimeVariables={() => setSessionVariables({})}
+                                runtimeVariables={executionRuntimeActive ? executionRuntimeVariables : {}}
+                                onClearRuntimeVariables={() => setExecutionRuntimeVariables({})}
                                 activeTab={responseTab}
                                 onTabChange={setResponseTab}
                             />

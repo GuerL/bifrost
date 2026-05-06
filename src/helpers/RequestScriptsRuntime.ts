@@ -38,12 +38,18 @@ type AssertableValue<T> = {
     toString: () => string;
 };
 
-type ScriptVariableApi = {
+type ScriptVariableApiBase = {
     get: (name: string) => string | undefined;
     set: (name: string, value: unknown) => void;
     unset: (name: string) => void;
     toObject: () => Record<string, string>;
 };
+
+type ScriptRuntimeVariableApi = ScriptVariableApiBase & {
+    clear: () => void;
+};
+
+type ScriptEnvironmentVariableApi = ScriptVariableApiBase;
 
 type ScriptResponseApi = {
     status: AssertableValue<number | null>;
@@ -55,11 +61,11 @@ type ScriptResponseApi = {
 };
 
 export type BifrostRuntimeAPI = {
-    runtime: ScriptVariableApi;
-    env: ScriptVariableApi;
-    environment: ScriptVariableApi;
-    collectionVariables: ScriptVariableApi;
-    globals: ScriptVariableApi;
+    runtime: ScriptRuntimeVariableApi;
+    env: ScriptEnvironmentVariableApi;
+    environment: ScriptEnvironmentVariableApi;
+    collectionVariables: ScriptRuntimeVariableApi;
+    globals: ScriptRuntimeVariableApi;
     request: Request;
     response: ScriptResponseApi;
     expect: (actual: unknown) => AssertableValue<unknown>;
@@ -197,7 +203,7 @@ function runScript({
     const environmentMutations: ScriptEnvironmentMutation[] = [];
     const tests: ScriptTestResult[] = [];
 
-    const envApi: ScriptVariableApi = {
+    const envApi: ScriptEnvironmentVariableApi = {
         get: (name: string): string | undefined => {
             const key = String(name ?? "").trim();
             if (!key) return undefined;
@@ -222,7 +228,7 @@ function runScript({
         toObject: () => ({ ...runtime }),
     };
 
-    const runtimeApi: ScriptVariableApi = {
+    const runtimeApi: ScriptRuntimeVariableApi = {
         get: (name: string): string | undefined => {
             const key = String(name ?? "").trim();
             if (!key) return undefined;
@@ -237,6 +243,11 @@ function runScript({
             const key = String(name ?? "").trim();
             if (!key) return;
             delete runtime[key];
+        },
+        clear: () => {
+            for (const key of Object.keys(runtime)) {
+                delete runtime[key];
+            }
         },
         toObject: () => ({ ...runtime }),
     };
