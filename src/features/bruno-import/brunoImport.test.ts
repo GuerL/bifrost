@@ -261,25 +261,29 @@ items:
         expect(createUser.auth.token).toBe("{{token}}");
     });
 
-    it("imports pre-request script and converts bru. to bf.", () => {
+    it("imports pre-request script as-is", () => {
         const plan = importBrunoCollection(VALID_BRUNO_SINGLE_FILE_YAML);
         const createUser = requestByName(plan.requests, "Create User").request;
-        expect(createUser.scripts.pre_request).toContain(`bf.setEnvVar("traceId", "abc");`);
+        expect(createUser.scripts.pre_request).toContain(`bru.setEnvVar("traceId", "abc");`);
+        expect(createUser.scripts.pre_request).not.toContain(`bf.setEnvVar("traceId", "abc");`);
     });
 
     it("imports post-response and tests scripts into post-response field", () => {
         const plan = importBrunoCollection(VALID_BRUNO_SINGLE_FILE_YAML);
         const createUser = requestByName(plan.requests, "Create User").request;
-        expect(createUser.scripts.post_response).toContain("const payload = bf.response.json();");
-        expect(createUser.scripts.post_response).toContain("bf.expect(res.status).to.equal(200);");
+        expect(createUser.scripts.post_response).toContain("const payload = bru.response.json();");
+        expect(createUser.scripts.post_response).toContain("bru.expect(res.status).to.equal(200);");
     });
 
-    it("does not alter bru. inside strings/comments during conversion", () => {
+    it("keeps Bruno script content untouched", () => {
         const plan = importBrunoCollection(VALID_BRUNO_SINGLE_FILE_YAML);
         const updateNote = requestByName(plan.requests, "Update Note").request;
         expect(updateNote.scripts.pre_request).toContain(`const literal = "bru.response.json()";`);
         expect(updateNote.scripts.pre_request).toContain(`// bru.setEnvVar("x", "1")`);
         expect(updateNote.scripts.pre_request).toContain(
+            "const token = bru.response.json()?.token ?? \"\";"
+        );
+        expect(updateNote.scripts.pre_request).not.toContain(
             "const token = bf.response.json()?.token ?? \"\";"
         );
     });
@@ -290,11 +294,22 @@ items:
         expect(submitForm.scripts.pre_request).toBe(`bf.environment.set("noop", "1");`);
     });
 
-    it("adds warning when scripts are imported", () => {
+    it("keeps imported scripts present on requests", () => {
+        const plan = importBrunoCollection(VALID_BRUNO_SINGLE_FILE_YAML);
+        const createUser = requestByName(plan.requests, "Create User").request;
+        const updateNote = requestByName(plan.requests, "Update Note").request;
+        expect(createUser.scripts.pre_request.length).toBeGreaterThan(0);
+        expect(createUser.scripts.post_response.length).toBeGreaterThan(0);
+        expect(updateNote.scripts.pre_request.length).toBeGreaterThan(0);
+    });
+
+    it("adds warning when scripts are imported without conversion", () => {
         const plan = importBrunoCollection(VALID_BRUNO_SINGLE_FILE_YAML);
         expect(
             plan.warnings.some((warning) =>
-                warning.includes("Imported Bruno scripts with best-effort bru -> bf conversion")
+                warning.includes(
+                    "Bruno scripts were imported without modification. They may not work out of the box in Bifrost. Please update them to use the bf scripting API."
+                )
             )
         ).toBe(true);
     });

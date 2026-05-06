@@ -2,10 +2,6 @@ import {
     createMultipartFileField,
     createMultipartTextField,
 } from "../../helpers/requestBodyUtils.ts";
-import {
-    migrateScriptApiPrefix,
-    scriptContainsApiPrefix,
-} from "../../helpers/ScriptingPrefixMigration.ts";
 import type { KeyValue, Request, RequestAuth } from "../../types.ts";
 import type {
     BrunoGeneratedRequest,
@@ -40,8 +36,6 @@ type ImportContext = {
 type ScriptMappingResult = {
     scripts: Request["scripts"];
     importedAny: boolean;
-    convertedBruPrefix: boolean;
-    containsBruPrefix: boolean;
     unknownTypesDetected: boolean;
 };
 
@@ -603,8 +597,6 @@ function mapRuntimeScripts(
         return {
             scripts: { pre_request: "", post_response: "" },
             importedAny,
-            convertedBruPrefix: false,
-            containsBruPrefix: false,
             unknownTypesDetected,
         };
     }
@@ -614,8 +606,6 @@ function mapRuntimeScripts(
         return {
             scripts: { pre_request: "", post_response: "" },
             importedAny,
-            convertedBruPrefix: false,
-            containsBruPrefix: false,
             unknownTypesDetected,
         };
     }
@@ -625,8 +615,6 @@ function mapRuntimeScripts(
         return {
             scripts: { pre_request: "", post_response: "" },
             importedAny,
-            convertedBruPrefix: false,
-            containsBruPrefix: false,
             unknownTypesDetected,
         };
     }
@@ -664,20 +652,12 @@ function mapRuntimeScripts(
     const preRequestScript = preRequestParts.join("\n\n");
     const postResponseScript = postResponseParts.join("\n\n");
 
-    const preContainsBruPrefix = scriptContainsApiPrefix(preRequestScript, "bru");
-    const postContainsBruPrefix = scriptContainsApiPrefix(postResponseScript, "bru");
-
-    const migratedPre = migrateScriptApiPrefix(preRequestScript, "bru", "bf");
-    const migratedPost = migrateScriptApiPrefix(postResponseScript, "bru", "bf");
-
     return {
         scripts: {
-            pre_request: migratedPre.script,
-            post_response: migratedPost.script,
+            pre_request: preRequestScript,
+            post_response: postResponseScript,
         },
         importedAny,
-        convertedBruPrefix: migratedPre.changed || migratedPost.changed,
-        containsBruPrefix: preContainsBruPrefix || postContainsBruPrefix,
         unknownTypesDetected,
     };
 }
@@ -732,8 +712,6 @@ export function mapBrunoToBifrost(
     let skippedItems = 0;
     let folderCount = 0;
     let importedScriptCount = 0;
-    let containsBruScriptCount = 0;
-    let convertedBruScriptCount = 0;
     let unknownScriptTypeCount = 0;
 
     const visitItems = (itemsInput: unknown, context: ImportContext) => {
@@ -828,12 +806,6 @@ export function mapBrunoToBifrost(
             if (scriptMapping.importedAny) {
                 importedScriptCount += 1;
             }
-            if (scriptMapping.containsBruPrefix) {
-                containsBruScriptCount += 1;
-            }
-            if (scriptMapping.convertedBruPrefix) {
-                convertedBruScriptCount += 1;
-            }
             if (scriptMapping.unknownTypesDetected) {
                 unknownScriptTypeCount += 1;
             }
@@ -872,10 +844,9 @@ export function mapBrunoToBifrost(
     }
 
     if (importedScriptCount > 0) {
-        addWarning("Imported Bruno scripts with best-effort bru -> bf conversion. Please review them.");
-    }
-    if (containsBruScriptCount > 0 && convertedBruScriptCount === 0) {
-        addWarning("Detected bru-prefixed scripts that could not be converted safely. Please review them.");
+        addWarning(
+            "Bruno scripts will be imported without modification. They may not work out of the box in Bifrost. Please update them to use the bf scripting API."
+        );
     }
     if (unknownScriptTypeCount > 0) {
         addWarning(
