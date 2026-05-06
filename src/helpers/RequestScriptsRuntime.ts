@@ -38,6 +38,40 @@ type AssertableValue<T> = {
     toString: () => string;
 };
 
+type ScriptVariableApiBase = {
+    get: (name: string) => string | undefined;
+    set: (name: string, value: unknown) => void;
+    unset: (name: string) => void;
+    toObject: () => Record<string, string>;
+};
+
+type ScriptRuntimeVariableApi = ScriptVariableApiBase & {
+    clear: () => void;
+};
+
+type ScriptEnvironmentVariableApi = ScriptVariableApiBase;
+
+type ScriptResponseApi = {
+    status: AssertableValue<number | null>;
+    statusCode: number | null;
+    headers: ReturnType<typeof createHeadersApi>;
+    body: string;
+    text: () => string;
+    json: () => unknown;
+};
+
+export type BifrostRuntimeAPI = {
+    runtime: ScriptRuntimeVariableApi;
+    env: ScriptEnvironmentVariableApi;
+    environment: ScriptEnvironmentVariableApi;
+    collectionVariables: ScriptRuntimeVariableApi;
+    globals: ScriptRuntimeVariableApi;
+    request: Request;
+    response: ScriptResponseApi;
+    expect: (actual: unknown) => AssertableValue<unknown>;
+    test: (name: string, callback: () => void) => void;
+};
+
 function stringifyError(error: unknown): string {
     if (error instanceof Error) return error.message;
     return String(error);
@@ -142,7 +176,7 @@ function createResponseApi(response: HttpResponseDto | null) {
                 throw new Error("bf.response.json(): response body is not valid JSON");
             }
         },
-    };
+    } satisfies ScriptResponseApi;
 }
 
 function runScript({
@@ -169,7 +203,7 @@ function runScript({
     const environmentMutations: ScriptEnvironmentMutation[] = [];
     const tests: ScriptTestResult[] = [];
 
-    const environmentApi = {
+    const envApi: ScriptEnvironmentVariableApi = {
         get: (name: string): string | undefined => {
             const key = String(name ?? "").trim();
             if (!key) return undefined;
@@ -194,7 +228,7 @@ function runScript({
         toObject: () => ({ ...runtime }),
     };
 
-    const collectionVariablesApi = {
+    const runtimeApi: ScriptRuntimeVariableApi = {
         get: (name: string): string | undefined => {
             const key = String(name ?? "").trim();
             if (!key) return undefined;
@@ -210,13 +244,21 @@ function runScript({
             if (!key) return;
             delete runtime[key];
         },
+        clear: () => {
+            for (const key of Object.keys(runtime)) {
+                delete runtime[key];
+            }
+        },
         toObject: () => ({ ...runtime }),
     };
 
-    const scriptingApi = {
-        environment: environmentApi,
-        collectionVariables: collectionVariablesApi,
-        globals: collectionVariablesApi,
+    const scriptingApi: BifrostRuntimeAPI = {
+        runtime: runtimeApi,
+        env: envApi,
+        // Backward-compatible aliases.
+        environment: envApi,
+        collectionVariables: runtimeApi,
+        globals: runtimeApi,
         request: mutableRequest,
         response: responseApi,
         expect: (actual: unknown) => createAssertableValue("expect()", actual),

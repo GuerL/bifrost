@@ -4,9 +4,11 @@ import {
     decidePgToBfPrompt,
     findLegacyPgScriptLocations,
     listRequestScriptFields,
+    migrateScriptApiPrefix,
     migrateRequestScriptsFromPgToBf,
     migrateScriptFromPgToBf,
     readPgToBfPromptedFlag,
+    scriptContainsApiPrefix,
     scriptContainsLegacyPgPrefix,
     writePgToBfPromptedFlag,
 } from "./ScriptingPrefixMigration.ts";
@@ -99,6 +101,24 @@ bf.test("ok", () => {});
         const migrated = migrateScriptFromPgToBf(script);
         expect(migrated.changed).toBe(false);
         expect(migrated.script).toBe(script);
+    });
+
+    it("supports safe custom prefix migration (bru. -> bf.)", () => {
+        const script = `
+const inline = "bru.setEnvVar('x', '1')";
+// bru.setEnvVar("x", "2")
+const token = bru.response.json()?.accessToken ?? "";
+const tpl = \`bru.response.json()\`;
+`;
+
+        expect(scriptContainsApiPrefix(script, "bru")).toBe(true);
+        const migrated = migrateScriptApiPrefix(script, "bru", "bf");
+
+        expect(migrated.changed).toBe(true);
+        expect(migrated.script).toContain(`const token = bf.response.json()?.accessToken ?? "";`);
+        expect(migrated.script).toContain(`"bru.setEnvVar('x', '1')"`);
+        expect(migrated.script).toContain(`// bru.setEnvVar("x", "2")`);
+        expect(migrated.script).toContain("`bru.response.json()`");
     });
 
     it("finds legacy usage locations and migrates request scripts", () => {
