@@ -86,9 +86,45 @@ export default function ImportCollectionModal({
                     gap: 14,
                 }}
             >
-                <h3 id="import-collection-title" style={{ margin: 0 }}>
-                    Import Collection
-                </h3>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <h3 id="import-collection-title" style={{ margin: 0 }}>
+                        Import Collection
+                    </h3>
+                    <button
+                        type="button"
+                        aria-label="Close import modal"
+                        title="Close"
+                        disabled={busy}
+                        onClick={onCancel}
+                        style={{
+                            width: 26,
+                            height: 26,
+                            borderRadius: 6,
+                            border: "1px solid var(--pg-border)",
+                            background: "var(--pg-surface-0)",
+                            color: busy ? "var(--pg-disabled)" : "var(--pg-text-dim)",
+                            cursor: busy ? "not-allowed" : "pointer",
+                            display: "grid",
+                            placeItems: "center",
+                            padding: 0,
+                        }}
+                    >
+                        <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            aria-hidden
+                        >
+                            <path
+                                d="M6 6L18 18M18 6L6 18"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                            />
+                        </svg>
+                    </button>
+                </div>
                 <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.5 }}>
                     Choose a source format.
                 </div>
