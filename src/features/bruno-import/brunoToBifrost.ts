@@ -845,7 +845,7 @@ export function mapBrunoToBifrost(
 
     if (importedScriptCount > 0) {
         addWarning(
-            "Bruno scripts will be imported without modification. They may not work out of the box in Bifrost. Please update them to use the bf scripting API."
+            "Bruno scripts were imported without modification. They may not work out of the box in Bifrost. Please update them to use the bf scripting API."
         );
     }
     if (unknownScriptTypeCount > 0) {

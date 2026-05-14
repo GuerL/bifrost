@@ -118,6 +118,13 @@ import BrunoImportDialog from "./features/bruno-import/BrunoImportDialog.tsx";
 import { parseBrunoYamlCollection } from "./features/bruno-import/brunoYamlParser.ts";
 import { mapBrunoToBifrost } from "./features/bruno-import/brunoToBifrost.ts";
 import type { BrunoImportPlan } from "./features/bruno-import/brunoTypes.ts";
+import ImportCollectionModal, {
+    type ImportCollectionOption,
+} from "./features/import/ImportCollectionModal.tsx";
+import InsomniaImportDialog from "./features/insomnia-import/InsomniaImportDialog.tsx";
+import { parseInsomniaV5Collection } from "./features/insomnia-import/insomniaV5Parser.ts";
+import { mapInsomniaV5ToBifrost } from "./features/insomnia-import/insomniaV5ToBifrost.ts";
+import type { InsomniaV5ImportPlan } from "./features/insomnia-import/insomniaV5Types.ts";
 
 type SidebarContextMenu = {
     x: number;
@@ -193,6 +200,11 @@ type OpenApiImportModal = {
 type BrunoImportModal = {
     fileName: string;
     plan: BrunoImportPlan;
+};
+
+type InsomniaImportModal = {
+    fileName: string;
+    plan: InsomniaV5ImportPlan;
 };
 
 type UpdateRestartModal = {
@@ -428,6 +440,28 @@ function summarizeBrunoImportFailure(error: unknown): string {
         return "Invalid YAML syntax. Please validate the file and retry.";
     }
     if (/unsupported bruno\/opencollection shape/i.test(raw)) {
+        return raw;
+    }
+    if (/no importable http requests were found/i.test(raw)) {
+        return raw;
+    }
+
+    return raw.length > 260 ? `${raw.slice(0, 257)}...` : raw;
+}
+
+function summarizeInsomniaImportFailure(error: unknown): string {
+    const raw = errorMessage(error).trim();
+    if (!raw) {
+        return "Unknown Insomnia V5 import error.";
+    }
+
+    if (/invalid json syntax/i.test(raw) || /could not parse file as json or yaml/i.test(raw)) {
+        return "Invalid JSON/YAML syntax. Please validate the file and retry.";
+    }
+    if (/unsupported insomnia version/i.test(raw)) {
+        return "Unsupported Insomnia version or format. Expected Insomnia V5 collection YAML/JSON export.";
+    }
+    if (/unsupported insomnia v5 shape/i.test(raw)) {
         return raw;
     }
     if (/no importable http requests were found/i.test(raw)) {
@@ -729,6 +763,7 @@ export default function App() {
     const [deleteFolderBusy, setDeleteFolderBusy] = useState(false);
     const [deleteRequestModal, setDeleteRequestModal] = useState<DeleteRequestModal | null>(null);
     const [deleteRequestBusy, setDeleteRequestBusy] = useState(false);
+    const [importCollectionModalOpen, setImportCollectionModalOpen] = useState(false);
     const [clipboardImportModal, setClipboardImportModal] = useState<ClipboardRequestImportModal | null>(null);
     const [clipboardImportBusy, setClipboardImportBusy] = useState(false);
     const [curlImportModal, setCurlImportModal] = useState<CurlImportModal | null>(null);
@@ -741,6 +776,9 @@ export default function App() {
     const [brunoImportModal, setBrunoImportModal] = useState<BrunoImportModal | null>(null);
     const [brunoImportBusy, setBrunoImportBusy] = useState(false);
     const [brunoImportError, setBrunoImportError] = useState("");
+    const [insomniaImportModal, setInsomniaImportModal] = useState<InsomniaImportModal | null>(null);
+    const [insomniaImportBusy, setInsomniaImportBusy] = useState(false);
+    const [insomniaImportError, setInsomniaImportError] = useState("");
     const [deleteCollectionModal, setDeleteCollectionModal] = useState<DeleteCollectionModal | null>(null);
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
@@ -749,6 +787,7 @@ export default function App() {
     const portableImportInputRef = useRef<HTMLInputElement | null>(null);
     const openApiImportInputRef = useRef<HTMLInputElement | null>(null);
     const brunoImportInputRef = useRef<HTMLInputElement | null>(null);
+    const insomniaImportInputRef = useRef<HTMLInputElement | null>(null);
     const curlImportTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
@@ -829,6 +868,7 @@ export default function App() {
         setDeleteFolderBusy(false);
         setDeleteRequestModal(null);
         setDeleteRequestBusy(false);
+        setImportCollectionModalOpen(false);
         setClipboardImportModal(null);
         setClipboardImportBusy(false);
         setCurlImportModal(null);
@@ -841,6 +881,9 @@ export default function App() {
         setBrunoImportModal(null);
         setBrunoImportBusy(false);
         setBrunoImportError("");
+        setInsomniaImportModal(null);
+        setInsomniaImportBusy(false);
+        setInsomniaImportError("");
         setDeleteEnvironmentModal(null);
         setDraftsById({});
         setCloseDraftModal(null);
@@ -1955,15 +1998,29 @@ export default function App() {
             if (!closeDraftBusy) {
                 setCloseDraftModal(null);
             }
+            setImportCollectionModalOpen(false);
             if (!openApiImportBusy) {
                 setOpenApiImportModal(null);
                 setOpenApiImportError("");
+            }
+            if (!insomniaImportBusy) {
+                setInsomniaImportModal(null);
+                setInsomniaImportError("");
             }
         }
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [renameBusy, createFolderBusy, moveNodeBusy, envBusy, collectionBusy, closeDraftBusy, openApiImportBusy]);
+    }, [
+        renameBusy,
+        createFolderBusy,
+        moveNodeBusy,
+        envBusy,
+        collectionBusy,
+        closeDraftBusy,
+        openApiImportBusy,
+        insomniaImportBusy,
+    ]);
 
     useEffect(() => {
         if (!draggedRequestId && !draggedOpenTabRequestId) return;
@@ -3741,6 +3798,10 @@ export default function App() {
         postmanImportInputRef.current?.click();
     }
 
+    function openImportCollectionModal() {
+        setImportCollectionModalOpen(true);
+    }
+
     function openOpenApiImportPicker() {
         openApiImportInputRef.current?.click();
     }
@@ -3749,8 +3810,40 @@ export default function App() {
         brunoImportInputRef.current?.click();
     }
 
+    function openInsomniaImportPicker() {
+        insomniaImportInputRef.current?.click();
+    }
+
     function openPortableImportPicker() {
         portableImportInputRef.current?.click();
+    }
+
+    function onImportCollectionOptionSelected(optionId: string) {
+        setImportCollectionModalOpen(false);
+
+        if (optionId === "curl") {
+            openCurlImportModal();
+            return;
+        }
+        if (optionId === "bruno") {
+            openBrunoImportPicker();
+            return;
+        }
+        if (optionId === "openapi") {
+            openOpenApiImportPicker();
+            return;
+        }
+        if (optionId === "postman") {
+            openPostmanImportPicker();
+            return;
+        }
+        if (optionId === "insomnia_v5") {
+            openInsomniaImportPicker();
+            return;
+        }
+        if (optionId === "bifrost") {
+            openPortableImportPicker();
+        }
     }
 
     async function onBrunoImportFileSelected(event: ChangeEvent<HTMLInputElement>) {
@@ -3773,6 +3866,29 @@ export default function App() {
             setBrunoImportError("");
             notifyError("Failed to import Bruno collection");
             notifyInfo(summarizeBrunoImportFailure(error));
+        }
+    }
+
+    async function onInsomniaImportFileSelected(event: ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+
+        try {
+            const fileText = await file.text();
+            const parsed = parseInsomniaV5Collection(fileText);
+            const plan = mapInsomniaV5ToBifrost(parsed, file.name);
+            setInsomniaImportModal({
+                fileName: file.name,
+                plan,
+            });
+            setInsomniaImportError("");
+        } catch (error) {
+            console.error("Insomnia V5 import parse failed", error);
+            setInsomniaImportModal(null);
+            setInsomniaImportError("");
+            notifyError("Failed to import Insomnia V5 collection");
+            notifyInfo(summarizeInsomniaImportFailure(error));
         }
     }
 
@@ -3847,6 +3963,80 @@ export default function App() {
             notifyError("Failed to import Bruno collection");
         } finally {
             setBrunoImportBusy(false);
+        }
+    }
+
+    async function onConfirmImportInsomniaCollection() {
+        if (!insomniaImportModal || insomniaImportBusy) return;
+
+        setInsomniaImportBusy(true);
+        setInsomniaImportError("");
+        try {
+            const { plan } = insomniaImportModal;
+            const createdCollection = await invoke<CollectionMeta>("create_collection", {
+                name: plan.collectionName,
+            });
+
+            const folderIdByPath = new Map<string, string>();
+            const ensureFolderPath = async (folderPath: string[]): Promise<string | null> => {
+                if (folderPath.length === 0) {
+                    return null;
+                }
+
+                let parentFolderId: string | null = null;
+                const pathSegments: string[] = [];
+                for (const segment of folderPath) {
+                    pathSegments.push(segment);
+                    const key = pathSegments.join("\u0000");
+                    const existing = folderIdByPath.get(key);
+                    if (existing) {
+                        parentFolderId = existing;
+                        continue;
+                    }
+
+                    const createdFolderId: string = await invoke("create_folder", {
+                        collectionId: createdCollection.id,
+                        parentFolderId,
+                        name: segment,
+                    });
+                    folderIdByPath.set(key, createdFolderId);
+                    parentFolderId = createdFolderId;
+                }
+
+                return parentFolderId;
+            };
+
+            for (const generatedRequest of plan.requests) {
+                const parentFolderId = await ensureFolderPath(generatedRequest.folderPath);
+                await invoke("create_request", {
+                    collectionId: createdCollection.id,
+                    request: generatedRequest.request,
+                    parentFolderId,
+                });
+            }
+
+            await invoke("set_active_collection", {
+                collectionId: createdCollection.id,
+            });
+            await reloadCollectionsAndRestoreActive(createdCollection.id);
+
+            const firstRequestId = plan.requests[0]?.request.id ?? null;
+            if (firstRequestId) {
+                setSelectedRequestId(firstRequestId);
+            }
+
+            setInsomniaImportModal(null);
+            setInsomniaImportError("");
+            notifySuccess("Imported Insomnia V5 collection");
+            if (plan.warnings.length > 0) {
+                notifyInfo(`Imported with ${plan.warnings.length} warning(s)`);
+            }
+        } catch (error) {
+            console.error("Insomnia V5 import failed", error);
+            setInsomniaImportError(errorMessage(error));
+            notifyError("Failed to import Insomnia V5 collection");
+        } finally {
+            setInsomniaImportBusy(false);
         }
     }
 
@@ -4303,6 +4493,45 @@ export default function App() {
         }
     }
 
+    const importCollectionOptions: ImportCollectionOption[] = [
+        {
+            id: "bifrost",
+            label: "Bifrost",
+            description: "Import a Bifrost portable JSON export.",
+            onSelect: () => onImportCollectionOptionSelected("bifrost"),
+        },
+        {
+            id: "curl",
+            label: "From cURL",
+            description: "Import a single request from a cURL command.",
+            onSelect: () => onImportCollectionOptionSelected("curl"),
+        },
+        {
+            id: "bruno",
+            label: "Bruno",
+            description: "Import a Bruno/OpenCollection single-file export.",
+            onSelect: () => onImportCollectionOptionSelected("bruno"),
+        },
+        {
+            id: "openapi",
+            label: "OpenAPI / Swagger",
+            description: "Import an OpenAPI or Swagger schema into a new collection.",
+            onSelect: () => onImportCollectionOptionSelected("openapi"),
+        },
+        {
+            id: "postman",
+            label: "Postman",
+            description: "Import a Postman collection JSON export.",
+            onSelect: () => onImportCollectionOptionSelected("postman"),
+        },
+        {
+            id: "insomnia_v5",
+            label: "Insomnia V5",
+            description: "Import an Insomnia V5 YAML or JSON export file.",
+            onSelect: () => onImportCollectionOptionSelected("insomnia_v5"),
+        },
+    ];
+
     return (
         <>
             <TopBar
@@ -4317,11 +4546,7 @@ export default function App() {
                 onSaveDraft={saveDraft}
                 onOpenRawJson={() => setTab("json")}
                 onOpenCollectionRunner={() => setRunnerModalOpen(true)}
-                onImportCurl={openCurlImportModal}
-                onImportBruno={openBrunoImportPicker}
-                onImportOpenApi={openOpenApiImportPicker}
-                onImportPostman={openPostmanImportPicker}
-                onImportPortable={openPortableImportPicker}
+                onOpenImport={openImportCollectionModal}
                 onExportPortable={() => void onExportPortableCollection()}
                 canSaveDraft={!!current && !!draft && isDirty}
                 hasDraft={!!draft}
@@ -4329,12 +4554,24 @@ export default function App() {
                 canExportCollection={!!current}
                 isCollectionRunning={collectionRunPending}
             />
+            <ImportCollectionModal
+                open={importCollectionModalOpen}
+                options={importCollectionOptions}
+                onCancel={() => setImportCollectionModalOpen(false)}
+            />
             <input
                 ref={brunoImportInputRef}
                 type="file"
                 accept=".yaml,.yml,text/yaml,application/yaml,application/x-yaml"
                 style={{ display: "none" }}
                 onChange={(event) => void onBrunoImportFileSelected(event)}
+            />
+            <input
+                ref={insomniaImportInputRef}
+                type="file"
+                accept=".yaml,.yml,.json,text/yaml,application/yaml,application/x-yaml,application/json"
+                style={{ display: "none" }}
+                onChange={(event) => void onInsomniaImportFileSelected(event)}
             />
             <input
                 ref={openApiImportInputRef}
@@ -5993,6 +6230,23 @@ export default function App() {
                         setBrunoImportError("");
                     }}
                     onConfirm={() => void onConfirmImportBrunoCollection()}
+                />
+            )}
+
+            {insomniaImportModal && (
+                <InsomniaImportDialog
+                    fileName={insomniaImportModal.fileName}
+                    collectionName={insomniaImportModal.plan.collectionName}
+                    preview={insomniaImportModal.plan.preview}
+                    warnings={insomniaImportModal.plan.warnings}
+                    error={insomniaImportError}
+                    busy={insomniaImportBusy}
+                    onCancel={() => {
+                        if (insomniaImportBusy) return;
+                        setInsomniaImportModal(null);
+                        setInsomniaImportError("");
+                    }}
+                    onConfirm={() => void onConfirmImportInsomniaCollection()}
                 />
             )}
 
