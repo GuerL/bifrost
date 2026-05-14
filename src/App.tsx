@@ -4495,6 +4495,12 @@ export default function App() {
 
     const importCollectionOptions: ImportCollectionOption[] = [
         {
+            id: "bifrost",
+            label: "Bifrost",
+            description: "Import a Bifrost portable JSON export.",
+            onSelect: () => onImportCollectionOptionSelected("bifrost"),
+        },
+        {
             id: "curl",
             label: "From cURL",
             description: "Import a single request from a cURL command.",
@@ -4523,12 +4529,6 @@ export default function App() {
             label: "Insomnia V5",
             description: "Import an Insomnia V5 YAML or JSON export file.",
             onSelect: () => onImportCollectionOptionSelected("insomnia_v5"),
-        },
-        {
-            id: "bifrost",
-            label: "Bifrost",
-            description: "Import a Bifrost portable JSON export.",
-            onSelect: () => onImportCollectionOptionSelected("bifrost"),
         },
     ];
 
