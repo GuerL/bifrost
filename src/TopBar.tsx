@@ -29,11 +29,7 @@ type TopBarProps = {
     onSaveDraft: () => void;
     onOpenRawJson: () => void;
     onOpenCollectionRunner: () => void;
-    onImportCurl: () => void;
-    onImportBruno: () => void;
-    onImportOpenApi: () => void;
-    onImportPostman: () => void;
-    onImportPortable: () => void;
+    onOpenImport: () => void;
     onExportPortable: () => void;
     canSaveDraft: boolean;
     hasDraft: boolean;
@@ -54,11 +50,7 @@ export default function TopBar({
     onSaveDraft,
     onOpenRawJson,
     onOpenCollectionRunner,
-    onImportCurl,
-    onImportBruno,
-    onImportOpenApi,
-    onImportPostman,
-    onImportPortable,
+    onOpenImport,
     onExportPortable,
     canSaveDraft,
     hasDraft,
@@ -132,26 +124,10 @@ export default function TopBar({
         }
     }
 
-    function runTransferAction(action: "importCurl" | "importBruno" | "importOpenApi" | "importPostman" | "importPortable" | "exportPortable") {
+    function runTransferAction(action: "openImport" | "exportPortable") {
         setIsTransferMenuOpen(false);
-        if (action === "importCurl") {
-            onImportCurl();
-            return;
-        }
-        if (action === "importBruno") {
-            onImportBruno();
-            return;
-        }
-        if (action === "importOpenApi") {
-            onImportOpenApi();
-            return;
-        }
-        if (action === "importPostman") {
-            onImportPostman();
-            return;
-        }
-        if (action === "importPortable") {
-            onImportPortable();
+        if (action === "openImport") {
+            onOpenImport();
             return;
         }
         if (!canExportCollection) {
@@ -405,7 +381,7 @@ export default function TopBar({
                                 position: "absolute",
                                 top: "calc(100% + 6px)",
                                 right: 0,
-                                minWidth: 230,
+                                minWidth: 190,
                                 display: "flex",
                                 flexDirection: "column",
                                 gap: 2,
@@ -420,42 +396,10 @@ export default function TopBar({
                             <button
                                 type="button"
                                 role="menuitem"
-                                onClick={() => runTransferAction("importCurl")}
+                                onClick={() => runTransferAction("openImport")}
                                 style={transferMenuItemStyle()}
                             >
-                                Import from cURL
-                            </button>
-                            <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => runTransferAction("importBruno")}
-                                style={transferMenuItemStyle()}
-                            >
-                                Import Bruno
-                            </button>
-                            <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => runTransferAction("importOpenApi")}
-                                style={transferMenuItemStyle()}
-                            >
-                                Import OpenAPI / Swagger
-                            </button>
-                            <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => runTransferAction("importPostman")}
-                                style={transferMenuItemStyle()}
-                            >
-                                Import Postman
-                            </button>
-                            <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => runTransferAction("importPortable")}
-                                style={transferMenuItemStyle()}
-                            >
-                                Import Bifrost
+                                Import...
                             </button>
                             <button
                                 type="button"
