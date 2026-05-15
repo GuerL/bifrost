@@ -125,6 +125,20 @@ import InsomniaImportDialog from "./features/insomnia-import/InsomniaImportDialo
 import { parseInsomniaV5Collection } from "./features/insomnia-import/insomniaV5Parser.ts";
 import { mapInsomniaV5ToBifrost } from "./features/insomnia-import/insomniaV5ToBifrost.ts";
 import type { InsomniaV5ImportPlan } from "./features/insomnia-import/insomniaV5Types.ts";
+import EnvironmentExportDialog, {
+    type EnvironmentExportSubmission,
+} from "./features/environment-import-export/EnvironmentExportDialog.tsx";
+import EnvironmentImportDialog, {
+    type EnvironmentImportSubmission,
+} from "./features/environment-import-export/EnvironmentImportDialog.tsx";
+import { buildEnvironmentExportPayload } from "./features/environment-import-export/environmentExport.ts";
+import {
+    buildEnvironmentImportPlan,
+    parseEnvironmentImportJson,
+} from "./features/environment-import-export/environmentImport.ts";
+import type {
+    ParsedBifrostEnvironmentImport,
+} from "./features/environment-import-export/environmentImportExportTypes.ts";
 
 type SidebarContextMenu = {
     x: number;
@@ -205,6 +219,11 @@ type BrunoImportModal = {
 type InsomniaImportModal = {
     fileName: string;
     plan: InsomniaV5ImportPlan;
+};
+
+type EnvironmentImportModal = {
+    sourcePath: string;
+    parsedImport: ParsedBifrostEnvironmentImport;
 };
 
 type UpdateRestartModal = {
@@ -688,6 +707,32 @@ function safeFileName(value: string): string {
         .toLowerCase();
 }
 
+function resolveSingleDialogPath(value: unknown): string | null {
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        return trimmed || null;
+    }
+
+    if (Array.isArray(value)) {
+        const first = value[0];
+        if (typeof first === "string") {
+            const trimmed = first.trim();
+            return trimmed || null;
+        }
+    }
+
+    if (
+        value &&
+        typeof value === "object" &&
+        typeof (value as { path?: unknown }).path === "string"
+    ) {
+        const trimmed = (value as { path: string }).path.trim();
+        return trimmed || null;
+    }
+
+    return null;
+}
+
 export default function App() {
     const { resolvedTheme } = useTheme();
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
@@ -744,6 +789,11 @@ export default function App() {
     const [envDraftVars, setEnvDraftVars] = useState<KeyValue[]>([]);
     const [envBusy, setEnvBusy] = useState(false);
     const [envError, setEnvError] = useState("");
+    const [environmentExportDialogOpen, setEnvironmentExportDialogOpen] = useState(false);
+    const [environmentExportBusy, setEnvironmentExportBusy] = useState(false);
+    const [environmentImportModal, setEnvironmentImportModal] = useState<EnvironmentImportModal | null>(null);
+    const [environmentImportBusy, setEnvironmentImportBusy] = useState(false);
+    const [environmentImportError, setEnvironmentImportError] = useState("");
     const [collectionsModalOpen, setCollectionsModalOpen] = useState(false);
     const [collectionSelectedId, setCollectionSelectedId] = useState<string | null>(null);
     const [collectionDraftName, setCollectionDraftName] = useState("");
@@ -4493,6 +4543,159 @@ export default function App() {
         }
     }
 
+    function openEnvironmentExportDialog() {
+        if (environments.length === 0) {
+            notifyInfo("No environment available for export");
+            return;
+        }
+        setEnvironmentExportDialogOpen(true);
+    }
+
+    function closeEnvironmentExportDialog() {
+        if (environmentExportBusy) return;
+        setEnvironmentExportDialogOpen(false);
+    }
+
+    async function onConfirmEnvironmentExport(submission: EnvironmentExportSubmission) {
+        if (environmentExportBusy) return;
+
+        let exportToastId: string | null = null;
+        setEnvironmentExportBusy(true);
+        try {
+            const appDataDir = await invoke<string>("app_data_dir");
+            const defaultPath = `${appDataDir}/${safeFileName(submission.environment.name)}.bifrost-env.json`;
+            const userSelection = await invoke<unknown>("plugin:dialog|save", {
+                options: {
+                    defaultPath,
+                    filters: [
+                        {
+                            name: "Bifrost Environment JSON",
+                            extensions: ["json"],
+                        },
+                    ],
+                },
+            });
+            const userPath = resolveSingleDialogPath(userSelection);
+            if (!userPath) {
+                notifyInfo("Environment export cancelled");
+                return;
+            }
+
+            const payload = buildEnvironmentExportPayload(
+                submission.environment.name,
+                submission.variables
+            );
+
+            exportToastId = notifyLoading(`Exporting '${submission.environment.name}'...`);
+            await invoke("write_text_file", {
+                path: userPath,
+                content: JSON.stringify(payload, null, 2),
+            });
+            notifyDismiss(exportToastId);
+            notifySuccess(`Environment export saved: ${userPath}`);
+            setEnvironmentExportDialogOpen(false);
+        } catch (error) {
+            if (exportToastId) {
+                notifyDismiss(exportToastId);
+            }
+            notifyError(`Failed to export environment: ${errorMessage(error)}`);
+        } finally {
+            setEnvironmentExportBusy(false);
+        }
+    }
+
+    async function onOpenEnvironmentImport() {
+        if (environmentImportBusy) return;
+
+        setEnvironmentImportError("");
+        try {
+            const selection = await invoke<unknown>("plugin:dialog|open", {
+                options: {
+                    multiple: false,
+                    directory: false,
+                    filters: [
+                        {
+                            name: "Bifrost Environment JSON",
+                            extensions: ["json"],
+                        },
+                    ],
+                },
+            });
+            const selectedPath = resolveSingleDialogPath(selection);
+            if (!selectedPath) {
+                notifyInfo("Environment import cancelled");
+                return;
+            }
+
+            const jsonText = await invoke<string>("read_text_file", { path: selectedPath });
+            const parsedImport = parseEnvironmentImportJson(jsonText);
+
+            setEnvironmentImportModal({
+                sourcePath: selectedPath,
+                parsedImport,
+            });
+        } catch (error) {
+            setEnvironmentImportModal(null);
+            notifyError("Failed to import environment");
+        }
+    }
+
+    function closeEnvironmentImportDialog() {
+        if (environmentImportBusy) return;
+        setEnvironmentImportModal(null);
+        setEnvironmentImportError("");
+    }
+
+    async function onConfirmEnvironmentImport(submission: EnvironmentImportSubmission) {
+        if (!environmentImportModal || environmentImportBusy) return;
+
+        setEnvironmentImportBusy(true);
+        setEnvironmentImportError("");
+        try {
+            const importPlan = buildEnvironmentImportPlan({
+                parsedImport: environmentImportModal.parsedImport,
+                existingEnvironments: environments,
+                selectedVariableKeys: submission.selectedVariableKeys,
+                environmentConflictStrategy: submission.environmentConflictStrategy,
+                variableConflictStrategy: submission.variableConflictStrategy,
+                renamedEnvironmentName: submission.renamedEnvironmentName,
+            });
+
+            let importedEnvironmentId = importPlan.targetEnvironmentId;
+
+            if (importedEnvironmentId) {
+                await invoke("save_environment", {
+                    environment: {
+                        id: importedEnvironmentId,
+                        name: importPlan.targetEnvironmentName,
+                        variables: importPlan.variables,
+                    },
+                });
+            } else {
+                const createdEnvironment = await invoke<Environment>("create_environment", {
+                    name: importPlan.targetEnvironmentName,
+                });
+                importedEnvironmentId = createdEnvironment.id;
+                await invoke("save_environment", {
+                    environment: {
+                        id: createdEnvironment.id,
+                        name: importPlan.targetEnvironmentName,
+                        variables: importPlan.variables,
+                    },
+                });
+            }
+
+            await reloadEnvironments(importedEnvironmentId ?? undefined);
+            setEnvironmentImportModal(null);
+            notifySuccess(`Environment imported: ${importPlan.targetEnvironmentName}`);
+        } catch (error) {
+            setEnvironmentImportError(errorMessage(error));
+            notifyError("Failed to import environment");
+        } finally {
+            setEnvironmentImportBusy(false);
+        }
+    }
+
     const importCollectionOptions: ImportCollectionOption[] = [
         {
             id: "bifrost",
@@ -6509,6 +6712,8 @@ export default function App() {
                 onClose={closeEnvironmentsModal}
                 onCreate={() => void onCreateEnvironment()}
                 onDuplicate={() => void onDuplicateEnvironment()}
+                onImport={() => void onOpenEnvironmentImport()}
+                onExport={openEnvironmentExportDialog}
                 onRequestDelete={requestDeleteSelectedEnvironment}
                 onPickEnvironment={pickEnvironmentForEdit}
                 onDraftNameChange={setEnvDraftName}
@@ -6520,6 +6725,26 @@ export default function App() {
                 onSave={() => void onSaveEnvironment()}
                 onCancelDelete={() => setDeleteEnvironmentModal(null)}
                 onConfirmDelete={() => void onDeleteEnvironment()}
+            />
+
+            <EnvironmentExportDialog
+                open={environmentExportDialogOpen}
+                busy={environmentExportBusy}
+                environments={environments}
+                initialEnvironmentId={envSelectedId}
+                onClose={closeEnvironmentExportDialog}
+                onExport={(submission) => void onConfirmEnvironmentExport(submission)}
+            />
+
+            <EnvironmentImportDialog
+                open={!!environmentImportModal}
+                busy={environmentImportBusy}
+                error={environmentImportError}
+                parsedImport={environmentImportModal?.parsedImport ?? null}
+                sourcePath={environmentImportModal?.sourcePath ?? null}
+                existingEnvironments={environments}
+                onClose={closeEnvironmentImportDialog}
+                onImport={(submission) => void onConfirmEnvironmentImport(submission)}
             />
         </>
     );

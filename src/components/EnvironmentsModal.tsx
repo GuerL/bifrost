@@ -26,6 +26,8 @@ type EnvironmentsModalProps = {
     onClose: () => void;
     onCreate: () => void;
     onDuplicate: () => void;
+    onImport: () => void;
+    onExport: () => void;
     onRequestDelete: () => void;
     onPickEnvironment: (environmentId: string) => void;
     onDraftNameChange: (value: string) => void;
@@ -49,6 +51,8 @@ export default function EnvironmentsModal({
     onClose,
     onCreate,
     onDuplicate,
+    onImport,
+    onExport,
     onRequestDelete,
     onPickEnvironment,
     onDraftNameChange,
@@ -114,6 +118,23 @@ export default function EnvironmentsModal({
                                         style={buttonStyle(!selectedEnvironmentId || busy)}
                                     >
                                         Duplicate
+                                    </button>
+                                </div>
+
+                                <div style={{ display: "flex", gap: 8 }}>
+                                    <button
+                                        onClick={onImport}
+                                        disabled={busy}
+                                        style={buttonStyle(busy)}
+                                    >
+                                        Import
+                                    </button>
+                                    <button
+                                        onClick={onExport}
+                                        disabled={!selectedEnvironmentId || busy}
+                                        style={buttonStyle(!selectedEnvironmentId || busy)}
+                                    >
+                                        Export
                                     </button>
                                 </div>
 
