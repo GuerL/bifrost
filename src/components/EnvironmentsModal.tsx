@@ -1,8 +1,6 @@
-import { useMemo, useState } from "react";
 import KeyValueTable from "../KeyValueTable.tsx";
 import type { Environment, KeyValue } from "../types.ts";
 import ConfirmationModal from "./ConfirmationModal.tsx";
-import AppSelect, { type AppSelectOption } from "./AppSelect.tsx";
 import {
     buttonStyle,
     dangerButtonStyle,
@@ -14,8 +12,6 @@ type DeleteEnvironmentTarget = {
     id: string;
     name: string;
 };
-
-const ENV_ACTION_PLACEHOLDER = "__env_actions__";
 
 type EnvironmentsModalProps = {
     open: boolean;
@@ -66,59 +62,6 @@ export default function EnvironmentsModal({
     onCancelDelete,
     onConfirmDelete,
 }: EnvironmentsModalProps) {
-    const [headerAction, setHeaderAction] = useState<string>(ENV_ACTION_PLACEHOLDER);
-
-    const headerActionOptions = useMemo<AppSelectOption[]>(
-        () => [
-            {
-                value: ENV_ACTION_PLACEHOLDER,
-                label: "Manage",
-                disabled: true,
-            },
-            {
-                value: "new",
-                label: "New Environment",
-                disabled: busy,
-            },
-            {
-                value: "duplicate",
-                label: "Duplicate Environment",
-                disabled: busy || !selectedEnvironmentId,
-            },
-            {
-                value: "import",
-                label: "Import Environment",
-                disabled: busy,
-            },
-            {
-                value: "export",
-                label: "Export Environment",
-                disabled: busy || !selectedEnvironmentId,
-            },
-        ],
-        [busy, selectedEnvironmentId]
-    );
-
-    function onHeaderAction(nextValue: string) {
-        setHeaderAction(ENV_ACTION_PLACEHOLDER);
-
-        if (nextValue === "new") {
-            onCreate();
-            return;
-        }
-        if (nextValue === "duplicate") {
-            onDuplicate();
-            return;
-        }
-        if (nextValue === "import") {
-            onImport();
-            return;
-        }
-        if (nextValue === "export") {
-            onExport();
-        }
-    }
-
     return (
         <>
             {open && (
@@ -153,15 +96,68 @@ export default function EnvironmentsModal({
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                             <h3 style={{ margin: 0 }}>Environments</h3>
                             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <AppSelect
-                                    value={headerAction}
-                                    options={headerActionOptions}
-                                    onValueChange={onHeaderAction}
-                                    ariaLabel="Environment actions"
-                                    style={{ minWidth: 192 }}
-                                />
-                                <button onClick={onClose} style={buttonStyle(busy)}>
-                                    Close
+                                <button
+                                    onClick={onCreate}
+                                    disabled={busy}
+                                    style={buttonStyle(busy)}
+                                >
+                                    New
+                                </button>
+                                <button
+                                    onClick={onDuplicate}
+                                    disabled={!selectedEnvironmentId || busy}
+                                    style={buttonStyle(!selectedEnvironmentId || busy)}
+                                >
+                                    Duplicate
+                                </button>
+                                <button
+                                    onClick={onImport}
+                                    disabled={busy}
+                                    style={buttonStyle(busy)}
+                                >
+                                    Import
+                                </button>
+                                <button
+                                    onClick={onExport}
+                                    disabled={!selectedEnvironmentId || busy}
+                                    style={buttonStyle(!selectedEnvironmentId || busy)}
+                                >
+                                    Export
+                                </button>
+                                <button
+                                    type="button"
+                                    aria-label="Close environments modal"
+                                    title="Close"
+                                    disabled={busy}
+                                    onClick={onClose}
+                                    style={{
+                                        width: 30,
+                                        height: 30,
+                                        borderRadius: 9,
+                                        border: "1px solid var(--pg-border)",
+                                        background: busy ? "var(--pg-surface-2)" : "var(--pg-surface-gradient)",
+                                        color: busy ? "var(--pg-disabled)" : "var(--pg-text-dim)",
+                                        cursor: busy ? "not-allowed" : "pointer",
+                                        display: "grid",
+                                        placeItems: "center",
+                                        padding: 0,
+                                        boxShadow: busy ? "none" : "0 6px 14px var(--pg-shadow-color)",
+                                    }}
+                                >
+                                    <svg
+                                        width="12"
+                                        height="12"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        aria-hidden
+                                    >
+                                        <path
+                                            d="M6 6L18 18M18 6L6 18"
+                                            stroke="currentColor"
+                                            strokeWidth="2"
+                                            strokeLinecap="round"
+                                        />
+                                    </svg>
                                 </button>
                             </div>
                         </div>
