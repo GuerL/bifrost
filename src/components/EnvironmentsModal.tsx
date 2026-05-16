@@ -26,6 +26,8 @@ type EnvironmentsModalProps = {
     onClose: () => void;
     onCreate: () => void;
     onDuplicate: () => void;
+    onImport: () => void;
+    onExport: () => void;
     onRequestDelete: () => void;
     onPickEnvironment: (environmentId: string) => void;
     onDraftNameChange: (value: string) => void;
@@ -49,6 +51,8 @@ export default function EnvironmentsModal({
     onClose,
     onCreate,
     onDuplicate,
+    onImport,
+    onExport,
     onRequestDelete,
     onPickEnvironment,
     onDraftNameChange,
@@ -91,9 +95,71 @@ export default function EnvironmentsModal({
                     >
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                             <h3 style={{ margin: 0 }}>Environments</h3>
-                            <button onClick={onClose} style={buttonStyle(busy)}>
-                                Close
-                            </button>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <button
+                                    onClick={onCreate}
+                                    disabled={busy}
+                                    style={buttonStyle(busy)}
+                                >
+                                    New
+                                </button>
+                                <button
+                                    onClick={onDuplicate}
+                                    disabled={!selectedEnvironmentId || busy}
+                                    style={buttonStyle(!selectedEnvironmentId || busy)}
+                                >
+                                    Duplicate
+                                </button>
+                                <button
+                                    onClick={onImport}
+                                    disabled={busy}
+                                    style={buttonStyle(busy)}
+                                >
+                                    Import
+                                </button>
+                                <button
+                                    onClick={onExport}
+                                    disabled={!selectedEnvironmentId || busy}
+                                    style={buttonStyle(!selectedEnvironmentId || busy)}
+                                >
+                                    Export
+                                </button>
+                                <button
+                                    type="button"
+                                    aria-label="Close environments modal"
+                                    title="Close"
+                                    disabled={busy}
+                                    onClick={onClose}
+                                    style={{
+                                        width: 30,
+                                        height: 30,
+                                        borderRadius: 9,
+                                        border: "1px solid var(--pg-border)",
+                                        background: busy ? "var(--pg-surface-2)" : "var(--pg-surface-gradient)",
+                                        color: busy ? "var(--pg-disabled)" : "var(--pg-text-dim)",
+                                        cursor: busy ? "not-allowed" : "pointer",
+                                        display: "grid",
+                                        placeItems: "center",
+                                        padding: 0,
+                                        boxShadow: busy ? "none" : "0 6px 14px var(--pg-shadow-color)",
+                                    }}
+                                >
+                                    <svg
+                                        width="12"
+                                        height="12"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        aria-hidden
+                                    >
+                                        <path
+                                            d="M6 6L18 18M18 6L6 18"
+                                            stroke="currentColor"
+                                            strokeWidth="2"
+                                            strokeLinecap="round"
+                                        />
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
 
                         <div style={{ display: "flex", gap: 12, minHeight: 0, flex: 1 }}>
@@ -103,20 +169,8 @@ export default function EnvironmentsModal({
                                     display: "flex",
                                     flexDirection: "column",
                                     minHeight: 0,
-                                    gap: 8,
                                 }}
                             >
-                                <div style={{ display: "flex", gap: 8 }}>
-                                    <button onClick={onCreate} style={buttonStyle(busy)}>+ New</button>
-                                    <button
-                                        onClick={onDuplicate}
-                                        disabled={!selectedEnvironmentId || busy}
-                                        style={buttonStyle(!selectedEnvironmentId || busy)}
-                                    >
-                                        Duplicate
-                                    </button>
-                                </div>
-
                                 <div style={{ overflowY: "auto", minHeight: 0, flex: 1, paddingRight: 4 }}>
                                     {environments.map((env) => (
                                         <button
