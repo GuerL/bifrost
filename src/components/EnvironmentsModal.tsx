@@ -1,6 +1,8 @@
+import { useMemo, useState } from "react";
 import KeyValueTable from "../KeyValueTable.tsx";
 import type { Environment, KeyValue } from "../types.ts";
 import ConfirmationModal from "./ConfirmationModal.tsx";
+import AppSelect, { type AppSelectOption } from "./AppSelect.tsx";
 import {
     buttonStyle,
     dangerButtonStyle,
@@ -12,6 +14,8 @@ type DeleteEnvironmentTarget = {
     id: string;
     name: string;
 };
+
+const ENV_ACTION_PLACEHOLDER = "__env_actions__";
 
 type EnvironmentsModalProps = {
     open: boolean;
@@ -62,6 +66,59 @@ export default function EnvironmentsModal({
     onCancelDelete,
     onConfirmDelete,
 }: EnvironmentsModalProps) {
+    const [headerAction, setHeaderAction] = useState<string>(ENV_ACTION_PLACEHOLDER);
+
+    const headerActionOptions = useMemo<AppSelectOption[]>(
+        () => [
+            {
+                value: ENV_ACTION_PLACEHOLDER,
+                label: "Manage",
+                disabled: true,
+            },
+            {
+                value: "new",
+                label: "New Environment",
+                disabled: busy,
+            },
+            {
+                value: "duplicate",
+                label: "Duplicate Environment",
+                disabled: busy || !selectedEnvironmentId,
+            },
+            {
+                value: "import",
+                label: "Import Environment",
+                disabled: busy,
+            },
+            {
+                value: "export",
+                label: "Export Environment",
+                disabled: busy || !selectedEnvironmentId,
+            },
+        ],
+        [busy, selectedEnvironmentId]
+    );
+
+    function onHeaderAction(nextValue: string) {
+        setHeaderAction(ENV_ACTION_PLACEHOLDER);
+
+        if (nextValue === "new") {
+            onCreate();
+            return;
+        }
+        if (nextValue === "duplicate") {
+            onDuplicate();
+            return;
+        }
+        if (nextValue === "import") {
+            onImport();
+            return;
+        }
+        if (nextValue === "export") {
+            onExport();
+        }
+    }
+
     return (
         <>
             {open && (
@@ -95,9 +152,18 @@ export default function EnvironmentsModal({
                     >
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                             <h3 style={{ margin: 0 }}>Environments</h3>
-                            <button onClick={onClose} style={buttonStyle(busy)}>
-                                Close
-                            </button>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <AppSelect
+                                    value={headerAction}
+                                    options={headerActionOptions}
+                                    onValueChange={onHeaderAction}
+                                    ariaLabel="Environment actions"
+                                    style={{ minWidth: 192 }}
+                                />
+                                <button onClick={onClose} style={buttonStyle(busy)}>
+                                    Close
+                                </button>
+                            </div>
                         </div>
 
                         <div style={{ display: "flex", gap: 12, minHeight: 0, flex: 1 }}>
@@ -107,37 +173,8 @@ export default function EnvironmentsModal({
                                     display: "flex",
                                     flexDirection: "column",
                                     minHeight: 0,
-                                    gap: 8,
                                 }}
                             >
-                                <div style={{ display: "flex", gap: 8 }}>
-                                    <button onClick={onCreate} style={buttonStyle(busy)}>+ New</button>
-                                    <button
-                                        onClick={onDuplicate}
-                                        disabled={!selectedEnvironmentId || busy}
-                                        style={buttonStyle(!selectedEnvironmentId || busy)}
-                                    >
-                                        Duplicate
-                                    </button>
-                                </div>
-
-                                <div style={{ display: "flex", gap: 8 }}>
-                                    <button
-                                        onClick={onImport}
-                                        disabled={busy}
-                                        style={buttonStyle(busy)}
-                                    >
-                                        Import
-                                    </button>
-                                    <button
-                                        onClick={onExport}
-                                        disabled={!selectedEnvironmentId || busy}
-                                        style={buttonStyle(!selectedEnvironmentId || busy)}
-                                    >
-                                        Export
-                                    </button>
-                                </div>
-
                                 <div style={{ overflowY: "auto", minHeight: 0, flex: 1, paddingRight: 4 }}>
                                     {environments.map((env) => (
                                         <button
