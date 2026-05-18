@@ -29,7 +29,8 @@ export default function RequestScriptsEditor({
         <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
             <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
                 Available APIs: <code>bf.runtime.get/set/unset/clear</code>, <code>bf.env.get/set/unset</code>,{" "}
-                <code>bf.request</code>, <code>bf.response</code> (<code>pg</code> is still supported).
+                <code>bf.request</code>, <code>bf.response</code>, <code>bf.test(name, fn)</code>,{" "}
+                <code>bf.expect(value)</code> (<code>pg</code> is still supported).
             </div>
             <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
                 <code>bf.environment</code>, <code>bf.collectionVariables</code>, and <code>bf.globals</code> are

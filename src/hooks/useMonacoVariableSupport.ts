@@ -409,6 +409,18 @@ type BifrostEnvVariableApi = {
 type BifrostRuntimeVariableApi = BifrostEnvVariableApi & {
   clear(): void;
 };
+type BifrostExpectation = {
+  toBe(expected: unknown): void;
+  toEqual(expected: unknown): void;
+  toContain(expected: unknown): void;
+  toBeDefined(): void;
+  toBeTruthy(): void;
+  toBeFalsy(): void;
+  not: {
+    toBe(expected: unknown): void;
+    toEqual(expected: unknown): void;
+  };
+};
 type BifrostScriptingApi = {
   runtime: BifrostRuntimeVariableApi;
   env: BifrostEnvVariableApi;
@@ -419,7 +431,7 @@ type BifrostScriptingApi = {
   /** @deprecated Use bf.runtime */
   globals: BifrostRuntimeVariableApi;
   response: {
-    status: { toBe(expected: unknown): void; toEqual(expected: unknown): void };
+    status: BifrostExpectation & { valueOf(): number | null; toString(): string };
     statusCode: number | null;
     body: string;
     text(): string;
@@ -432,12 +444,7 @@ type BifrostScriptingApi = {
     };
   };
   test(name: string, callback: () => void): void;
-  expect(actual: unknown): {
-    toBe(expected: unknown): void;
-    toEqual(expected: unknown): void;
-    toBeTruthy(): void;
-    toBeFalsy(): void;
-  };
+  expect(actual: unknown): BifrostExpectation;
 };
 declare const bf: BifrostScriptingApi;
 declare const pg: BifrostScriptingApi;`;
@@ -485,6 +492,12 @@ declare const pg: BifrostScriptingApi;`;
                             "bf.response.text()",
                             "bf.response.headers.get(\"Authorization\")",
                             "bf.test(\"name\", () => {})",
+                            "bf.expect(bf.response.status).toBe(200)",
+                            "bf.expect(bf.response.json()).toEqual({ ok: true })",
+                            "bf.expect(\"hello world\").toContain(\"world\")",
+                            "bf.expect(bf.response.json()?.token).toBeDefined()",
+                            "bf.expect(true).toBeTruthy()",
+                            "bf.expect(false).toBeFalsy()",
                             "bf.environment.get(\"key\")",
                             "bf.environment.set(\"key\", \"value\")",
                             "bf.environment.unset(\"key\")",
@@ -506,6 +519,7 @@ declare const pg: BifrostScriptingApi;`;
                             "pg.response.json()",
                             "pg.response.text()",
                             "pg.response.headers.get(\"Authorization\")",
+                            "pg.expect(pg.response.status).toBe(200)",
                             "pg.environment.get(\"key\")",
                             "pg.environment.set(\"key\", \"value\")",
                             "pg.environment.unset(\"key\")",

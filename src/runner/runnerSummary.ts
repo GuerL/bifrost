@@ -21,6 +21,11 @@ function executedRequests(summary: RunnerRunSummary): number {
     return Math.max(0, summary.total - summary.queued - summary.running - summary.skipped);
 }
 
+function testsSuffix(summary: RunnerRunSummary): string {
+    if (!summary.totalTests) return "";
+    return ` · tests ${summary.passedTests}/${summary.totalTests}`;
+}
+
 export function buildRunnerNotificationSummary({
     status,
     summary,
@@ -28,19 +33,19 @@ export function buildRunnerNotificationSummary({
     if (status === "cancelled" || summary.wasCancelledByUser) {
         return {
             title: RUNNER_COMPLETION_NOTIFICATION_TITLE,
-            body: `Runner cancelled · ${executedRequests(summary)} requests executed · ${summary.failed} failed`,
+            body: `Runner cancelled · ${executedRequests(summary)} requests executed · ${summary.failed} failed${testsSuffix(summary)}`,
         };
     }
 
     if (summary.failed > 0) {
         return {
             title: RUNNER_COMPLETION_NOTIFICATION_TITLE,
-            body: `${summary.total} requests · ${summary.success} succeeded · ${summary.failed} failed · ${formatDurationSeconds(summary.totalDurationMs)}`,
+            body: `${summary.total} requests · ${summary.success} succeeded · ${summary.failed} failed${testsSuffix(summary)} · ${formatDurationSeconds(summary.totalDurationMs)}`,
         };
     }
 
     return {
         title: RUNNER_COMPLETION_NOTIFICATION_TITLE,
-        body: `${summary.total} requests completed · ${formatDurationSeconds(summary.totalDurationMs)}`,
+        body: `${summary.total} requests completed${testsSuffix(summary)} · ${formatDurationSeconds(summary.totalDurationMs)}`,
     };
 }

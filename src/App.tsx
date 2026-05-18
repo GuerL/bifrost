@@ -356,6 +356,18 @@ function requestScriptsOrDefault(request: Request): RequestScripts {
     return request.scripts ?? { pre_request: "", post_response: "" };
 }
 
+function summarizeScriptTests(tests: ScriptTestResult[]) {
+    const total = tests.length;
+    const failed = tests.filter((test) => test.status === "failed").length;
+    const passed = total - failed;
+    return {
+        total,
+        passed,
+        failed,
+        hasFailures: failed > 0,
+    };
+}
+
 function applyEnvironmentMutationsToMap(
     target: Map<string, string>,
     mutations: ScriptEnvironmentMutation[]
@@ -2487,7 +2499,7 @@ export default function App() {
                 runtimeVariables,
                 environmentValues: activeEnvironmentValues,
             });
-            preScriptError = preScript.error;
+            preScriptError = preScript.scriptError;
             preScriptTests = preScript.tests;
             scriptEnvironmentMutations.push(...preScript.environmentMutations);
             runtimeVariables = preScript.runtimeVariables;
@@ -2505,7 +2517,7 @@ export default function App() {
                 setScriptReportsByRequestId((previous) => ({
                     ...previous,
                     [selectedRequestId]: {
-                        preRequestError: preScript.error,
+                        preRequestError: preScript.scriptError,
                         postResponseError: null,
                         tests: preScript.tests,
                     },
@@ -2542,12 +2554,12 @@ export default function App() {
             runtimeVariables = postScript.runtimeVariables;
             setExecutionRuntimeVariables(runtimeVariables);
             const scriptTests = [...preScript.tests, ...postScript.tests];
-            const failedScriptTests = scriptTests.filter((test) => test.status === "failed").length;
+            const scriptTestSummary = summarizeScriptTests(scriptTests);
             setScriptReportsByRequestId((previous) => ({
                 ...previous,
                 [selectedRequestId]: {
-                    preRequestError: preScript.error,
-                    postResponseError: postScript.error,
+                    preRequestError: preScript.scriptError,
+                    postResponseError: postScript.scriptError,
                     tests: scriptTests,
                 },
             }));
@@ -2556,12 +2568,12 @@ export default function App() {
                 scriptEnvironmentMutations
             );
 
-            const scriptIssueCount = [preScript.error, postScript.error].filter((entry) => !!entry).length;
+            const scriptIssueCount = [preScript.scriptError, postScript.scriptError].filter((entry) => !!entry).length;
             const scriptErrorSuffix =
                 scriptIssueCount > 0 ? ` • script issues ${scriptIssueCount}` : "";
             const scriptTestsSuffix =
-                scriptTests.length > 0
-                    ? ` • tests ${scriptTests.length - failedScriptTests}/${scriptTests.length}`
+                scriptTestSummary.total > 0
+                    ? ` • tests ${scriptTestSummary.passed}/${scriptTestSummary.total}`
                     : "";
             const environmentErrorSuffix = environmentPersistError
                 ? " • environment save issue"
@@ -2852,8 +2864,9 @@ export default function App() {
                     runtimeVariables: runVariables,
                     environmentValues: activeEnvironmentValues,
                 });
-                const preRequestScriptError = preScript.error;
+                const preRequestScriptError = preScript.scriptError;
                 const preRequestScriptTests = preScript.tests;
+                const preRequestScriptTestSummary = summarizeScriptTests(preRequestScriptTests);
                 runScriptEnvironmentMutations.push(...preScript.environmentMutations);
                 runVariables = preScript.runtimeVariables;
                 setExecutionRuntimeVariables(runVariables);
@@ -2874,6 +2887,10 @@ export default function App() {
                             postResponseScriptError: null,
                             preRequestScriptTests,
                             postResponseScriptTests: [],
+                            testTotal: preRequestScriptTestSummary.total,
+                            testPassed: preRequestScriptTestSummary.passed,
+                            testFailed: preRequestScriptTestSummary.failed,
+                            hasTestFailures: preRequestScriptTestSummary.hasFailures,
                         })
                     );
                     setScriptReportsByRequestId((previous) => ({
@@ -2910,8 +2927,10 @@ export default function App() {
                         runtimeVariables: runVariables,
                         environmentValues: activeEnvironmentValues,
                     });
-                    const postResponseScriptError = postScript.error;
+                    const postResponseScriptError = postScript.scriptError;
                     const postResponseScriptTests = postScript.tests;
+                    const combinedScriptTests = [...preRequestScriptTests, ...postResponseScriptTests];
+                    const combinedScriptTestSummary = summarizeScriptTests(combinedScriptTests);
                     runScriptEnvironmentMutations.push(...postScript.environmentMutations);
                     runVariables = postScript.runtimeVariables;
                     setExecutionRuntimeVariables(runVariables);
@@ -2919,15 +2938,11 @@ export default function App() {
                     const scriptIssues = [preRequestScriptError, postResponseScriptError].filter(
                         (entry) => !!entry
                     );
-                    const totalScriptTests = preRequestScriptTests.length + postResponseScriptTests.length;
-                    const failedScriptTests = [...preRequestScriptTests, ...postResponseScriptTests].filter(
-                        (test) => test.status === "failed"
-                    ).length;
                     const scriptErrorsSuffix =
                         scriptIssues.length > 0 ? ` • script issues ${scriptIssues.length}` : "";
                     const scriptTestsSuffix =
-                        totalScriptTests > 0
-                            ? ` • tests ${totalScriptTests - failedScriptTests}/${totalScriptTests}`
+                        combinedScriptTestSummary.total > 0
+                            ? ` • tests ${combinedScriptTestSummary.passed}/${combinedScriptTestSummary.total}`
                             : "";
                     const isHttpFailure = response.status >= 400;
                     const statusText = isHttpFailure
@@ -2952,6 +2967,10 @@ export default function App() {
                             postResponseScriptError,
                             preRequestScriptTests,
                             postResponseScriptTests,
+                            testTotal: combinedScriptTestSummary.total,
+                            testPassed: combinedScriptTestSummary.passed,
+                            testFailed: combinedScriptTestSummary.failed,
+                            hasTestFailures: combinedScriptTestSummary.hasFailures,
                         })
                     );
                     setResponsesByRequestId((previous) => ({
@@ -2967,7 +2986,7 @@ export default function App() {
                         [planItem.requestId]: {
                             preRequestError: preRequestScriptError,
                             postResponseError: postResponseScriptError,
-                            tests: [...preRequestScriptTests, ...postResponseScriptTests],
+                            tests: combinedScriptTests,
                         },
                     }));
 
@@ -3005,6 +3024,10 @@ export default function App() {
                             postResponseScriptError: null,
                             preRequestScriptTests,
                             postResponseScriptTests: [],
+                            testTotal: preRequestScriptTestSummary.total,
+                            testPassed: preRequestScriptTestSummary.passed,
+                            testFailed: preRequestScriptTestSummary.failed,
+                            hasTestFailures: preRequestScriptTestSummary.hasFailures,
                         })
                     );
                     setResponsesByRequestId((previous) => ({
@@ -3057,22 +3080,26 @@ export default function App() {
             const environmentErrorSuffix = environmentPersistError
                 ? " • environment save issue"
                 : "";
+            const testsSummarySuffix =
+                finalSummary.totalTests > 0
+                    ? ` • tests ${finalSummary.passedTests}/${finalSummary.totalTests}`
+                    : "";
 
             if (finalSummary.wasCancelledByUser) {
                 setStatus(
-                    `⛔ Run cancelled: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.cancelled} cancelled, ${finalSummary.skipped} skipped${environmentErrorSuffix}`
+                    `⛔ Run cancelled: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.cancelled} cancelled, ${finalSummary.skipped} skipped${testsSummarySuffix}${environmentErrorSuffix}`
                 );
                 return;
             }
 
             if (finalSummary.failed > 0) {
                 setStatus(
-                    `❌ Run complete: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.skipped} skipped${environmentErrorSuffix}`
+                    `❌ Run complete: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.skipped} skipped${testsSummarySuffix}${environmentErrorSuffix}`
                 );
                 return;
             }
 
-            setStatus(`✅ Run complete: ${finalSummary.success}/${finalSummary.total} success${environmentErrorSuffix}`);
+            setStatus(`✅ Run complete: ${finalSummary.success}/${finalSummary.total} success${testsSummarySuffix}${environmentErrorSuffix}`);
         } finally {
             collectionRunActiveRequestIdRef.current = null;
             collectionRunCancelRef.current = false;

@@ -17,6 +17,12 @@ function buildRequest(): Request {
     };
 }
 
+function normalizeTests(
+    tests: Array<{ name: string; status: "passed" | "failed"; error: string | null }>
+) {
+    return tests.map(({ name, status, error }) => ({ name, status, error }));
+}
+
 describe("RequestScriptsRuntime variable APIs and aliases", () => {
     it("supports bf.env as persistent environment API", () => {
         const result = runPreRequestScript({
@@ -87,7 +93,7 @@ bf.test("env fallback after runtime unset", () => {
 
         expect(result.error).toBeNull();
         expect(result.runtimeVariables.token).toBeUndefined();
-        expect(result.tests).toEqual([
+        expect(normalizeTests(result.tests)).toEqual([
             { name: "env fallback after runtime unset", status: "passed", error: null },
         ]);
     });
@@ -110,7 +116,7 @@ bf.test("env fallback after runtime clear", () => {
 
         expect(result.error).toBeNull();
         expect(result.runtimeVariables).toEqual({});
-        expect(result.tests).toEqual([
+        expect(normalizeTests(result.tests)).toEqual([
             { name: "env fallback after runtime clear", status: "passed", error: null },
         ]);
     });
@@ -133,7 +139,7 @@ bf.test("env value is still readable until persistence is applied", () => {
         expect(result.environmentMutations).toEqual([
             { type: "unset", key: "token" },
         ]);
-        expect(result.tests).toEqual([
+        expect(normalizeTests(result.tests)).toEqual([
             {
                 name: "env value is still readable until persistence is applied",
                 status: "passed",
@@ -156,7 +162,7 @@ bf.test("env fallback", () => {
         });
 
         expect(result.error).toBeNull();
-        expect(result.tests).toEqual([
+        expect(normalizeTests(result.tests)).toEqual([
             { name: "env fallback", status: "passed", error: null },
         ]);
     });
@@ -183,7 +189,7 @@ bf.test("fresh scope uses env", () => {
         });
 
         expect(secondExecution.error).toBeNull();
-        expect(secondExecution.tests).toEqual([
+        expect(normalizeTests(secondExecution.tests)).toEqual([
             { name: "fresh scope uses env", status: "passed", error: null },
         ]);
     });
@@ -208,7 +214,7 @@ bf.test("shared runtime", () => {
         });
 
         expect(secondRequest.error).toBeNull();
-        expect(secondRequest.tests).toEqual([
+        expect(normalizeTests(secondRequest.tests)).toEqual([
             { name: "shared runtime", status: "passed", error: null },
         ]);
     });
@@ -235,7 +241,7 @@ bf.test("new run uses fresh runtime scope", () => {
         });
 
         expect(secondRunRequest.error).toBeNull();
-        expect(secondRunRequest.tests).toEqual([
+        expect(normalizeTests(secondRunRequest.tests)).toEqual([
             { name: "new run uses fresh runtime scope", status: "passed", error: null },
         ]);
     });
@@ -284,7 +290,7 @@ pg.test("reads response via pg alias", () => {
         });
 
         expect(result.error).toBeNull();
-        expect(result.tests).toEqual([
+        expect(normalizeTests(result.tests)).toEqual([
             { name: "reads response via pg alias", status: "passed", error: null },
         ]);
     });
@@ -311,5 +317,147 @@ pg.runtime.set("temp", "3");
             { type: "set", key: "fromBf", value: "1" },
             { type: "set", key: "fromPg", value: "2" },
         ]);
+    });
+});
+
+describe("RequestScriptsRuntime assertions", () => {
+    function runPostScript(script: string) {
+        return runPostResponseScript({
+            script,
+            request: buildRequest(),
+            response: {
+                status: 200,
+                headers: [{ key: "content-type", value: "application/json" }],
+                body_text: JSON.stringify({
+                    ok: true,
+                    accessToken: "abc",
+                    email: "test@test.com",
+                    roles: ["admin", "user"],
+                }),
+                duration_ms: 15,
+            },
+            runtimeVariables: {},
+            environmentValues: new Map(),
+        });
+    }
+
+    it("records a passing test", () => {
+        const result = runPostScript(`
+bf.test("status is 200", () => {
+  bf.expect(bf.response.status).toBe(200);
+});
+`);
+
+        expect(result.scriptError).toBeNull();
+        expect(normalizeTests(result.tests)).toEqual([
+            { name: "status is 200", status: "passed", error: null },
+        ]);
+    });
+
+    it("records a failing assertion as a failed test", () => {
+        const result = runPostScript(`
+bf.test("email matches", () => {
+  const body = bf.response.json();
+  bf.expect(body.email).toBe("wrong@test.com");
+});
+`);
+
+        expect(result.scriptError).toBeNull();
+        expect(result.tests).toHaveLength(1);
+        expect(result.tests[0]).toMatchObject({
+            name: "email matches",
+            status: "failed",
+            error: 'Expected "test@test.com" to be "wrong@test.com"',
+        });
+    });
+
+    it("continues running tests after a failure", () => {
+        const result = runPostScript(`
+bf.test("first fails", () => {
+  bf.expect(1).toBe(2);
+});
+bf.test("second runs", () => {
+  bf.expect(true).toBeTruthy();
+});
+`);
+
+        expect(result.scriptError).toBeNull();
+        expect(normalizeTests(result.tests)).toEqual([
+            { name: "first fails", status: "failed", error: "Expected 1 to be 2" },
+            { name: "second runs", status: "passed", error: null },
+        ]);
+    });
+
+    it("captures script errors outside bf.test without crashing", () => {
+        const result = runPostScript(`
+bf.test("runs before crash", () => {
+  bf.expect(true).toBeTruthy();
+});
+throw new Error("boom");
+`);
+
+        expect(result.scriptError).toBe("[post-response] boom");
+        expect(normalizeTests(result.tests)).toEqual([
+            { name: "runs before crash", status: "passed", error: null },
+        ]);
+    });
+
+    it("supports toEqual", () => {
+        const result = runPostScript(`
+bf.test("toEqual", () => {
+  bf.expect({ a: 1, b: [2, 3] }).toEqual({ a: 1, b: [2, 3] });
+});
+`);
+
+        expect(result.scriptError).toBeNull();
+        expect(result.tests[0]?.status).toBe("passed");
+    });
+
+    it("supports toContain for string and array", () => {
+        const result = runPostScript(`
+bf.test("toContain", () => {
+  const body = bf.response.json();
+  bf.expect(body.email).toContain("@test.com");
+  bf.expect(body.roles).toContain("admin");
+});
+`);
+
+        expect(result.scriptError).toBeNull();
+        expect(result.tests[0]?.status).toBe("passed");
+    });
+
+    it("supports toBeDefined", () => {
+        const result = runPostScript(`
+bf.test("toBeDefined", () => {
+  const body = bf.response.json();
+  bf.expect(body.accessToken).toBeDefined();
+});
+`);
+
+        expect(result.scriptError).toBeNull();
+        expect(result.tests[0]?.status).toBe("passed");
+    });
+
+    it("supports toBeTruthy and toBeFalsy", () => {
+        const result = runPostScript(`
+bf.test("truthy-falsy", () => {
+  bf.expect(1).toBeTruthy();
+  bf.expect(0).toBeFalsy();
+});
+`);
+
+        expect(result.scriptError).toBeNull();
+        expect(result.tests[0]?.status).toBe("passed");
+    });
+
+    it("scripts without tests still succeed", () => {
+        const result = runPostScript(`
+const body = bf.response.json();
+bf.runtime.set("token", body.accessToken);
+`);
+
+        expect(result.scriptError).toBeNull();
+        expect(result.tests).toEqual([]);
+        expect(result.runtimeVariables.token).toBe("abc");
     });
 });

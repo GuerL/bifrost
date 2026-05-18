@@ -744,7 +744,8 @@ export default function CollectionRunnerModal({
                             <>
                                 <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
                                     Total {run.summary.total} • OK {run.summary.success} • Failed {run.summary.failed} •
-                                    Cancelled {run.summary.cancelled} • Skipped {run.summary.skipped}
+                                    Cancelled {run.summary.cancelled} • Skipped {run.summary.skipped} •
+                                    Tests {run.summary.passedTests ?? 0}/{run.summary.totalTests ?? 0}
                                 </span>
                                 {run.summary.wasCancelledByUser && (
                                     <span style={{ fontSize: 12, color: "#fbbf24", fontWeight: 700 }}>
@@ -791,7 +792,7 @@ function ExecutionRow({
                 flexDirection: "column",
                 gap: 8,
                 borderRadius: 10,
-                border: rowBorderStyle(execution.status),
+                border: rowBorderStyle(execution.status, execution.hasTestFailures),
                 background: "var(--pg-surface-1)",
                 padding: "8px 10px",
             }}
@@ -852,6 +853,11 @@ function ExecutionRow({
                     )}
                     {typeof execution.durationMs === "number" && (
                         <span style={durationBadgeStyle()}>{execution.durationMs}ms</span>
+                    )}
+                    {execution.hasTestFailures && (
+                        <span style={testFailureBadgeStyle()}>
+                            {execution.testFailed} test{execution.testFailed === 1 ? "" : "s"} failed
+                        </span>
                     )}
                     <button
                         onClick={onToggleExpanded}
@@ -1142,6 +1148,11 @@ function ExecutionDetails({ execution }: { execution: RunnerExecutionResult }) {
     const postResponseScriptError = execution.postResponseScriptError ?? null;
     const preRequestScriptTests = execution.preRequestScriptTests ?? [];
     const postResponseScriptTests = execution.postResponseScriptTests ?? [];
+    const testTotal = execution.testTotal ?? preRequestScriptTests.length + postResponseScriptTests.length;
+    const testFailed = execution.testFailed ?? [...preRequestScriptTests, ...postResponseScriptTests].filter(
+        (test) => test.status === "failed"
+    ).length;
+    const testPassed = execution.testPassed ?? Math.max(0, testTotal - testFailed);
 
     return (
         <div
@@ -1222,6 +1233,11 @@ function ExecutionDetails({ execution }: { execution: RunnerExecutionResult }) {
 
             <span style={detailLabelStyle()}>Post-response script</span>
             <span style={detailValueStyle()}>{postResponseScriptError ?? "—"}</span>
+
+            <span style={detailLabelStyle()}>Tests summary</span>
+            <span style={detailValueStyle()}>
+                {testTotal === 0 ? "No tests" : `${testPassed} passed • ${testFailed} failed • ${testTotal} total`}
+            </span>
 
             <span style={detailLabelStyle()}>Pre-request tests</span>
             <span style={detailValueStyle()}>
@@ -1342,7 +1358,8 @@ function filterTabStyle(active: boolean): React.CSSProperties {
     };
 }
 
-function rowBorderStyle(state: RunnerExecutionStatus): string {
+function rowBorderStyle(state: RunnerExecutionStatus, hasTestFailures = false): string {
+    if (hasTestFailures && state === "success") return "1px solid rgba(239, 68, 68, 0.45)";
     if (state === "failed") return "1px solid var(--pg-danger)";
     if (state === "cancelled") return "1px solid #f59e0b";
     if (state === "success") return "1px solid rgba(16, 185, 129, 0.5)";
@@ -1432,6 +1449,19 @@ function durationBadgeStyle(): React.CSSProperties {
         color: "var(--pg-text-dim)",
         background: "rgba(148, 163, 184, 0.2)",
         border: "1px solid rgba(255,255,255,0.08)",
+        flexShrink: 0,
+    };
+}
+
+function testFailureBadgeStyle(): React.CSSProperties {
+    return {
+        fontSize: 11,
+        fontWeight: 700,
+        borderRadius: 999,
+        padding: "3px 8px",
+        color: "var(--pg-danger)",
+        background: "rgba(239, 68, 68, 0.14)",
+        border: "1px solid rgba(239, 68, 68, 0.45)",
         flexShrink: 0,
     };
 }
