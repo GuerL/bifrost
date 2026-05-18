@@ -5574,6 +5574,7 @@ export default function App() {
                                     editorTheme={editorTheme}
                                     editorPanelStyle={editorPanelStyle}
                                     onChange={(next) => updateDraft({ scripts: next })}
+                                    onSubmitShortcut={triggerSendFromUi}
                                 />
                             )}
 
