@@ -80,6 +80,11 @@ import {
     readPgToBfPromptedFlag,
     writePgToBfPromptedFlag,
 } from "./helpers/ScriptingPrefixMigration.ts";
+import {
+    applyDraftPatch,
+    resolveRequestForExecution as resolveRequestForExecutionSnapshot,
+    setFullDraftInMap,
+} from "./helpers/requestExecutionSnapshot.ts";
 import type {
     RunnerExecutionResult,
     RunnerIterationMode,
@@ -780,6 +785,8 @@ export default function App() {
     const [renameBusy, setRenameBusy] = useState(false);
     const [draggedRequestId, setDraggedRequestId] = useState<string | null>(null);
     const [dropIndicator, setDropIndicator] = useState<RequestDropIndicator | null>(null);
+    const draftsByIdRef = useRef<Record<string, Request>>({});
+    const currentRef = useRef<CollectionLoaded | null>(null);
     const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
     const [createFolderModal, setCreateFolderModal] = useState<{ parentFolderId: string | null } | null>(null);
     const [createFolderNameInput, setCreateFolderNameInput] = useState("");
@@ -947,6 +954,7 @@ export default function App() {
         setInsomniaImportBusy(false);
         setInsomniaImportError("");
         setDeleteEnvironmentModal(null);
+        draftsByIdRef.current = {};
         setDraftsById({});
         setCloseDraftModal(null);
         setCloseDraftBusy(false);
@@ -1211,6 +1219,14 @@ export default function App() {
         if (!selectedRequestId) return null;
         return draftsById[selectedRequestId] ?? selectedSavedRequest;
     }, [draftsById, selectedRequestId, selectedSavedRequest]);
+
+    useEffect(() => {
+        draftsByIdRef.current = draftsById;
+    }, [draftsById]);
+
+    useEffect(() => {
+        currentRef.current = current;
+    }, [current]);
 
     const requestsById = useMemo(
         () => new Map((current?.requests ?? []).map((request) => [request.id, request])),
@@ -1643,6 +1659,7 @@ export default function App() {
                 const drafts = await invoke<Record<string, Request>>("load_drafts", {
                     collectionId: current.meta.id,
                 });
+                draftsByIdRef.current = drafts;
                 setDraftsById(drafts);
             } catch (e) {
                 notifyError(`Failed to load drafts: ${errorMessage(e)}`);
@@ -2111,12 +2128,18 @@ export default function App() {
         (patch: Partial<Request>) => {
             if (!selectedRequestId || !draft) return;
 
+            const { nextDraft, nextDraftsById } = applyDraftPatch({
+                requestId: selectedRequestId,
+                draftsById: draftsByIdRef.current,
+                fallbackRequest: draft,
+                patch,
+            });
+
+            draftsByIdRef.current = nextDraftsById;
+
             setDraftsById((prev) => ({
                 ...prev,
-                [selectedRequestId]: {
-                    ...draft,
-                    ...patch,
-                },
+                [selectedRequestId]: nextDraft,
             }));
         },
         [selectedRequestId, draft]
@@ -2125,6 +2148,12 @@ export default function App() {
     const setFullDraft = useCallback(
         (next: Request) => {
             if (!selectedRequestId) return;
+
+            draftsByIdRef.current = setFullDraftInMap(
+                selectedRequestId,
+                draftsByIdRef.current,
+                next
+            );
 
             setDraftsById((prev) => ({
                 ...prev,
@@ -2160,6 +2189,7 @@ export default function App() {
                 setDraftsById((previous) => {
                     const next = { ...previous };
                     delete next[requestId];
+                    draftsByIdRef.current = next;
                     return next;
                 });
 
@@ -2187,6 +2217,7 @@ export default function App() {
                 setDraftsById((previous) => {
                     const next = { ...previous };
                     delete next[requestId];
+                    draftsByIdRef.current = next;
                     return next;
                 });
 
@@ -2463,14 +2494,19 @@ export default function App() {
         return () => window.cancelAnimationFrame(frame);
     }, [curlImportModal]);
 
+    function resolveRequestForExecution(requestId: string): Request | null {
+        return resolveRequestForExecutionSnapshot(
+            requestId,
+            draftsByIdRef.current,
+            currentRef.current
+        );
+    }
+
     async function sendSelected() {
         if (collectionRunPending) return;
         if (!selectedRequestId) return;
 
-        const req =
-            draft && draft.id === selectedRequestId
-                ? draft
-                : current?.requests.find((r) => r.id === selectedRequestId);
+        const req = resolveRequestForExecution(selectedRequestId);
 
         if (!req) return;
 
@@ -2759,7 +2795,9 @@ export default function App() {
             summary: summarizeRunnerExecutions(currentExecutions, false),
         };
 
-        const requestById = new Map(ordered.map((request) => [request.id, draftsById[request.id] ?? request]));
+        const requestById = new Map(
+            ordered.map((request) => [request.id, draftsByIdRef.current[request.id] ?? request])
+        );
 
         function commitRun(
             nextExecutions: RunnerExecutionResult[],
@@ -3246,6 +3284,7 @@ export default function App() {
         setDraftsById((prev) => {
             const next = { ...prev };
             delete next[requestId];
+            draftsByIdRef.current = next;
             return next;
         });
         setOpenRequestIds((previous) => previous.filter((id) => id !== requestId));
@@ -3653,6 +3692,7 @@ export default function App() {
                         if (!existing) return prev;
                         const next = { ...prev };
                         next[renameTarget.id] = { ...existing, name: nextName };
+                        draftsByIdRef.current = next;
                         return next;
                     });
                     setRenameTarget(null);
