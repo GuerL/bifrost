@@ -46,6 +46,10 @@ export function createQueuedExecutionResult(
         postResponseScriptError: null,
         preRequestScriptTests: [],
         postResponseScriptTests: [],
+        testTotal: 0,
+        testPassed: 0,
+        testFailed: 0,
+        hasTestFailures: false,
     };
 }
 

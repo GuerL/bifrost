@@ -34,6 +34,7 @@ export type RunnerScriptTestResult = {
     name: string;
     status: "passed" | "failed";
     error: string | null;
+    durationMs?: number;
 };
 
 export type RunnerExecutionResult = RunnerExecutionPlanItem & {
@@ -54,6 +55,10 @@ export type RunnerExecutionResult = RunnerExecutionPlanItem & {
     postResponseScriptError: string | null;
     preRequestScriptTests: RunnerScriptTestResult[];
     postResponseScriptTests: RunnerScriptTestResult[];
+    testTotal: number;
+    testPassed: number;
+    testFailed: number;
+    hasTestFailures: boolean;
 };
 
 export type RunnerRunSummary = {
@@ -67,6 +72,9 @@ export type RunnerRunSummary = {
     wasCancelledByUser: boolean;
     totalDurationMs: number;
     averageDurationMs: number | null;
+    totalTests: number;
+    passedTests: number;
+    failedTests: number;
 };
 
 export type RunnerRun = {

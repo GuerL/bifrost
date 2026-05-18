@@ -14,6 +14,9 @@ function summary(overrides: Partial<RunnerRunSummary>): RunnerRunSummary {
         wasCancelledByUser: false,
         totalDurationMs: 12_400,
         averageDurationMs: 295.2,
+        totalTests: 0,
+        passedTests: 0,
+        failedTests: 0,
         ...overrides,
     };
 }
@@ -39,6 +42,21 @@ describe("buildRunnerNotificationSummary", () => {
         });
 
         expect(result.body).toBe("42 requests · 39 succeeded · 3 failed · 12.4s");
+    });
+
+    it("includes tests in summary when present", () => {
+        const result = buildRunnerNotificationSummary({
+            status: "failed",
+            summary: summary({
+                success: 39,
+                failed: 3,
+                totalTests: 12,
+                passedTests: 10,
+                failedTests: 2,
+            }),
+        });
+
+        expect(result.body).toBe("42 requests · 39 succeeded · 3 failed · tests 10/12 · 12.4s");
     });
 
     it("formats cancelled body", () => {
