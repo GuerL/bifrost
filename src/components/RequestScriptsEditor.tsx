@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Editor, { type BeforeMount } from "@monaco-editor/react";
 import type * as MonacoApi from "monaco-editor";
 import type { RequestScripts } from "../types.ts";
@@ -11,6 +11,7 @@ type RequestScriptsEditorProps = {
     editorTheme: "bifrost-midnight" | "bifrost-daylight";
     editorPanelStyle: (height: number | string, minHeight?: number) => React.CSSProperties;
     onChange: (next: RequestScripts) => void;
+    onSubmitShortcut: () => void;
 };
 
 export default function RequestScriptsEditor({
@@ -21,9 +22,15 @@ export default function RequestScriptsEditor({
     editorTheme,
     editorPanelStyle,
     onChange,
+    onSubmitShortcut,
 }: RequestScriptsEditorProps) {
     const [activePanel, setActivePanel] = useState<"pre" | "post">("pre");
     const showingPre = activePanel === "pre";
+    const submitShortcutRef = useRef(onSubmitShortcut);
+
+    useEffect(() => {
+        submitShortcutRef.current = onSubmitShortcut;
+    }, [onSubmitShortcut]);
 
     return (
         <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
@@ -88,6 +95,11 @@ bf.env.set("lastAccessToken", response?.token ?? "");`}
                             path={`/bifrost-script/${selectedRequestId ?? "none"}.${showingPre ? "pre" : "post"}.js`}
                             theme={editorTheme}
                             beforeMount={beforeMountMonaco}
+                            onMount={(editor, monaco) => {
+                                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+                                    submitShortcutRef.current();
+                                });
+                            }}
                             value={showingPre ? scripts.pre_request : scripts.post_response}
                             onChange={(value) =>
                                 onChange({
