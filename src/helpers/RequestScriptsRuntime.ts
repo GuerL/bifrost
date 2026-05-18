@@ -8,6 +8,7 @@ import {
     type ScriptExpectation,
     type ScriptTestResult,
 } from "./scriptAssertions.ts";
+import { mapScriptTestCallLocations } from "./scriptTestLocation.ts";
 export type { ScriptTestResult } from "./scriptAssertions.ts";
 
 type ScriptPhase = "pre-request" | "post-response";
@@ -167,7 +168,15 @@ function runScript({
     const runtime = { ...runtimeVariables };
     const responseApi = createResponseApi(response);
     const environmentMutations: ScriptEnvironmentMutation[] = [];
-    const testsCollector = createScriptTestCollector();
+    const testCallLocations = mapScriptTestCallLocations(script);
+    let testInvocationIndex = 0;
+    const testsCollector = createScriptTestCollector({
+        resolveLocation: () => {
+            const location = testCallLocations[testInvocationIndex];
+            testInvocationIndex += 1;
+            return location;
+        },
+    });
 
     const envApi: ScriptEnvironmentVariableApi = {
         get: (name: string): string | undefined => {
@@ -241,7 +250,7 @@ function runScript({
     try {
         const fn = new Function("bf", "pg", `"use strict";\n${normalizedScript}`);
         fn(bf, pg);
-        const tests = testsCollector.getResults();
+        const tests = testsCollector.getResults().map((test) => ({ ...test, scriptPhase: phase }));
         return {
             request: mutableRequest,
             runtimeVariables: runtime,
@@ -251,7 +260,7 @@ function runScript({
             error: null,
         };
     } catch (error) {
-        const tests = testsCollector.getResults();
+        const tests = testsCollector.getResults().map((test) => ({ ...test, scriptPhase: phase }));
         const scriptError = `[${phase}] ${stringifyScriptError(error)}`;
         return {
             request: mutableRequest,

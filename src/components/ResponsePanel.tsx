@@ -48,6 +48,7 @@ type ResponsePanelProps = {
     } | null;
     runtimeVariables: Record<string, string>;
     onClearRuntimeVariables: () => void;
+    onRevealScriptTestLocation?: (test: ScriptTestResult) => void;
     activeTab: ResponseTabId;
     onTabChange: (tab: ResponseTabId) => void;
 };
@@ -58,6 +59,7 @@ export default function ResponsePanel({
     scriptReport,
     runtimeVariables,
     onClearRuntimeVariables,
+    onRevealScriptTestLocation,
     activeTab,
     onTabChange,
 }: ResponsePanelProps) {
@@ -512,7 +514,10 @@ export default function ResponsePanel({
             )}
 
             {activeTab === "tests" && (
-                <ResponseTestsPanel tests={scriptReport?.tests ?? []} />
+                <ResponseTestsPanel
+                    tests={scriptReport?.tests ?? []}
+                    onRevealScriptTestLocation={onRevealScriptTestLocation}
+                />
             )}
         </div>
     );

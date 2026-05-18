@@ -20,7 +20,7 @@ import KeyValueTable from "./KeyValueTable.tsx";
 import TopBar from "./TopBar.tsx";
 import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
 import RequestBodyEditor from "./components/RequestBodyEditor.tsx";
-import RequestScriptsEditor from "./components/RequestScriptsEditor.tsx";
+import RequestScriptsEditor, { type ScriptRevealLocation } from "./components/RequestScriptsEditor.tsx";
 import AppSelect from "./components/AppSelect.tsx";
 import CollectionsModal from "./components/CollectionsModal.tsx";
 import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
@@ -771,6 +771,7 @@ export default function App() {
     const [collectionRunStopOnFailure, setCollectionRunStopOnFailure] = useState(true);
     const [executionRuntimeVariables, setExecutionRuntimeVariables] = useState<Record<string, string>>({});
     const [responseTab, setResponseTab] = useState<ResponseTabId>("body");
+    const [scriptRevealLocation, setScriptRevealLocation] = useState<ScriptRevealLocation | null>(null);
     const [draftsById, setDraftsById] = useState<Record<string, Request>>({});
     const [pending, setPending] = useState(false);
     const [editorText, setEditorText] = useState("");
@@ -787,6 +788,7 @@ export default function App() {
     const [dropIndicator, setDropIndicator] = useState<RequestDropIndicator | null>(null);
     const draftsByIdRef = useRef<Record<string, Request>>({});
     const currentRef = useRef<CollectionLoaded | null>(null);
+    const scriptRevealKeyRef = useRef(0);
     const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
     const [createFolderModal, setCreateFolderModal] = useState<{ parentFolderId: string | null } | null>(null);
     const [createFolderNameInput, setCreateFolderNameInput] = useState("");
@@ -1227,6 +1229,10 @@ export default function App() {
     useEffect(() => {
         currentRef.current = current;
     }, [current]);
+
+    useEffect(() => {
+        setScriptRevealLocation(null);
+    }, [selectedRequestId]);
 
     const requestsById = useMemo(
         () => new Map((current?.requests ?? []).map((request) => [request.id, request])),
@@ -2697,6 +2703,21 @@ export default function App() {
         setRootAddMenu(null);
         void sendSelected();
     }
+
+    const revealScriptTestLocation = useCallback(
+        (test: ScriptTestResult) => {
+            if (!selectedRequestId) return;
+            setTab("scripts");
+            scriptRevealKeyRef.current += 1;
+            setScriptRevealLocation({
+                key: scriptRevealKeyRef.current,
+                scriptPhase: test.scriptPhase === "pre-request" ? "pre-request" : "post-response",
+                line: typeof test.line === "number" ? test.line : undefined,
+                column: typeof test.column === "number" ? test.column : undefined,
+            });
+        },
+        [selectedRequestId]
+    );
 
     function toggleRunnerRequestSelection(requestId: string, selected: boolean) {
         if (collectionRunPending) return;
@@ -5575,6 +5596,7 @@ export default function App() {
                                     editorPanelStyle={editorPanelStyle}
                                     onChange={(next) => updateDraft({ scripts: next })}
                                     onSubmitShortcut={triggerSendFromUi}
+                                    revealLocation={scriptRevealLocation}
                                 />
                             )}
 
@@ -5613,6 +5635,7 @@ export default function App() {
                                 scriptReport={selectedScriptReport}
                                 runtimeVariables={executionRuntimeActive ? executionRuntimeVariables : {}}
                                 onClearRuntimeVariables={() => setExecutionRuntimeVariables({})}
+                                onRevealScriptTestLocation={revealScriptTestLocation}
                                 activeTab={responseTab}
                                 onTabChange={setResponseTab}
                             />

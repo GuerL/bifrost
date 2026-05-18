@@ -122,6 +122,28 @@ describe("createScriptTestCollector", () => {
             error: "bf.test(name, callback): callback must be a function",
         });
     });
+
+    it("records optional test location metadata", () => {
+        let callIndex = 0;
+        const collector = createScriptTestCollector({
+            resolveLocation: () => {
+                callIndex += 1;
+                return { line: callIndex * 2, column: 4 };
+            },
+        });
+
+        collector.test("first", () => {
+            createScriptExpect(true).toBeTruthy();
+        });
+        collector.test("second", () => {
+            createScriptExpect(false).toBeTruthy();
+        });
+
+        expect(collector.getResults()).toMatchObject([
+            { name: "first", line: 2, column: 4, status: "passed" },
+            { name: "second", line: 4, column: 4, status: "failed" },
+        ]);
+    });
 });
 
 describe("stringifyScriptError", () => {

@@ -9,6 +9,9 @@ export type ScriptTestResult = {
     status: "passed" | "failed";
     error: string | null;
     durationMs?: number;
+    line?: number;
+    column?: number;
+    scriptPhase?: "pre-request" | "post-response";
 };
 
 export type ScriptExpectation = {
@@ -32,6 +35,9 @@ export type ScriptAssertableValue<T> = ScriptExpectation & {
 export type ScriptTestCollector = {
     test: (name: string, callback: () => void) => void;
     getResults: () => ScriptTestResult[];
+};
+type ScriptTestCollectorOptions = {
+    resolveLocation?: () => { line?: number; column?: number } | undefined;
 };
 
 export function stringifyScriptError(error: unknown): string {
@@ -304,13 +310,14 @@ export function createScriptAssertableValue<T>(actual: T): ScriptAssertableValue
     return expectation;
 }
 
-export function createScriptTestCollector(): ScriptTestCollector {
+export function createScriptTestCollector(options: ScriptTestCollectorOptions = {}): ScriptTestCollector {
     const results: ScriptTestResult[] = [];
 
     return {
         test: (name: string, callback: () => void) => {
             const normalizedName = String(name ?? "").trim() || "Unnamed test";
             const startedAt = nowMs();
+            const location = options.resolveLocation?.();
             try {
                 if (typeof callback !== "function") {
                     throw new Error("bf.test(name, callback): callback must be a function");
@@ -322,6 +329,8 @@ export function createScriptTestCollector(): ScriptTestCollector {
                     status: "passed",
                     error: null,
                     ...(durationMs > 0 ? { durationMs } : {}),
+                    ...(typeof location?.line === "number" ? { line: location.line } : {}),
+                    ...(typeof location?.column === "number" ? { column: location.column } : {}),
                 });
             } catch (error) {
                 const durationMs = Math.max(0, Math.round(nowMs() - startedAt));
@@ -330,6 +339,8 @@ export function createScriptTestCollector(): ScriptTestCollector {
                     status: "failed",
                     error: stringifyScriptError(error),
                     ...(durationMs > 0 ? { durationMs } : {}),
+                    ...(typeof location?.line === "number" ? { line: location.line } : {}),
+                    ...(typeof location?.column === "number" ? { column: location.column } : {}),
                 });
             }
         },

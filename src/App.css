@@ -608,3 +608,8 @@ button.pg-app-select-trigger:hover:not(:disabled) {
     transform: translateY(-2px) scale(0.99);
   }
 }
+
+.bifrost-script-test-line-highlight {
+  background: rgba(var(--pg-primary-rgb), 0.16);
+  border-left: 2px solid var(--pg-primary);
+}

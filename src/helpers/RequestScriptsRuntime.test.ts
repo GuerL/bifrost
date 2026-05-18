@@ -460,4 +460,47 @@ bf.runtime.set("token", body.accessToken);
         expect(result.tests).toEqual([]);
         expect(result.runtimeVariables.token).toBe("abc");
     });
+
+    it("captures approximate line metadata for bf.test calls", () => {
+        const result = runPostScript(`
+const marker = 1;
+bf.test("first", () => {
+  bf.expect(marker).toBe(1);
+});
+
+bf.test("second", () => {
+  bf.expect(marker).toBe(2);
+});
+`);
+
+        expect(result.tests).toHaveLength(2);
+        expect(result.tests[0]).toMatchObject({
+            name: "first",
+            status: "passed",
+            line: 3,
+            scriptPhase: "post-response",
+        });
+        expect(result.tests[1]).toMatchObject({
+            name: "second",
+            status: "failed",
+            line: 7,
+            scriptPhase: "post-response",
+        });
+    });
+
+    it("does not crash when test location cannot be inferred", () => {
+        const result = runPostScript(`
+const customTest = bf.test;
+customTest("indirect", () => {
+  bf.expect(true).toBeTruthy();
+});
+`);
+
+        expect(result.scriptError).toBeNull();
+        expect(result.tests[0]).toMatchObject({
+            name: "indirect",
+            status: "passed",
+        });
+        expect(result.tests[0]?.line).toBeUndefined();
+    });
 });

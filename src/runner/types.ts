@@ -35,6 +35,9 @@ export type RunnerScriptTestResult = {
     status: "passed" | "failed";
     error: string | null;
     durationMs?: number;
+    line?: number;
+    column?: number;
+    scriptPhase?: "pre-request" | "post-response";
 };
 
 export type RunnerExecutionResult = RunnerExecutionPlanItem & {
