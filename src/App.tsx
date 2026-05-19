@@ -296,6 +296,7 @@ type RequestTlsResolved = {
 const OPEN_TABS_STORAGE_KEY = "bifrost:open-tabs:v1";
 const RESPONSES_STORAGE_KEY = "bifrost:last-responses:v1";
 const SAVED_REQUESTS_COLLAPSED_FOLDERS_STORAGE_KEY = "bifrost:saved-requests:collapsed-folders:v1";
+const GENERATED_HEADERS_VISIBLE_STORAGE_KEY = "bifrost:generated-headers:visible:v1";
 const IS_MACOS =
     typeof navigator !== "undefined" &&
     /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
@@ -609,6 +610,32 @@ function isCurlClipboardCommand(clipboardText: string): boolean {
     return trimmed.slice(4).trim().length > 0;
 }
 
+function readBooleanPreference(storageKey: string, defaultValue: boolean): boolean {
+    if (typeof window === "undefined") return defaultValue;
+
+    try {
+        const raw = window.localStorage.getItem(storageKey);
+        if (raw === null) return defaultValue;
+        if (raw === "true") return true;
+        if (raw === "false") return false;
+        const parsed = JSON.parse(raw) as unknown;
+        if (typeof parsed === "boolean") return parsed;
+        return defaultValue;
+    } catch {
+        return defaultValue;
+    }
+}
+
+function writeBooleanPreference(storageKey: string, value: boolean) {
+    if (typeof window === "undefined") return;
+
+    try {
+        window.localStorage.setItem(storageKey, String(value));
+    } catch {
+        // ignore storage write failures
+    }
+}
+
 function readPersistedTabsState(): PersistedTabsState {
     if (typeof window === "undefined") return {};
 
@@ -852,8 +879,11 @@ export default function App() {
     const [draftsById, setDraftsById] = useState<Record<string, Request>>({});
     const [pending, setPending] = useState(false);
     const [editorText, setEditorText] = useState("");
-    const [tab, setTab] = useState<"headers" | "query" | "body" | "auth" | "tls" | "scripts" | "json">(
+    const [tab, setTab] = useState<"headers" | "query" | "body" | "auth" | "tls" | "scripts" | "debug" | "json">(
         "headers"
+    );
+    const [showGeneratedHeaders, setShowGeneratedHeaders] = useState<boolean>(() =>
+        readBooleanPreference(GENERATED_HEADERS_VISIBLE_STORAGE_KEY, true)
     );
     const [showRequestDebug, setShowRequestDebug] = useState(false);
     const [contextMenu, setContextMenu] = useState<SidebarContextMenu | null>(null);
@@ -962,6 +992,13 @@ export default function App() {
         if (Object.keys(executionRuntimeVariables).length === 0) return;
         setExecutionRuntimeVariables({});
     }, [executionRuntimeActive, executionRuntimeVariables]);
+
+    useEffect(() => {
+        writeBooleanPreference(
+            GENERATED_HEADERS_VISIBLE_STORAGE_KEY,
+            showGeneratedHeaders
+        );
+    }, [showGeneratedHeaders]);
 
     function resetCollapsedFoldersHydrationRefs() {
         hydratedCollapsedFoldersCollectionIdRef.current = null;
@@ -5557,10 +5594,16 @@ export default function App() {
                                 >
                                     Scripts
                                 </button>
+                                <button
+                                    onClick={() => setTab("debug")}
+                                    style={editorTabStyle(tab === "debug")}
+                                >
+                                    Debug
+                                </button>
                             </div>
 
                             {tab === "headers" && (
-                                <div style={{ display: "grid", gap: 12 }}>
+                                <div style={{ display: "grid", gap: 10 }}>
                                     <div
                                         style={{
                                             border: "1px solid var(--pg-border)",
@@ -5592,23 +5635,43 @@ export default function App() {
 
                                     <div
                                         style={{
-                                            border: "1px solid var(--pg-border)",
-                                            borderRadius: 8,
-                                            padding: "10px 12px",
-                                            display: "grid",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
                                             gap: 8,
+                                            flexWrap: "wrap",
                                         }}
                                     >
                                         <div
                                             style={{
                                                 fontSize: 12,
-                                                color: "var(--pg-text-muted)",
+                                                color: "var(--pg-text)",
                                                 fontWeight: 600,
                                             }}
                                         >
                                             Auto-generated headers
                                         </div>
-                                        <div style={{ display: "grid", gap: 6 }}>
+                                        <button
+                                            onClick={() =>
+                                                setShowGeneratedHeaders((previous) => !previous)
+                                            }
+                                        >
+                                            {showGeneratedHeaders
+                                                ? "Hide auto-generated headers"
+                                                : "Show auto-generated headers"}
+                                        </button>
+                                    </div>
+
+                                    {showGeneratedHeaders && (
+                                        <div
+                                            style={{
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 8,
+                                                padding: "10px 12px",
+                                                display: "grid",
+                                                gap: 6,
+                                            }}
+                                        >
                                             {generatedHeaderRows.map((row) => (
                                                 <label
                                                     key={row.key}
@@ -5657,73 +5720,10 @@ export default function App() {
                                                 </label>
                                             ))}
                                         </div>
-                                        <div style={{ fontSize: 11, color: "var(--pg-text-muted)" }}>
-                                            {GENERATED_HEADER_DISABLE_WARNING}
-                                        </div>
-                                    </div>
+                                    )}
 
-                                    <div
-                                        style={{
-                                            border: "1px solid var(--pg-border)",
-                                            borderRadius: 8,
-                                            padding: "10px 12px",
-                                            display: "grid",
-                                            gap: 8,
-                                        }}
-                                    >
-                                        <div
-                                            style={{
-                                                display: "flex",
-                                                alignItems: "center",
-                                                justifyContent: "space-between",
-                                                gap: 8,
-                                                flexWrap: "wrap",
-                                            }}
-                                        >
-                                            <div
-                                                style={{
-                                                    fontSize: 12,
-                                                    color: "var(--pg-text-muted)",
-                                                    fontWeight: 600,
-                                                }}
-                                            >
-                                                Request debug
-                                            </div>
-                                            <div style={{ display: "flex", gap: 8 }}>
-                                                <button
-                                                    onClick={() => setShowRequestDebug((previous) => !previous)}
-                                                >
-                                                    {showRequestDebug
-                                                        ? "Hide generated request"
-                                                        : "View generated request"}
-                                                </button>
-                                                <button
-                                                    onClick={() => void copyRequestDebugInfo()}
-                                                    disabled={!requestDebugText}
-                                                    style={buttonStyle(!requestDebugText)}
-                                                >
-                                                    Copy debug info
-                                                </button>
-                                            </div>
-                                        </div>
-                                        {showRequestDebug && (
-                                            <pre
-                                                style={{
-                                                    margin: 0,
-                                                    padding: 10,
-                                                    border: "1px solid var(--pg-border)",
-                                                    borderRadius: 6,
-                                                    background: "var(--pg-surface-alt)",
-                                                    color: "var(--pg-text)",
-                                                    fontSize: 12,
-                                                    overflow: "auto",
-                                                    maxHeight: 320,
-                                                    whiteSpace: "pre-wrap",
-                                                }}
-                                            >
-                                                {requestDebugText || "No debug data"}
-                                            </pre>
-                                        )}
+                                    <div style={{ fontSize: 11, color: "var(--pg-text-muted)" }}>
+                                        {GENERATED_HEADER_DISABLE_WARNING}
                                     </div>
                                 </div>
                             )}
@@ -6031,6 +6031,217 @@ export default function App() {
                                     onSubmitShortcut={triggerSendFromUi}
                                     revealLocation={scriptRevealLocation}
                                 />
+                            )}
+
+                            {tab === "debug" && requestDebugInfo && (
+                                <div
+                                    style={{
+                                        marginTop: 12,
+                                        display: "grid",
+                                        gap: 10,
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            gap: 8,
+                                            flexWrap: "wrap",
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                fontSize: 12,
+                                                color: "var(--pg-text-muted)",
+                                                fontWeight: 600,
+                                            }}
+                                        >
+                                            Request debug
+                                        </div>
+                                        <div style={{ display: "flex", gap: 8 }}>
+                                            <button
+                                                onClick={() =>
+                                                    setShowRequestDebug((previous) => !previous)
+                                                }
+                                            >
+                                                {showRequestDebug
+                                                    ? "Hide generated request"
+                                                    : "View generated request"}
+                                            </button>
+                                            <button
+                                                onClick={() => void copyRequestDebugInfo()}
+                                                disabled={!requestDebugText}
+                                                style={buttonStyle(!requestDebugText)}
+                                            >
+                                                Copy debug info
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div
+                                        style={{
+                                            border: "1px solid var(--pg-border)",
+                                            borderRadius: 8,
+                                            padding: "10px 12px",
+                                            display: "grid",
+                                            gap: 10,
+                                        }}
+                                    >
+                                        <div style={{ display: "grid", gap: 4 }}>
+                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Method</div>
+                                            <div
+                                                style={{
+                                                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                                    fontSize: 12,
+                                                }}
+                                            >
+                                                {requestDebugInfo.method}
+                                            </div>
+                                        </div>
+                                        <div style={{ display: "grid", gap: 4 }}>
+                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Final URL</div>
+                                            <div
+                                                style={{
+                                                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                                    fontSize: 12,
+                                                    overflow: "hidden",
+                                                    textOverflow: "ellipsis",
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                                title={requestDebugInfo.resolvedUrl}
+                                            >
+                                                {requestDebugInfo.resolvedUrl}
+                                            </div>
+                                        </div>
+                                        {requestDebugInfo.unresolvedVariables.length > 0 && (
+                                            <div style={{ display: "grid", gap: 4 }}>
+                                                <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                                    Unresolved variables
+                                                </div>
+                                                <div
+                                                    style={{
+                                                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                                        fontSize: 12,
+                                                    }}
+                                                >
+                                                    {requestDebugInfo.unresolvedVariables.join(", ")}
+                                                </div>
+                                            </div>
+                                        )}
+                                        <div style={{ display: "grid", gap: 4 }}>
+                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Enabled headers</div>
+                                            <pre
+                                                style={{
+                                                    margin: 0,
+                                                    padding: 8,
+                                                    border: "1px solid var(--pg-border)",
+                                                    borderRadius: 6,
+                                                    background: "var(--pg-surface-alt)",
+                                                    color: "var(--pg-text)",
+                                                    fontSize: 12,
+                                                    whiteSpace: "pre-wrap",
+                                                }}
+                                            >
+                                                {requestDebugInfo.enabledHeaders.length > 0
+                                                    ? requestDebugInfo.enabledHeaders
+                                                          .map((entry) => `${entry.key}: ${entry.value}`)
+                                                          .join("\n")
+                                                    : "(none)"}
+                                            </pre>
+                                        </div>
+                                        <div style={{ display: "grid", gap: 4 }}>
+                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Disabled headers</div>
+                                            <pre
+                                                style={{
+                                                    margin: 0,
+                                                    padding: 8,
+                                                    border: "1px solid var(--pg-border)",
+                                                    borderRadius: 6,
+                                                    background: "var(--pg-surface-alt)",
+                                                    color: "var(--pg-text)",
+                                                    fontSize: 12,
+                                                    whiteSpace: "pre-wrap",
+                                                }}
+                                            >
+                                                {requestDebugInfo.disabledHeaders.length > 0
+                                                    ? requestDebugInfo.disabledHeaders.join("\n")
+                                                    : "(none)"}
+                                            </pre>
+                                        </div>
+                                        <div style={{ display: "grid", gap: 4 }}>
+                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Body</div>
+                                            <div
+                                                style={{
+                                                    fontSize: 12,
+                                                    color: "var(--pg-text-muted)",
+                                                }}
+                                            >
+                                                Type: {requestDebugInfo.bodyType} · Content-Type:{" "}
+                                                {requestDebugInfo.contentTypeMode} · Content-Length:{" "}
+                                                {requestDebugInfo.contentLengthMode}
+                                            </div>
+                                            <pre
+                                                style={{
+                                                    margin: 0,
+                                                    padding: 8,
+                                                    border: "1px solid var(--pg-border)",
+                                                    borderRadius: 6,
+                                                    background: "var(--pg-surface-alt)",
+                                                    color: "var(--pg-text)",
+                                                    fontSize: 12,
+                                                    whiteSpace: "pre-wrap",
+                                                    maxHeight: 220,
+                                                    overflow: "auto",
+                                                }}
+                                            >
+                                                {requestDebugInfo.bodyPreview}
+                                            </pre>
+                                        </div>
+                                        <div style={{ display: "grid", gap: 4 }}>
+                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Transport</div>
+                                            <pre
+                                                style={{
+                                                    margin: 0,
+                                                    padding: 8,
+                                                    border: "1px solid var(--pg-border)",
+                                                    borderRadius: 6,
+                                                    background: "var(--pg-surface-alt)",
+                                                    color: "var(--pg-text)",
+                                                    fontSize: 12,
+                                                    whiteSpace: "pre-wrap",
+                                                }}
+                                            >
+                                                {[
+                                                    `TLS validation: ${requestDebugInfo.transport.tlsValidation}`,
+                                                    `Custom CA certificate: ${requestDebugInfo.transport.customCaCertificate}`,
+                                                    `Client certificate: ${requestDebugInfo.transport.clientCertificate}`,
+                                                    `Redirects: ${requestDebugInfo.transport.redirects}`,
+                                                    `Timeout: ${requestDebugInfo.transport.timeoutMs}ms`,
+                                                ].join("\n")}
+                                            </pre>
+                                        </div>
+                                    </div>
+
+                                    {showRequestDebug && (
+                                        <pre
+                                            style={{
+                                                margin: 0,
+                                                padding: 10,
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 6,
+                                                background: "var(--pg-surface-alt)",
+                                                color: "var(--pg-text)",
+                                                fontSize: 12,
+                                                overflow: "auto",
+                                                maxHeight: 340,
+                                                whiteSpace: "pre-wrap",
+                                            }}
+                                        >
+                                            {requestDebugText || "No debug data"}
+                                        </pre>
+                                    )}
+                                </div>
                             )}
 
                             {tab === "json" && (
