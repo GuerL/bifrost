@@ -1,4 +1,13 @@
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+    type ChangeEvent,
+    type KeyboardEvent as ReactKeyboardEvent,
+    type MouseEvent as ReactMouseEvent,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isPending } from "./helpers/HttpHelper";
 import Editor from "@monaco-editor/react";
@@ -297,6 +306,10 @@ const OPEN_TABS_STORAGE_KEY = "bifrost:open-tabs:v1";
 const RESPONSES_STORAGE_KEY = "bifrost:last-responses:v1";
 const SAVED_REQUESTS_COLLAPSED_FOLDERS_STORAGE_KEY = "bifrost:saved-requests:collapsed-folders:v1";
 const GENERATED_HEADERS_VISIBLE_STORAGE_KEY = "bifrost:generated-headers:visible:v1";
+const REQUEST_RESPONSE_SPLIT_RATIO_STORAGE_KEY = "bifrost:request-response-split-ratio:v1";
+const DEFAULT_REQUEST_PANEL_RATIO = 0.45;
+const MIN_SPLIT_PANEL_HEIGHT_PX = 220;
+const SPLIT_DIVIDER_HEIGHT_PX = 8;
 const IS_MACOS =
     typeof navigator !== "undefined" &&
     /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
@@ -636,6 +649,35 @@ function writeBooleanPreference(storageKey: string, value: boolean) {
     }
 }
 
+function readNumberPreference(
+    storageKey: string,
+    defaultValue: number,
+    min: number,
+    max: number
+): number {
+    if (typeof window === "undefined") return defaultValue;
+
+    try {
+        const raw = window.localStorage.getItem(storageKey);
+        if (raw === null) return defaultValue;
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed)) return defaultValue;
+        return Math.min(max, Math.max(min, parsed));
+    } catch {
+        return defaultValue;
+    }
+}
+
+function writeNumberPreference(storageKey: string, value: number) {
+    if (typeof window === "undefined") return;
+
+    try {
+        window.localStorage.setItem(storageKey, String(value));
+    } catch {
+        // ignore storage write failures
+    }
+}
+
 function readPersistedTabsState(): PersistedTabsState {
     if (typeof window === "undefined") return {};
 
@@ -886,6 +928,15 @@ export default function App() {
         readBooleanPreference(GENERATED_HEADERS_VISIBLE_STORAGE_KEY, true)
     );
     const [showRequestDebug, setShowRequestDebug] = useState(false);
+    const [requestPanelRatio, setRequestPanelRatio] = useState<number>(() =>
+        readNumberPreference(
+            REQUEST_RESPONSE_SPLIT_RATIO_STORAGE_KEY,
+            DEFAULT_REQUEST_PANEL_RATIO,
+            0.2,
+            0.8
+        )
+    );
+    const [isSplitDragging, setIsSplitDragging] = useState(false);
     const [contextMenu, setContextMenu] = useState<SidebarContextMenu | null>(null);
     const [rootAddMenu, setRootAddMenu] = useState<RootAddMenu | null>(null);
     const [renameTarget, setRenameTarget] = useState<{ kind: "request" | "folder"; id: string } | null>(null);
@@ -970,6 +1021,8 @@ export default function App() {
     const curlImportTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
+    const requestResponseSplitRef = useRef<HTMLDivElement | null>(null);
+    const splitDragStateRef = useRef<{ startY: number; startRatio: number } | null>(null);
     const expandedFoldersRef = useRef<Record<string, boolean>>({});
     const hydratedTabsCollectionIdRef = useRef<string | null>(null);
     const hydratedCollapsedFoldersCollectionIdRef = useRef<string | null>(null);
@@ -999,6 +1052,79 @@ export default function App() {
             showGeneratedHeaders
         );
     }, [showGeneratedHeaders]);
+
+    useEffect(() => {
+        writeNumberPreference(
+            REQUEST_RESPONSE_SPLIT_RATIO_STORAGE_KEY,
+            requestPanelRatio
+        );
+    }, [requestPanelRatio]);
+
+    const clampRequestPanelRatio = useCallback((ratio: number): number => {
+        const container = requestResponseSplitRef.current;
+        if (!container) {
+            return Math.min(0.8, Math.max(0.2, ratio));
+        }
+
+        const totalHeight = Math.max(
+            1,
+            container.getBoundingClientRect().height - SPLIT_DIVIDER_HEIGHT_PX
+        );
+        const minRatio = MIN_SPLIT_PANEL_HEIGHT_PX / totalHeight;
+        const maxRatio = 1 - minRatio;
+        if (minRatio >= maxRatio) {
+            return 0.5;
+        }
+        return Math.min(maxRatio, Math.max(minRatio, ratio));
+    }, []);
+
+    useEffect(() => {
+        function syncRatioToViewport() {
+            setRequestPanelRatio((previous) => clampRequestPanelRatio(previous));
+        }
+
+        window.addEventListener("resize", syncRatioToViewport);
+        syncRatioToViewport();
+        return () => window.removeEventListener("resize", syncRatioToViewport);
+    }, [clampRequestPanelRatio]);
+
+    useEffect(() => {
+        if (!isSplitDragging) return;
+
+        const previousCursor = document.body.style.cursor;
+        const previousUserSelect = document.body.style.userSelect;
+        document.body.style.cursor = "row-resize";
+        document.body.style.userSelect = "none";
+
+        function onMouseMove(event: MouseEvent) {
+            const dragState = splitDragStateRef.current;
+            const container = requestResponseSplitRef.current;
+            if (!dragState || !container) return;
+
+            const totalHeight = Math.max(
+                1,
+                container.getBoundingClientRect().height - SPLIT_DIVIDER_HEIGHT_PX
+            );
+            const deltaY = event.clientY - dragState.startY;
+            const nextRatio = dragState.startRatio + deltaY / totalHeight;
+            setRequestPanelRatio(clampRequestPanelRatio(nextRatio));
+        }
+
+        function endDrag() {
+            setIsSplitDragging(false);
+            splitDragStateRef.current = null;
+        }
+
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", endDrag);
+
+        return () => {
+            window.removeEventListener("mousemove", onMouseMove);
+            window.removeEventListener("mouseup", endDrag);
+            document.body.style.cursor = previousCursor;
+            document.body.style.userSelect = previousUserSelect;
+        };
+    }, [clampRequestPanelRatio, isSplitDragging]);
 
     function resetCollapsedFoldersHydrationRefs() {
         hydratedCollapsedFoldersCollectionIdRef.current = null;
@@ -2345,6 +2471,50 @@ export default function App() {
             notifyError("Failed to copy debug info");
         }
     }, [requestDebugText]);
+
+    const beginRequestResponseSplitDrag = useCallback(
+        (event: ReactMouseEvent<HTMLDivElement>) => {
+            if (event.button !== 0) return;
+            splitDragStateRef.current = {
+                startY: event.clientY,
+                startRatio: requestPanelRatio,
+            };
+            setIsSplitDragging(true);
+        },
+        [requestPanelRatio]
+    );
+
+    const nudgeRequestResponseSplit = useCallback(
+        (direction: "up" | "down") => {
+            const container = requestResponseSplitRef.current;
+            if (!container) return;
+            const totalHeight = Math.max(
+                1,
+                container.getBoundingClientRect().height - SPLIT_DIVIDER_HEIGHT_PX
+            );
+            const pixelStep = 24;
+            const ratioStep = pixelStep / totalHeight;
+            const nextRatio =
+                requestPanelRatio + (direction === "up" ? ratioStep : -ratioStep);
+            setRequestPanelRatio(clampRequestPanelRatio(nextRatio));
+        },
+        [clampRequestPanelRatio, requestPanelRatio]
+    );
+
+    const onRequestResponseSplitKeyDown = useCallback(
+        (event: ReactKeyboardEvent<HTMLDivElement>) => {
+            if (event.key === "ArrowUp") {
+                event.preventDefault();
+                nudgeRequestResponseSplit("up");
+                return;
+            }
+            if (event.key === "ArrowDown") {
+                event.preventDefault();
+                nudgeRequestResponseSplit("down");
+            }
+        },
+        [nudgeRequestResponseSplit]
+    );
 
     const saveDraftById = useCallback(
         async (requestId: string): Promise<boolean> => {
@@ -5502,7 +5672,27 @@ export default function App() {
                     )}
 
                     {current && draft && (
-                        <>
+                        <div
+                            ref={requestResponseSplitRef}
+                            style={{
+                                flex: 1,
+                                minHeight: 0,
+                                display: "grid",
+                                gridTemplateRows: `minmax(${MIN_SPLIT_PANEL_HEIGHT_PX}px, ${(requestPanelRatio * 100).toFixed(2)}%) ${SPLIT_DIVIDER_HEIGHT_PX}px minmax(${MIN_SPLIT_PANEL_HEIGHT_PX}px, 1fr)`,
+                                overflow: "hidden",
+                            }}
+                        >
+                            <div
+                                style={{
+                                    minHeight: 0,
+                                    overflowY: "auto",
+                                    overflowX: "hidden",
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 10,
+                                    paddingRight: 4,
+                                }}
+                            >
                             {/*<div*/}
                             {/*    style={{*/}
                             {/*        display: "flex",*/}
@@ -6105,9 +6295,9 @@ export default function App() {
                                                 style={{
                                                     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                                                     fontSize: 12,
-                                                    overflow: "hidden",
-                                                    textOverflow: "ellipsis",
-                                                    whiteSpace: "nowrap",
+                                                    whiteSpace: "normal",
+                                                    overflowWrap: "anywhere",
+                                                    wordBreak: "break-word",
                                                 }}
                                                 title={requestDebugInfo.resolvedUrl}
                                             >
@@ -6141,6 +6331,9 @@ export default function App() {
                                                     color: "var(--pg-text)",
                                                     fontSize: 12,
                                                     whiteSpace: "pre-wrap",
+                                                    overflowX: "auto",
+                                                    maxWidth: "100%",
+                                                    overflowWrap: "anywhere",
                                                 }}
                                             >
                                                 {requestDebugInfo.enabledHeaders.length > 0
@@ -6162,6 +6355,9 @@ export default function App() {
                                                     color: "var(--pg-text)",
                                                     fontSize: 12,
                                                     whiteSpace: "pre-wrap",
+                                                    overflowX: "auto",
+                                                    maxWidth: "100%",
+                                                    overflowWrap: "anywhere",
                                                 }}
                                             >
                                                 {requestDebugInfo.disabledHeaders.length > 0
@@ -6192,7 +6388,10 @@ export default function App() {
                                                     fontSize: 12,
                                                     whiteSpace: "pre-wrap",
                                                     maxHeight: 220,
-                                                    overflow: "auto",
+                                                    overflowX: "auto",
+                                                    overflowY: "auto",
+                                                    maxWidth: "100%",
+                                                    overflowWrap: "anywhere",
                                                 }}
                                             >
                                                 {requestDebugInfo.bodyPreview}
@@ -6210,6 +6409,9 @@ export default function App() {
                                                     color: "var(--pg-text)",
                                                     fontSize: 12,
                                                     whiteSpace: "pre-wrap",
+                                                    overflowX: "auto",
+                                                    maxWidth: "100%",
+                                                    overflowWrap: "anywhere",
                                                 }}
                                             >
                                                 {[
@@ -6222,25 +6424,6 @@ export default function App() {
                                             </pre>
                                         </div>
                                     </div>
-
-                                    {showRequestDebug && (
-                                        <pre
-                                            style={{
-                                                margin: 0,
-                                                padding: 10,
-                                                border: "1px solid var(--pg-border)",
-                                                borderRadius: 6,
-                                                background: "var(--pg-surface-alt)",
-                                                color: "var(--pg-text)",
-                                                fontSize: 12,
-                                                overflow: "auto",
-                                                maxHeight: 340,
-                                                whiteSpace: "pre-wrap",
-                                            }}
-                                        >
-                                            {requestDebugText || "No debug data"}
-                                        </pre>
-                                    )}
                                 </div>
                             )}
 
@@ -6273,17 +6456,68 @@ export default function App() {
                                 </>
                             )}
 
-                            <ResponsePanel
-                                response={resp}
-                                statusText={selectedResponseStatusText}
-                                scriptReport={selectedScriptReport}
-                                runtimeVariables={executionRuntimeActive ? executionRuntimeVariables : {}}
-                                onClearRuntimeVariables={() => setExecutionRuntimeVariables({})}
-                                onRevealScriptTestLocation={revealScriptTestLocation}
-                                activeTab={responseTab}
-                                onTabChange={setResponseTab}
+                            {tab === "debug" && showRequestDebug && (
+                                <pre
+                                    style={{
+                                        margin: "0 0 6px 0",
+                                        padding: 10,
+                                        border: "1px solid var(--pg-border)",
+                                        borderRadius: 6,
+                                        background: "var(--pg-surface-alt)",
+                                        color: "var(--pg-text)",
+                                        fontSize: 12,
+                                        whiteSpace: "pre",
+                                        overflowX: "auto",
+                                        overflowY: "hidden",
+                                        maxWidth: "100%",
+                                    }}
+                                >
+                                    {requestDebugText || "No debug data"}
+                                </pre>
+                            )}
+                            </div>
+
+                            <div
+                                role="separator"
+                                aria-orientation="horizontal"
+                                aria-label="Resize request and response panels"
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={Math.round(requestPanelRatio * 100)}
+                                tabIndex={0}
+                                onMouseDown={beginRequestResponseSplitDrag}
+                                onKeyDown={onRequestResponseSplitKeyDown}
+                                style={{
+                                    cursor: "row-resize",
+                                    background: "var(--pg-border)",
+                                    borderRadius: 999,
+                                    margin: "2px 0",
+                                    minHeight: SPLIT_DIVIDER_HEIGHT_PX,
+                                    userSelect: "none",
+                                }}
                             />
-                        </>
+
+                            <div
+                                style={{
+                                    minHeight: 0,
+                                    overflow: "hidden",
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    paddingTop: 8,
+                                }}
+                            >
+                                <ResponsePanel
+                                    response={resp}
+                                    statusText={selectedResponseStatusText}
+                                    scriptReport={selectedScriptReport}
+                                    runtimeVariables={executionRuntimeActive ? executionRuntimeVariables : {}}
+                                    onClearRuntimeVariables={() => setExecutionRuntimeVariables({})}
+                                    onRevealScriptTestLocation={revealScriptTestLocation}
+                                    activeTab={responseTab}
+                                    onTabChange={setResponseTab}
+                                />
+                            </div>
+                        </div>
                     )}
 
                     {current && !draft && (
