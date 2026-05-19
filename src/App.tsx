@@ -1,7 +1,5 @@
 import {
     type ChangeEvent,
-    type KeyboardEvent as ReactKeyboardEvent,
-    type MouseEvent as ReactMouseEvent,
     useCallback,
     useEffect,
     useMemo,
@@ -38,6 +36,7 @@ import NoCollectionsModal from "./components/NoCollectionsModal.tsx";
 import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.tsx";
 import CollectionRunnerModal from "./components/CollectionRunnerModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
+import { useResizableResponsePanel } from "./hooks/useResizableResponsePanel.ts";
 import {
     copyTextToClipboard,
     copyRequestToClipboard,
@@ -306,10 +305,10 @@ const OPEN_TABS_STORAGE_KEY = "bifrost:open-tabs:v1";
 const RESPONSES_STORAGE_KEY = "bifrost:last-responses:v1";
 const SAVED_REQUESTS_COLLAPSED_FOLDERS_STORAGE_KEY = "bifrost:saved-requests:collapsed-folders:v1";
 const GENERATED_HEADERS_VISIBLE_STORAGE_KEY = "bifrost:generated-headers:visible:v1";
-const REQUEST_RESPONSE_SPLIT_RATIO_STORAGE_KEY = "bifrost:request-response-split-ratio:v1";
-const DEFAULT_REQUEST_PANEL_RATIO = 0.45;
-const MIN_SPLIT_PANEL_HEIGHT_PX = 220;
-const SPLIT_DIVIDER_HEIGHT_PX = 8;
+const REQUEST_RESPONSE_PANEL_STORAGE_PREFIX = "bifrost:request-response-panel:v2";
+const REQUEST_RESPONSE_DIVIDER_HEIGHT_PX = 6;
+const REQUEST_PANEL_MIN_HEIGHT_PX = 44;
+const RESPONSE_PANEL_MIN_HEIGHT_PX = 44;
 const IS_MACOS =
     typeof navigator !== "undefined" &&
     /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
@@ -649,35 +648,6 @@ function writeBooleanPreference(storageKey: string, value: boolean) {
     }
 }
 
-function readNumberPreference(
-    storageKey: string,
-    defaultValue: number,
-    min: number,
-    max: number
-): number {
-    if (typeof window === "undefined") return defaultValue;
-
-    try {
-        const raw = window.localStorage.getItem(storageKey);
-        if (raw === null) return defaultValue;
-        const parsed = Number(raw);
-        if (!Number.isFinite(parsed)) return defaultValue;
-        return Math.min(max, Math.max(min, parsed));
-    } catch {
-        return defaultValue;
-    }
-}
-
-function writeNumberPreference(storageKey: string, value: number) {
-    if (typeof window === "undefined") return;
-
-    try {
-        window.localStorage.setItem(storageKey, String(value));
-    } catch {
-        // ignore storage write failures
-    }
-}
-
 function readPersistedTabsState(): PersistedTabsState {
     if (typeof window === "undefined") return {};
 
@@ -928,15 +898,8 @@ export default function App() {
         readBooleanPreference(GENERATED_HEADERS_VISIBLE_STORAGE_KEY, true)
     );
     const [showRequestDebug, setShowRequestDebug] = useState(false);
-    const [requestPanelRatio, setRequestPanelRatio] = useState<number>(() =>
-        readNumberPreference(
-            REQUEST_RESPONSE_SPLIT_RATIO_STORAGE_KEY,
-            DEFAULT_REQUEST_PANEL_RATIO,
-            0.2,
-            0.8
-        )
-    );
-    const [isSplitDragging, setIsSplitDragging] = useState(false);
+    const [requestResponseSplitElement, setRequestResponseSplitElement] =
+        useState<HTMLDivElement | null>(null);
     const [contextMenu, setContextMenu] = useState<SidebarContextMenu | null>(null);
     const [rootAddMenu, setRootAddMenu] = useState<RootAddMenu | null>(null);
     const [renameTarget, setRenameTarget] = useState<{ kind: "request" | "folder"; id: string } | null>(null);
@@ -1022,7 +985,6 @@ export default function App() {
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
     const requestResponseSplitRef = useRef<HTMLDivElement | null>(null);
-    const splitDragStateRef = useRef<{ startY: number; startRatio: number } | null>(null);
     const expandedFoldersRef = useRef<Record<string, boolean>>({});
     const hydratedTabsCollectionIdRef = useRef<string | null>(null);
     const hydratedCollapsedFoldersCollectionIdRef = useRef<string | null>(null);
@@ -1039,6 +1001,26 @@ export default function App() {
     const collectionRunActiveRequestIdRef = useRef<string | null>(null);
     const collectionRunPending = runnerRun?.status === "running";
     const executionRuntimeActive = pending || collectionRunPending;
+    const {
+        dividerHeightPx: responsePanelDividerHeightPx,
+        requestHeightPx: requestPanelHeightPx,
+        responseHeightPx,
+        isDragging: isResponsePanelDragging,
+        onDividerMouseDown,
+        onDividerKeyDown,
+    } = useResizableResponsePanel({
+        containerRef: requestResponseSplitRef,
+        containerElement: requestResponseSplitElement,
+        storageKeyPrefix: REQUEST_RESPONSE_PANEL_STORAGE_PREFIX,
+        defaultRequestRatio: 0.55,
+        dividerHeightPx: REQUEST_RESPONSE_DIVIDER_HEIGHT_PX,
+        minRequestHeightPx: REQUEST_PANEL_MIN_HEIGHT_PX,
+        minResponseHeightPx: RESPONSE_PANEL_MIN_HEIGHT_PX,
+    });
+    const bindRequestResponseSplitRef = useCallback((node: HTMLDivElement | null) => {
+        requestResponseSplitRef.current = node;
+        setRequestResponseSplitElement(node);
+    }, []);
 
     useEffect(() => {
         if (executionRuntimeActive) return;
@@ -1052,79 +1034,6 @@ export default function App() {
             showGeneratedHeaders
         );
     }, [showGeneratedHeaders]);
-
-    useEffect(() => {
-        writeNumberPreference(
-            REQUEST_RESPONSE_SPLIT_RATIO_STORAGE_KEY,
-            requestPanelRatio
-        );
-    }, [requestPanelRatio]);
-
-    const clampRequestPanelRatio = useCallback((ratio: number): number => {
-        const container = requestResponseSplitRef.current;
-        if (!container) {
-            return Math.min(0.8, Math.max(0.2, ratio));
-        }
-
-        const totalHeight = Math.max(
-            1,
-            container.getBoundingClientRect().height - SPLIT_DIVIDER_HEIGHT_PX
-        );
-        const minRatio = MIN_SPLIT_PANEL_HEIGHT_PX / totalHeight;
-        const maxRatio = 1 - minRatio;
-        if (minRatio >= maxRatio) {
-            return 0.5;
-        }
-        return Math.min(maxRatio, Math.max(minRatio, ratio));
-    }, []);
-
-    useEffect(() => {
-        function syncRatioToViewport() {
-            setRequestPanelRatio((previous) => clampRequestPanelRatio(previous));
-        }
-
-        window.addEventListener("resize", syncRatioToViewport);
-        syncRatioToViewport();
-        return () => window.removeEventListener("resize", syncRatioToViewport);
-    }, [clampRequestPanelRatio]);
-
-    useEffect(() => {
-        if (!isSplitDragging) return;
-
-        const previousCursor = document.body.style.cursor;
-        const previousUserSelect = document.body.style.userSelect;
-        document.body.style.cursor = "row-resize";
-        document.body.style.userSelect = "none";
-
-        function onMouseMove(event: MouseEvent) {
-            const dragState = splitDragStateRef.current;
-            const container = requestResponseSplitRef.current;
-            if (!dragState || !container) return;
-
-            const totalHeight = Math.max(
-                1,
-                container.getBoundingClientRect().height - SPLIT_DIVIDER_HEIGHT_PX
-            );
-            const deltaY = event.clientY - dragState.startY;
-            const nextRatio = dragState.startRatio + deltaY / totalHeight;
-            setRequestPanelRatio(clampRequestPanelRatio(nextRatio));
-        }
-
-        function endDrag() {
-            setIsSplitDragging(false);
-            splitDragStateRef.current = null;
-        }
-
-        window.addEventListener("mousemove", onMouseMove);
-        window.addEventListener("mouseup", endDrag);
-
-        return () => {
-            window.removeEventListener("mousemove", onMouseMove);
-            window.removeEventListener("mouseup", endDrag);
-            document.body.style.cursor = previousCursor;
-            document.body.style.userSelect = previousUserSelect;
-        };
-    }, [clampRequestPanelRatio, isSplitDragging]);
 
     function resetCollapsedFoldersHydrationRefs() {
         hydratedCollapsedFoldersCollectionIdRef.current = null;
@@ -1587,6 +1496,36 @@ export default function App() {
         if (!selectedRequestId) return null;
         return scriptReportsByRequestId[selectedRequestId] ?? null;
     }, [selectedRequestId, scriptReportsByRequestId]);
+    const selectedResponseDurationText = useMemo(() => {
+        if (!resp) return "n/a";
+        if (!Number.isFinite(resp.duration_ms)) return "n/a";
+        return `${Math.max(0, Math.round(resp.duration_ms))}ms`;
+    }, [resp]);
+    const selectedResponseCodeText = useMemo(() => {
+        if (!resp) return "n/a";
+        return String(resp.status);
+    }, [resp]);
+    const selectedResponseTestsSummaryText = useMemo(() => {
+        const tests = selectedScriptReport?.tests ?? [];
+        if (tests.length === 0) return "Tests: none";
+        const summary = summarizeScriptTests(tests);
+        return summary.failed > 0
+            ? `Tests: ${summary.failed} failed, ${summary.passed} passed`
+            : `Tests: ${summary.passed}/${summary.total} passed`;
+    }, [selectedScriptReport]);
+    const selectedResponseHeaderSummaryText = useMemo(() => {
+        const testsSummary = selectedResponseTestsSummaryText.replace(/^Tests:\s*/i, "tests ");
+        return `Status ${selectedResponseCodeText} in ${selectedResponseDurationText} · ${testsSummary}`;
+    }, [
+        selectedResponseCodeText,
+        selectedResponseDurationText,
+        selectedResponseTestsSummaryText,
+    ]);
+    const responsePanelSizePercent = useMemo(() => {
+        const total = requestPanelHeightPx + responseHeightPx;
+        if (total <= 0) return 0;
+        return Math.round((responseHeightPx / total) * 100);
+    }, [requestPanelHeightPx, responseHeightPx]);
 
     const activeEnvironment = useMemo(
         () => environments.find((env) => env.id === activeEnvironmentId) ?? null,
@@ -2471,50 +2410,6 @@ export default function App() {
             notifyError("Failed to copy debug info");
         }
     }, [requestDebugText]);
-
-    const beginRequestResponseSplitDrag = useCallback(
-        (event: ReactMouseEvent<HTMLDivElement>) => {
-            if (event.button !== 0) return;
-            splitDragStateRef.current = {
-                startY: event.clientY,
-                startRatio: requestPanelRatio,
-            };
-            setIsSplitDragging(true);
-        },
-        [requestPanelRatio]
-    );
-
-    const nudgeRequestResponseSplit = useCallback(
-        (direction: "up" | "down") => {
-            const container = requestResponseSplitRef.current;
-            if (!container) return;
-            const totalHeight = Math.max(
-                1,
-                container.getBoundingClientRect().height - SPLIT_DIVIDER_HEIGHT_PX
-            );
-            const pixelStep = 24;
-            const ratioStep = pixelStep / totalHeight;
-            const nextRatio =
-                requestPanelRatio + (direction === "up" ? ratioStep : -ratioStep);
-            setRequestPanelRatio(clampRequestPanelRatio(nextRatio));
-        },
-        [clampRequestPanelRatio, requestPanelRatio]
-    );
-
-    const onRequestResponseSplitKeyDown = useCallback(
-        (event: ReactKeyboardEvent<HTMLDivElement>) => {
-            if (event.key === "ArrowUp") {
-                event.preventDefault();
-                nudgeRequestResponseSplit("up");
-                return;
-            }
-            if (event.key === "ArrowDown") {
-                event.preventDefault();
-                nudgeRequestResponseSplit("down");
-            }
-        },
-        [nudgeRequestResponseSplit]
-    );
 
     const saveDraftById = useCallback(
         async (requestId: string): Promise<boolean> => {
@@ -5304,6 +5199,7 @@ export default function App() {
                         }}
                     >
                         <div
+                            className="no-select"
                             style={{
                                 marginTop: 16,
                                 marginBottom: 8,
@@ -5338,6 +5234,7 @@ export default function App() {
                         </div>
 
                         <div
+                            className="no-select"
                             style={{
                                 display: "flex",
                                 flexDirection: "column",
@@ -5587,6 +5484,7 @@ export default function App() {
                 >
                     {current && openTabs.length > 0 && (
                         <div
+                            className="no-select"
                             style={{
                                 display: "flex",
                                 alignItems: "center",
@@ -5673,125 +5571,153 @@ export default function App() {
 
                     {current && draft && (
                         <div
-                            ref={requestResponseSplitRef}
                             style={{
                                 flex: 1,
                                 minHeight: 0,
                                 display: "grid",
-                                gridTemplateRows: `minmax(${MIN_SPLIT_PANEL_HEIGHT_PX}px, ${(requestPanelRatio * 100).toFixed(2)}%) ${SPLIT_DIVIDER_HEIGHT_PX}px minmax(${MIN_SPLIT_PANEL_HEIGHT_PX}px, 1fr)`,
+                                gridTemplateRows: "auto minmax(0, 1fr)",
+                                gap: 8,
                                 overflow: "hidden",
                             }}
                         >
                             <div
+                                className="no-select"
+                                style={requestShellStyle()}
+                            >
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        flexWrap: "nowrap",
+                                        flexShrink: 0,
+                                        width: "100%",
+                                        minWidth: 0,
+                                    }}
+                                >
+                                    <AppSelect
+                                        value={draft.method}
+                                        options={REQUEST_METHOD_OPTIONS}
+                                        ariaLabel="Request method"
+                                        onValueChange={(nextValue) =>
+                                            updateDraft({ method: nextValue as Request["method"] })
+                                        }
+                                    />
+
+                                    <VariableInput
+                                        placeholder="URL"
+                                        value={draft.url}
+                                        onChange={(nextUrl) => updateDraft({ url: nextUrl })}
+                                        resolveVariableStatus={resolveVariableStatus}
+                                        resolveVariableValue={resolveVariableValue}
+                                        variableSuggestions={variableSuggestions}
+                                        containerStyle={{ flex: 1, minWidth: 0 }}
+                                    />
+
+                                    <button
+                                        onClick={triggerSendFromUi}
+                                        disabled={!selectedRequestId || pending || collectionRunPending}
+                                        style={primaryButtonStyle(!selectedRequestId || pending || collectionRunPending)}
+                                    >
+                                        Send
+                                    </button>
+
+                                    <button
+                                        onClick={cancel}
+                                        disabled={!selectedRequestId || !pending || collectionRunPending}
+                                        style={buttonStyle(!selectedRequestId || !pending || collectionRunPending)}
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+
+                            </div>
+
+                            <div
+                                ref={bindRequestResponseSplitRef}
                                 style={{
                                     minHeight: 0,
-                                    overflowY: "auto",
-                                    overflowX: "hidden",
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    gap: 10,
-                                    paddingRight: 4,
+                                    display: "grid",
+                                    gridTemplateRows: `minmax(${REQUEST_PANEL_MIN_HEIGHT_PX}px, ${requestPanelHeightPx}px) ${responsePanelDividerHeightPx*2-1}px minmax(${RESPONSE_PANEL_MIN_HEIGHT_PX}px, ${responseHeightPx}px)`,
+                                    overflow: "hidden",
                                 }}
                             >
-                            {/*<div*/}
-                            {/*    style={{*/}
-                            {/*        display: "flex",*/}
-                            {/*        justifyContent: "space-between",*/}
-                            {/*        alignItems: "center",*/}
-                            {/*        gap: 8,*/}
-                            {/*        marginTop: 12,*/}
-                            {/*        flexShrink: 0,*/}
-                            {/*    }}*/}
-                            {/*>*/}
-                            {/*    <h3>Editor</h3>*/}
-                            {/*    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>*/}
-                            {/*        {isDirty && <span style={{ color: "var(--pg-warning)" }}>● Unsaved</span>}*/}
-                            {/*        {selectedRequestId ? (pending ? "⏳ pending" : "✅ idle") : ""}*/}
-                            {/*    </div>*/}
-                            {/*</div>*/}
-
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
-                                <AppSelect
-                                    value={draft.method}
-                                    options={REQUEST_METHOD_OPTIONS}
-                                    ariaLabel="Request method"
-                                    onValueChange={(nextValue) =>
-                                        updateDraft({ method: nextValue as Request["method"] })
-                                    }
-                                />
-
-                                <VariableInput
-                                    placeholder="URL"
-                                    value={draft.url}
-                                    onChange={(nextUrl) => updateDraft({ url: nextUrl })}
-                                    resolveVariableStatus={resolveVariableStatus}
-                                    resolveVariableValue={resolveVariableValue}
-                                    variableSuggestions={variableSuggestions}
-                                    containerStyle={{ flex: 1 }}
-                                />
-
-                                <button
-                                    onClick={triggerSendFromUi}
-                                    disabled={!selectedRequestId || pending || collectionRunPending}
-                                    style={primaryButtonStyle(!selectedRequestId || pending || collectionRunPending)}
+                                <div
+                                    style={{
+                                        minHeight: 0,
+                                        overflow: "hidden",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        border: "1px solid var(--pg-border)",
+                                        borderRadius: 10,
+                                        background: "var(--pg-surface-0)",
+                                    }}
                                 >
-                                    Send
-                                </button>
-
-                                <button
-                                    onClick={cancel}
-                                    disabled={!selectedRequestId || !pending || collectionRunPending}
-                                    style={buttonStyle(!selectedRequestId || !pending || collectionRunPending)}
-                                >
-                                    Cancel
-                                </button>
-                            </div>
-
-                            <div style={{ display: "flex", gap: 8, marginTop: 12, flexShrink: 0 }}>
-                                <button
-                                    onClick={() => setTab("headers")}
-                                    style={editorTabStyle(tab === "headers")}
-                                >
-                                    Headers
-                                </button>
-                                <button
-                                    onClick={() => setTab("query")}
-                                    style={editorTabStyle(tab === "query")}
-                                >
-                                    Query
-                                </button>
-                                <button
-                                    onClick={() => setTab("body")}
-                                    style={editorTabStyle(tab === "body")}
-                                >
-                                    Body
-                                </button>
-                                <button
-                                    onClick={() => setTab("auth")}
-                                    style={editorTabStyle(tab === "auth")}
-                                >
-                                    Auth
-                                </button>
-                                <button
-                                    onClick={() => setTab("tls")}
-                                    style={editorTabStyle(tab === "tls")}
-                                >
-                                    TLS
-                                </button>
-                                <button
-                                    onClick={() => setTab("scripts")}
-                                    style={editorTabStyle(tab === "scripts")}
-                                >
-                                    Scripts
-                                </button>
-                                <button
-                                    onClick={() => setTab("debug")}
-                                    style={editorTabStyle(tab === "debug")}
-                                >
-                                    Debug
-                                </button>
-                            </div>
-
+                                    <div
+                                        className="no-select"
+                                        style={requestPanelHeaderStyle()}
+                                    >
+                                        <span style={{ fontWeight: 700, fontSize: 13, color: "var(--pg-text)" }}>
+                                            Request
+                                        </span>
+                                        <div style={requestPanelTabsStyle()}>
+                                            <button
+                                                onClick={() => setTab("headers")}
+                                                style={editorTabStyle(tab === "headers")}
+                                            >
+                                                Headers
+                                            </button>
+                                            <button
+                                                onClick={() => setTab("query")}
+                                                style={editorTabStyle(tab === "query")}
+                                            >
+                                                Query
+                                            </button>
+                                            <button
+                                                onClick={() => setTab("body")}
+                                                style={editorTabStyle(tab === "body")}
+                                            >
+                                                Body
+                                            </button>
+                                            <button
+                                                onClick={() => setTab("auth")}
+                                                style={editorTabStyle(tab === "auth")}
+                                            >
+                                                Auth
+                                            </button>
+                                            <button
+                                                onClick={() => setTab("tls")}
+                                                style={editorTabStyle(tab === "tls")}
+                                            >
+                                                TLS
+                                            </button>
+                                            <button
+                                                onClick={() => setTab("scripts")}
+                                                style={editorTabStyle(tab === "scripts")}
+                                            >
+                                                Scripts
+                                            </button>
+                                            <button
+                                                onClick={() => setTab("debug")}
+                                                style={editorTabStyle(tab === "debug")}
+                                            >
+                                                Debug
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div
+                                        style={{
+                                            minHeight: 0,
+                                            flex: 1,
+                                            overflowY: "auto",
+                                            overflowX: "hidden",
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            gap: 10,
+                                            padding: 10,
+                                            boxSizing: "border-box",
+                                        }}
+                                    >
                             {tab === "headers" && (
                                 <div style={{ display: "grid", gap: 10 }}>
                                     <div
@@ -5929,22 +5855,25 @@ export default function App() {
                             )}
 
                             {tab === "body" && (
-                                <RequestBodyEditor
-                                    draft={draft}
-                                    selectedRequestId={selectedRequestId}
-                                    beforeMountMonaco={beforeMountMonaco}
-                                    editorOptions={editorOptions}
-                                    editorTheme={editorTheme}
-                                    onPatchDraft={updateDraft}
-                                    onSetFullDraft={setFullDraft}
-                                    onMountBodyJsonEditor={bindBodyJsonEditor}
-                                    onMountBodyRawEditor={bindBodyRawEditor}
-                                    resolveVariableStatus={resolveVariableStatus}
-                                    resolveVariableValue={resolveVariableValue}
-                                    variableSuggestions={variableSuggestions}
-                                    editorPanelStyle={editorPanelStyle}
-                                    onSubmitShortcut={triggerSendFromUi}
-                                />
+                                <div style={{ minHeight: 0, flex: 1, display: "flex", flexDirection: "column" }}>
+                                    <RequestBodyEditor
+                                        draft={draft}
+                                        selectedRequestId={selectedRequestId}
+                                        beforeMountMonaco={beforeMountMonaco}
+                                        editorOptions={editorOptions}
+                                        editorTheme={editorTheme}
+                                        onPatchDraft={updateDraft}
+                                        onSetFullDraft={setFullDraft}
+                                        onMountBodyJsonEditor={bindBodyJsonEditor}
+                                        onMountBodyRawEditor={bindBodyRawEditor}
+                                        resolveVariableStatus={resolveVariableStatus}
+                                        resolveVariableValue={resolveVariableValue}
+                                        variableSuggestions={variableSuggestions}
+                                        editorPanelStyle={editorPanelStyle}
+                                        onSubmitShortcut={triggerSendFromUi}
+                                        fillHeight
+                                    />
+                                </div>
                             )}
 
                             {tab === "auth" &&
@@ -6210,17 +6139,20 @@ export default function App() {
                                 })()}
 
                             {tab === "scripts" && (
-                                <RequestScriptsEditor
-                                    scripts={requestScriptsOrDefault(draft)}
-                                    selectedRequestId={selectedRequestId}
-                                    beforeMountMonaco={beforeMountMonaco}
-                                    editorOptions={editorOptions}
-                                    editorTheme={editorTheme}
-                                    editorPanelStyle={editorPanelStyle}
-                                    onChange={(next) => updateDraft({ scripts: next })}
-                                    onSubmitShortcut={triggerSendFromUi}
-                                    revealLocation={scriptRevealLocation}
-                                />
+                                <div style={{ minHeight: 0, flex: 1, display: "flex", flexDirection: "column" }}>
+                                    <RequestScriptsEditor
+                                        scripts={requestScriptsOrDefault(draft)}
+                                        selectedRequestId={selectedRequestId}
+                                        beforeMountMonaco={beforeMountMonaco}
+                                        editorOptions={editorOptions}
+                                        editorTheme={editorTheme}
+                                        editorPanelStyle={editorPanelStyle}
+                                        onChange={(next) => updateDraft({ scripts: next })}
+                                        onSubmitShortcut={triggerSendFromUi}
+                                        revealLocation={scriptRevealLocation}
+                                        fillHeight
+                                    />
+                                </div>
                             )}
 
                             {tab === "debug" && requestDebugInfo && (
@@ -6269,15 +6201,16 @@ export default function App() {
                                         </div>
                                     </div>
 
-                                    <div
-                                        style={{
-                                            border: "1px solid var(--pg-border)",
-                                            borderRadius: 8,
-                                            padding: "10px 12px",
-                                            display: "grid",
-                                            gap: 10,
-                                        }}
-                                    >
+                                    {showRequestDebug && (
+                                        <div
+                                            style={{
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 8,
+                                                padding: "10px 12px",
+                                                display: "grid",
+                                                gap: 10,
+                                            }}
+                                        >
                                         <div style={{ display: "grid", gap: 4 }}>
                                             <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Method</div>
                                             <div
@@ -6423,13 +6356,14 @@ export default function App() {
                                                 ].join("\n")}
                                             </pre>
                                         </div>
-                                    </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
                             {tab === "json" && (
                                 <>
-                                    <div style={editorPanelStyle("52vh", 360)}>
+                                    <div style={editorPanelStyle("min(40vh, 360px)", 220)}>
                                         <Editor
                                             key={`request-json-${selectedRequestId ?? "none"}`}
                                             height="100%"
@@ -6456,26 +6390,8 @@ export default function App() {
                                 </>
                             )}
 
-                            {tab === "debug" && showRequestDebug && (
-                                <pre
-                                    style={{
-                                        margin: "0 0 6px 0",
-                                        padding: 10,
-                                        border: "1px solid var(--pg-border)",
-                                        borderRadius: 6,
-                                        background: "var(--pg-surface-alt)",
-                                        color: "var(--pg-text)",
-                                        fontSize: 12,
-                                        whiteSpace: "pre",
-                                        overflowX: "auto",
-                                        overflowY: "hidden",
-                                        maxWidth: "100%",
-                                    }}
-                                >
-                                    {requestDebugText || "No debug data"}
-                                </pre>
-                            )}
                             </div>
+                                </div>
 
                             <div
                                 role="separator"
@@ -6483,16 +6399,19 @@ export default function App() {
                                 aria-label="Resize request and response panels"
                                 aria-valuemin={0}
                                 aria-valuemax={100}
-                                aria-valuenow={Math.round(requestPanelRatio * 100)}
+                                aria-valuenow={responsePanelSizePercent}
                                 tabIndex={0}
-                                onMouseDown={beginRequestResponseSplitDrag}
-                                onKeyDown={onRequestResponseSplitKeyDown}
+                                onMouseDown={onDividerMouseDown}
+                                onKeyDown={onDividerKeyDown}
+                                className="no-select"
                                 style={{
                                     cursor: "row-resize",
-                                    background: "var(--pg-border)",
+                                    background: isResponsePanelDragging
+                                        ? "var(--pg-primary)"
+                                        : "var(--pg-border)",
                                     borderRadius: 999,
                                     margin: "2px 0",
-                                    minHeight: SPLIT_DIVIDER_HEIGHT_PX,
+                                    height: responsePanelDividerHeightPx,
                                     userSelect: "none",
                                 }}
                             />
@@ -6503,19 +6422,82 @@ export default function App() {
                                     overflow: "hidden",
                                     display: "flex",
                                     flexDirection: "column",
-                                    paddingTop: 8,
+                                    border: "1px solid var(--pg-border)",
+                                    borderRadius: 10,
+                                    background: "var(--pg-surface-0)",
                                 }}
                             >
-                                <ResponsePanel
-                                    response={resp}
-                                    statusText={selectedResponseStatusText}
-                                    scriptReport={selectedScriptReport}
-                                    runtimeVariables={executionRuntimeActive ? executionRuntimeVariables : {}}
-                                    onClearRuntimeVariables={() => setExecutionRuntimeVariables({})}
-                                    onRevealScriptTestLocation={revealScriptTestLocation}
-                                    activeTab={responseTab}
-                                    onTabChange={setResponseTab}
-                                />
+                                <div
+                                    className="no-select"
+                                    style={responsePanelHeaderStyle()}
+                                >
+                                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
+                                        <span style={{ fontWeight: 700, fontSize: 13, color: "var(--pg-text)" }}>
+                                            Response
+                                        </span>
+                                        <div style={responsePanelTabsStyle()}>
+                                            <button
+                                                onClick={() => setResponseTab("body")}
+                                                style={editorTabStyle(responseTab === "body")}
+                                            >
+                                                Body
+                                            </button>
+                                            <button
+                                                onClick={() => setResponseTab("cookies")}
+                                                style={editorTabStyle(responseTab === "cookies")}
+                                            >
+                                                Cookies
+                                            </button>
+                                            <button
+                                                onClick={() => setResponseTab("headers")}
+                                                style={editorTabStyle(responseTab === "headers")}
+                                            >
+                                                Headers
+                                            </button>
+                                            <button
+                                                onClick={() => setResponseTab("runtime")}
+                                                style={editorTabStyle(responseTab === "runtime")}
+                                            >
+                                                Runtime
+                                            </button>
+                                            <button
+                                                onClick={() => setResponseTab("tests")}
+                                                style={editorTabStyle(responseTab === "tests")}
+                                            >
+                                                Tests
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <span
+                                        style={responsePanelSummaryTextStyle()}
+                                        title={selectedResponseHeaderSummaryText}
+                                    >
+                                        {selectedResponseHeaderSummaryText}
+                                    </span>
+                                </div>
+                                <div
+                                    style={{
+                                        minHeight: 0,
+                                        flex: 1,
+                                        overflow: "hidden",
+                                        padding: 8,
+                                        paddingTop: 6,
+                                    }}
+                                >
+                                    <ResponsePanel
+                                        response={resp}
+                                        statusText={selectedResponseStatusText}
+                                        scriptReport={selectedScriptReport}
+                                        runtimeVariables={executionRuntimeActive ? executionRuntimeVariables : {}}
+                                        onClearRuntimeVariables={() => setExecutionRuntimeVariables({})}
+                                        onRevealScriptTestLocation={revealScriptTestLocation}
+                                        activeTab={responseTab}
+                                        onTabChange={setResponseTab}
+                                        showHeader={false}
+                                        showTabs={false}
+                                    />
+                                </div>
+                            </div>
                             </div>
                         </div>
                     )}
@@ -7719,10 +7701,89 @@ export default function App() {
     );
 }
 
+function requestShellStyle(): React.CSSProperties {
+    return {
+        display: "block",
+        width: "100%",
+        minWidth: 0,
+        padding: "0 2px",
+        flexShrink: 0,
+    };
+}
+
+function requestPanelHeaderStyle(): React.CSSProperties {
+    return {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        gap: 10,
+        padding: "8px 10px",
+        borderBottom: "1px solid var(--pg-border)",
+        minHeight: 40,
+        boxSizing: "border-box",
+        flexShrink: 0,
+        flexWrap: "nowrap",
+        minWidth: 0,
+    };
+}
+
+function requestPanelTabsStyle(): React.CSSProperties {
+    return {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "nowrap",
+        minWidth: 0,
+        overflowX: "auto",
+        overflowY: "hidden",
+    };
+}
+
+function responsePanelHeaderStyle(): React.CSSProperties {
+    return {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+        padding: "8px 10px",
+        borderBottom: "1px solid var(--pg-border)",
+        minHeight: 40,
+        boxSizing: "border-box",
+        flexShrink: 0,
+        flexWrap: "nowrap",
+        minWidth: 0,
+    };
+}
+
+function responsePanelTabsStyle(): React.CSSProperties {
+    return {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "nowrap",
+        minWidth: 0,
+        overflowX: "auto",
+        overflowY: "hidden",
+    };
+}
+
+function responsePanelSummaryTextStyle(): React.CSSProperties {
+    return {
+        fontSize: 12,
+        color: "var(--pg-text-dim)",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        maxWidth: "46%",
+        textAlign: "right",
+        minWidth: 0,
+    };
+}
+
 function requestListItemStyle(active: boolean, hasLocalDraft: boolean): React.CSSProperties {
     return {
         ...buttonStyle(false),
-        height: 30,
+        height: 28,
         padding: "0 10px",
         borderColor: active
             ? "var(--pg-primary)"
@@ -7790,7 +7851,7 @@ function dropInsideOutlineStyle(): React.CSSProperties {
 function editorTabStyle(active: boolean): React.CSSProperties {
     return {
         ...buttonStyle(false),
-        height: 28,
+        height: 26,
         padding: "0 9px",
         fontSize: 12,
         borderColor: active ? "var(--pg-primary)" : "var(--pg-border)",
@@ -7803,7 +7864,7 @@ function draftTabContainerStyle(active: boolean): React.CSSProperties {
     return {
         display: "flex",
         alignItems: "center",
-        borderRadius: 9,
+        borderRadius: 7,
         overflow: "hidden",
         border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
         background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
@@ -7817,7 +7878,7 @@ function draftTabButtonStyle(active: boolean): React.CSSProperties {
         border: "none",
         background: "transparent",
         color: active ? "var(--pg-primary-ink)" : "var(--pg-text-dim)",
-        padding: "6px 10px",
+        padding: "5px 9px",
         fontWeight: 600,
         fontSize: 12,
         lineHeight: 1.2,
@@ -7833,8 +7894,8 @@ function draftTabButtonStyle(active: boolean): React.CSSProperties {
 
 function draftTabCloseButtonStyle(): React.CSSProperties {
     return {
-        width: 28,
-        height: 28,
+        width: 26,
+        height: 26,
         border: "none",
         borderLeft: "1px solid rgba(var(--pg-primary-rgb), 0.3)",
         background: "transparent",
@@ -7852,7 +7913,7 @@ function openTabDropWrapStyle(dropBefore: boolean, dropAfter: boolean): React.CS
         position: "relative",
         display: "flex",
         alignItems: "stretch",
-        borderRadius: 10,
+        borderRadius: 8,
         paddingLeft: 1,
         paddingRight: 1,
         background: dropBefore || dropAfter ? "rgba(var(--pg-primary-rgb), 0.08)" : "transparent",

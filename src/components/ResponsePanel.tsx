@@ -52,6 +52,8 @@ type ResponsePanelProps = {
     onRevealScriptTestLocation?: (test: ScriptTestResult) => void;
     activeTab: ResponseTabId;
     onTabChange: (tab: ResponseTabId) => void;
+    showHeader?: boolean;
+    showTabs?: boolean;
 };
 
 export default function ResponsePanel({
@@ -63,6 +65,8 @@ export default function ResponsePanel({
     onRevealScriptTestLocation,
     activeTab,
     onTabChange,
+    showHeader = true,
+    showTabs = true,
 }: ResponsePanelProps) {
     const bodyView = useMemo(() => formatResponseBody(response), [response]);
     const jsonTokens = useMemo(
@@ -258,50 +262,54 @@ export default function ResponsePanel({
                 flex: 1,
             }}
         >
-            <div
-                style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    flexShrink: 0,
-                }}
-            >
-                <h3 style={{ margin: 0 }}>Response</h3>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--pg-text-dim)" }}>
-                    <span style={{ fontWeight: 600 }}>Status</span>
-                    <span>{statusText}</span>
+            {showHeader && (
+                <div
+                    style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        flexShrink: 0,
+                    }}
+                >
+                    <h3 style={{ margin: 0 }}>Response</h3>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--pg-text-dim)" }}>
+                        <span style={{ fontWeight: 600 }}>Status</span>
+                        <span>{statusText}</span>
+                    </div>
                 </div>
-            </div>
+            )}
 
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flexShrink: 0, alignItems: "center" }}>
-                <button onClick={() => onTabChange("body")} style={responseTabStyle(activeTab === "body")}>
-                    Body
-                </button>
-                <button onClick={() => onTabChange("cookies")} style={responseTabStyle(activeTab === "cookies")}>
-                    Cookies
-                </button>
-                <button onClick={() => onTabChange("headers")} style={responseTabStyle(activeTab === "headers")}>
-                    Headers
-                </button>
-                <button onClick={() => onTabChange("runtime")} style={responseTabStyle(activeTab === "runtime")}>
-                    Runtime
-                </button>
-                <button onClick={() => onTabChange("tests")} style={responseTabStyle(activeTab === "tests")}>
-                    Tests
-                </button>
-                {activeTab === "body" && (
-                    <button
-                        onClick={() => void handleCopyBody()}
-                        disabled={!bodyView.copyText}
-                        style={copyBodyButtonStyle(!bodyView.copyText, copyState)}
-                        title={copyButtonTitle(copyState)}
-                        aria-label={copyButtonTitle(copyState)}
-                    >
-                        <CopyStatusIcon state={copyState} />
+            {showTabs && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flexShrink: 0, alignItems: "center" }}>
+                    <button onClick={() => onTabChange("body")} style={responseTabStyle(activeTab === "body")}>
+                        Body
                     </button>
-                )}
-            </div>
+                    <button onClick={() => onTabChange("cookies")} style={responseTabStyle(activeTab === "cookies")}>
+                        Cookies
+                    </button>
+                    <button onClick={() => onTabChange("headers")} style={responseTabStyle(activeTab === "headers")}>
+                        Headers
+                    </button>
+                    <button onClick={() => onTabChange("runtime")} style={responseTabStyle(activeTab === "runtime")}>
+                        Runtime
+                    </button>
+                    <button onClick={() => onTabChange("tests")} style={responseTabStyle(activeTab === "tests")}>
+                        Tests
+                    </button>
+                    {activeTab === "body" && (
+                        <button
+                            onClick={() => void handleCopyBody()}
+                            disabled={!bodyView.copyText}
+                            style={copyBodyButtonStyle(!bodyView.copyText, copyState)}
+                            title={copyButtonTitle(copyState)}
+                            aria-label={copyButtonTitle(copyState)}
+                        >
+                            <CopyStatusIcon state={copyState} />
+                        </button>
+                    )}
+                </div>
+            )}
 
             {hasScriptErrors && scriptReport && (
                 <div style={scriptPanelStyle()}>
@@ -703,9 +711,9 @@ function parseSetCookieHeader(value: string): CookieItem | null {
 
 function responseTabStyle(active: boolean): React.CSSProperties {
     return {
-        height: 28,
-        padding: "0 10px",
-        borderRadius: 9,
+        height: 26,
+        padding: "0 9px",
+        borderRadius: 7,
         border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
         background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
         color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
@@ -744,9 +752,9 @@ function bodyModeControlsStyle(visible: boolean): React.CSSProperties {
 
 function bodyModeButtonStyle(active: boolean): React.CSSProperties {
     return {
-        height: 24,
+        height: 22,
         padding: "0 8px",
-        borderRadius: 8,
+        borderRadius: 7,
         border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
         background: active ? "var(--pg-primary)" : "var(--pg-topbar-body-toggle-bg)",
         color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
@@ -774,11 +782,11 @@ function findMatchStyle(active: boolean): React.CSSProperties {
 
 function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSSProperties {
     const baseStyle: React.CSSProperties = {
-        width: 38,
-        height: 38,
+        width: 30,
+        height: 30,
         marginLeft: "auto",
         padding: 0,
-        borderRadius: 9,
+        borderRadius: 7,
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
