@@ -10,7 +10,7 @@ import {
 } from "./requestHeadersPreview.ts";
 
 const VARIABLE_PATTERN = /{{\s*([^{}]+?)\s*}}/g;
-const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const BODY_PREVIEW_LIMIT = 6_000;
 
 type DebugHeaderRow = {

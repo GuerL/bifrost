@@ -770,7 +770,7 @@ fn build_multipart_form(
 
 pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpErrorDto> {
     apply_auth_to_request(&mut req);
-    const REQUEST_TIMEOUT_SECONDS: u64 = 120;
+    const REQUEST_TIMEOUT_SECONDS: u64 = 60;
 
     // 1) validate URL early
     let url = reqwest::Url::parse(&req.url)
