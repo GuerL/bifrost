@@ -41,6 +41,11 @@ export async function devCreate(
         query: [],
         body: { type: "none" },
         auth: { type: "none" },
+        tls: {
+            allow_invalid_certificates: false,
+            ca_certificate_path: "",
+            client_certificate_path: "",
+        },
         extractors: [],
         scripts: { pre_request: "", post_response: "" },
     };

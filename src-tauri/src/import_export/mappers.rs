@@ -375,6 +375,7 @@ fn map_request(
         query,
         body,
         auth,
+        tls: Default::default(),
         extractors: vec![],
         scripts: map_scripts(events),
     }

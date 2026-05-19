@@ -6,6 +6,7 @@ import type {
     Request,
     RequestAuth,
     RequestScripts,
+    RequestTls,
     ResponseExtractorRule,
 } from "../types.ts";
 
@@ -228,6 +229,35 @@ function parseScripts(value: unknown): RequestScripts | null {
     };
 }
 
+function parseTls(value: unknown): RequestTls | null {
+    if (!isObject(value)) return null;
+
+    if (
+        value.allow_invalid_certificates !== undefined &&
+        typeof value.allow_invalid_certificates !== "boolean"
+    ) {
+        return null;
+    }
+    if (
+        value.ca_certificate_path !== undefined &&
+        typeof value.ca_certificate_path !== "string"
+    ) {
+        return null;
+    }
+    if (
+        value.client_certificate_path !== undefined &&
+        typeof value.client_certificate_path !== "string"
+    ) {
+        return null;
+    }
+
+    return {
+        allow_invalid_certificates: value.allow_invalid_certificates,
+        ca_certificate_path: value.ca_certificate_path,
+        client_certificate_path: value.client_certificate_path,
+    };
+}
+
 function parseRequest(value: unknown): Request | null {
     if (!isObject(value)) return null;
     if (typeof value.id !== "string" || typeof value.name !== "string") return null;
@@ -252,7 +282,11 @@ function parseRequest(value: unknown): Request | null {
         value.scripts === undefined
             ? ({ pre_request: "", post_response: "" } satisfies RequestScripts)
             : parseScripts(value.scripts);
-    if (!body || !auth || !extractors || !scripts) return null;
+    const tlsParsed =
+        value.tls === undefined
+            ? undefined
+            : parseTls(value.tls);
+    if (!body || !auth || !extractors || !scripts || (value.tls !== undefined && !tlsParsed)) return null;
 
     return {
         id: value.id,
@@ -263,6 +297,7 @@ function parseRequest(value: unknown): Request | null {
         query: value.query ?? [],
         body,
         auth,
+        tls: tlsParsed ?? undefined,
         extractors,
         scripts,
     };
@@ -281,6 +316,7 @@ export function serializeRequestForClipboard(request: Request): string {
             query: request.query,
             body: request.body,
             auth: request.auth,
+            tls: request.tls,
             extractors: request.extractors,
             scripts: request.scripts,
         },

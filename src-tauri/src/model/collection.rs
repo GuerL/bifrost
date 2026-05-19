@@ -120,6 +120,16 @@ pub struct RequestScripts {
     pub post_response: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct RequestTls {
+    #[serde(default)]
+    pub allow_invalid_certificates: bool,
+    #[serde(default)]
+    pub ca_certificate_path: String,
+    #[serde(default)]
+    pub client_certificate_path: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Request {
     pub id: String,
@@ -131,6 +141,8 @@ pub struct Request {
     pub body: Body,
     #[serde(default)]
     pub auth: Auth,
+    #[serde(default)]
+    pub tls: RequestTls,
     #[serde(default)]
     pub extractors: Vec<ResponseExtractorRule>,
     #[serde(default)]

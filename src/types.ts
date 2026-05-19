@@ -51,6 +51,12 @@ export type RequestScripts = {
     post_response: string;
 };
 
+export type RequestTls = {
+    allow_invalid_certificates?: boolean;
+    ca_certificate_path?: string;
+    client_certificate_path?: string;
+};
+
 export type Request = {
     id: string;
     name: string;
@@ -60,6 +66,7 @@ export type Request = {
     query: KeyValue[];
     body: Body;
     auth: RequestAuth;
+    tls?: RequestTls;
     extractors: ResponseExtractorRule[];
     scripts: RequestScripts;
 };

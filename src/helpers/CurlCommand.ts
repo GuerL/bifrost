@@ -257,8 +257,7 @@ export function buildCurlCommand(request: RequestLike): string {
 
     if (body.isMultipart) {
         headers = headers.filter((entry) => {
-            if (entry.key.trim().toLowerCase() !== "content-type") return true;
-            return !entry.value.trim().toLowerCase().startsWith("multipart/form-data");
+            return entry.key.trim().toLowerCase() !== "content-type";
         });
     }
 
