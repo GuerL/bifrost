@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CollectionLoaded, CollectionMeta, HttpResponseDto, Request } from "../types.ts";
+import { defaultGeneratedHeaderControls } from "./requestHeadersPreview.ts";
 
 export async function refreshCollections(setCollections: (cols: CollectionMeta[]) => void): Promise<void> {
     const list = await invoke<CollectionMeta[]>("list_collections");
@@ -38,6 +39,7 @@ export async function devCreate(
         method: "get",
         url: "",
         headers: [],
+        generated_headers: defaultGeneratedHeaderControls(),
         query: [],
         body: { type: "none" },
         auth: { type: "none" },

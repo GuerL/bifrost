@@ -12,7 +12,7 @@ pub struct HttpResponseDto {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HttpErrorDto {
-    pub kind: String, // "invalid_url" | "dns" | "timeout" | "connect" | "tls" | "tls_config" | "http" | "unknown"
+    pub kind: String, // "invalid_url" | "invalid_request" | "invalid_header" | "dns" | "timeout" | "connect" | "protocol" | "tls" | "tls_config" | "http" | "unknown"
     pub message: String, // message humain
     pub detail: Option<String>, // detail technique (optionnel)
     pub duration_ms: Option<u128>,

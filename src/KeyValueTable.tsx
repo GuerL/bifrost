@@ -1,11 +1,13 @@
 import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
 
 type KeyValueTableProps = {
-    rows: { key: string; value: string }[];
-    onChange: (next: { key: string; value: string }[]) => void;
+    rows: { key: string; value: string; enabled?: boolean }[];
+    onChange: (next: { key: string; value: string; enabled?: boolean }[]) => void;
     resolveVariableStatus?: (name: string) => VariableStatus;
     resolveVariableValue?: (name: string) => string | undefined;
     variableSuggestions?: string[];
+    showEnabledToggle?: boolean;
+    enabledToggleTitle?: string;
 };
 
 export default function KeyValueTable({
@@ -14,11 +16,34 @@ export default function KeyValueTable({
     resolveVariableStatus,
     resolveVariableValue,
     variableSuggestions,
+    showEnabledToggle,
+    enabledToggleTitle,
 }: KeyValueTableProps) {
     return (
         <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
             {rows.map((kv, i) => (
                 <div key={i} style={{ display: "flex", gap: 8 }}>
+                    {showEnabledToggle && (
+                        <label
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                minWidth: 28,
+                            }}
+                            title={enabledToggleTitle}
+                        >
+                            <input
+                                type="checkbox"
+                                checked={kv.enabled !== false}
+                                onChange={(event) => {
+                                    const next = rows.slice();
+                                    next[i] = { ...kv, enabled: event.target.checked };
+                                    onChange(next);
+                                }}
+                            />
+                        </label>
+                    )}
                     <VariableInput
                         placeholder="key"
                         value={kv.key}
@@ -56,7 +81,20 @@ export default function KeyValueTable({
                     </button>
                 </div>
             ))}
-            <button onClick={() => onChange([...rows, { key: "", value: "" }])}>+ Add</button>
+            <button
+                onClick={() =>
+                    onChange([
+                        ...rows,
+                        {
+                            key: "",
+                            value: "",
+                            ...(showEnabledToggle ? { enabled: true } : {}),
+                        },
+                    ])
+                }
+            >
+                + Add
+            </button>
         </div>
     );
 }

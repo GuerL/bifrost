@@ -1,6 +1,8 @@
 import { readText as readTextFromPlugin, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type {
     Body,
+    GeneratedHeaderControl,
+    GeneratedHeaderName,
     KeyValue,
     MultipartField,
     Request,
@@ -39,7 +41,33 @@ function isKeyValueArray(value: unknown): value is KeyValue[] {
             (entry) =>
                 isObject(entry) &&
                 typeof entry.key === "string" &&
-                typeof entry.value === "string"
+                typeof entry.value === "string" &&
+                (entry.enabled === undefined || typeof entry.enabled === "boolean")
+        )
+    );
+}
+
+function isGeneratedHeaderName(value: unknown): value is GeneratedHeaderName {
+    return (
+        value === "host" ||
+        value === "user-agent" ||
+        value === "accept" ||
+        value === "accept-encoding" ||
+        value === "connection" ||
+        value === "content-length" ||
+        value === "content-type" ||
+        value === "cookie"
+    );
+}
+
+function isGeneratedHeaderControlArray(value: unknown): value is GeneratedHeaderControl[] {
+    return (
+        Array.isArray(value) &&
+        value.every(
+            (entry) =>
+                isObject(entry) &&
+                isGeneratedHeaderName(entry.key) &&
+                typeof entry.enabled === "boolean"
         )
     );
 }
@@ -264,6 +292,12 @@ function parseRequest(value: unknown): Request | null {
     if (typeof value.method !== "string" || !REQUEST_METHODS.has(value.method)) return null;
     if (typeof value.url !== "string") return null;
     if (value.headers !== undefined && !isKeyValueArray(value.headers)) return null;
+    if (
+        value.generated_headers !== undefined &&
+        !isGeneratedHeaderControlArray(value.generated_headers)
+    ) {
+        return null;
+    }
     if (value.query !== undefined && !isKeyValueArray(value.query)) return null;
 
     const body =
@@ -294,6 +328,7 @@ function parseRequest(value: unknown): Request | null {
         method: value.method as Request["method"],
         url: value.url,
         headers: value.headers ?? [],
+        generated_headers: value.generated_headers ?? [],
         query: value.query ?? [],
         body,
         auth,
@@ -313,6 +348,7 @@ export function serializeRequestForClipboard(request: Request): string {
             method: request.method,
             url: request.url,
             headers: request.headers,
+            generated_headers: request.generated_headers,
             query: request.query,
             body: request.body,
             auth: request.auth,

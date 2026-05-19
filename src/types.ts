@@ -27,7 +27,22 @@ export type CollectionRequestRefNode = {
 
 export type CollectionNode = CollectionFolderNode | CollectionRequestRefNode;
 
-export type KeyValue = { key: string; value: string };
+export type KeyValue = { key: string; value: string; enabled?: boolean };
+
+export type GeneratedHeaderName =
+    | "host"
+    | "user-agent"
+    | "accept"
+    | "accept-encoding"
+    | "connection"
+    | "content-length"
+    | "content-type"
+    | "cookie";
+
+export type GeneratedHeaderControl = {
+    key: GeneratedHeaderName;
+    enabled: boolean;
+};
 
 export type Body =
     | { type: "none" }
@@ -63,6 +78,7 @@ export type Request = {
     method: "get" | "post" | "put" | "patch" | "delete" | "head" | "options";
     url: string;
     headers: KeyValue[];
+    generated_headers?: GeneratedHeaderControl[];
     query: KeyValue[];
     body: Body;
     auth: RequestAuth;
