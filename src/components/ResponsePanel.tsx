@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import type { HttpResponseDto } from "../types.ts";
+import type { ScriptTestResult } from "../helpers/RequestScriptsRuntime.ts";
 import FindBar from "./FindBar.tsx";
 import { copyTextToClipboard } from "../helpers/ClipboardRequestTransfer.ts";
 import { notifyError, notifySuccess } from "../helpers/Toast.tsx";
+import ResponseTestsPanel from "./ResponseTestsPanel.tsx";
 
-export type ResponseTabId = "body" | "cookies" | "headers" | "runtime";
+export type ResponseTabId = "body" | "cookies" | "headers" | "runtime" | "tests";
 
 type CopyState = "idle" | "copied" | "error";
 type BodyMode = "raw" | "preview";
@@ -42,10 +44,12 @@ type ResponsePanelProps = {
     scriptReport: {
         preRequestError: string | null;
         postResponseError: string | null;
-        tests: { name: string; status: "passed" | "failed"; error: string | null }[];
+        tests: ScriptTestResult[];
+        source?: "live" | "persisted";
     } | null;
     runtimeVariables: Record<string, string>;
     onClearRuntimeVariables: () => void;
+    onRevealScriptTestLocation?: (test: ScriptTestResult) => void;
     activeTab: ResponseTabId;
     onTabChange: (tab: ResponseTabId) => void;
 };
@@ -56,6 +60,7 @@ export default function ResponsePanel({
     scriptReport,
     runtimeVariables,
     onClearRuntimeVariables,
+    onRevealScriptTestLocation,
     activeTab,
     onTabChange,
 }: ResponsePanelProps) {
@@ -65,10 +70,9 @@ export default function ResponsePanel({
         [bodyView.displayText, bodyView.isJson]
     );
     const cookies = useMemo(() => extractCookies(response), [response]);
-    const hasScriptInfo = !!scriptReport && (
+    const hasScriptErrors = !!scriptReport && (
         !!scriptReport.preRequestError ||
-        !!scriptReport.postResponseError ||
-        scriptReport.tests.length > 0
+        !!scriptReport.postResponseError
     );
     const [copyState, setCopyState] = useState<CopyState>("idle");
     const [bodyMode, setBodyMode] = useState<BodyMode>("raw");
@@ -283,6 +287,9 @@ export default function ResponsePanel({
                 <button onClick={() => onTabChange("runtime")} style={responseTabStyle(activeTab === "runtime")}>
                     Runtime
                 </button>
+                <button onClick={() => onTabChange("tests")} style={responseTabStyle(activeTab === "tests")}>
+                    Tests
+                </button>
                 {activeTab === "body" && (
                     <button
                         onClick={() => void handleCopyBody()}
@@ -296,7 +303,7 @@ export default function ResponsePanel({
                 )}
             </div>
 
-            {hasScriptInfo && scriptReport && (
+            {hasScriptErrors && scriptReport && (
                 <div style={scriptPanelStyle()}>
                     <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
                         Script report
@@ -314,25 +321,6 @@ export default function ResponsePanel({
                         </div>
                     )}
 
-                    {scriptReport.tests.length > 0 && (
-                        <div style={{ display: "grid", gap: 6 }}>
-                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 700 }}>
-                                Tests
-                            </div>
-                            {scriptReport.tests.map((test, index) => (
-                                <div
-                                    key={`${test.name}-${index}`}
-                                    style={{
-                                        fontSize: 12,
-                                        color: test.status === "passed" ? "var(--pg-primary-soft)" : "var(--pg-danger)",
-                                    }}
-                                >
-                                    {test.status === "passed" ? "✓" : "✗"} {test.name}
-                                    {test.error ? ` — ${test.error}` : ""}
-                                </div>
-                            ))}
-                        </div>
-                    )}
                 </div>
             )}
 
@@ -524,6 +512,14 @@ export default function ResponsePanel({
                         </div>
                     )}
                 </div>
+            )}
+
+            {activeTab === "tests" && (
+                <ResponseTestsPanel
+                    tests={scriptReport?.tests ?? []}
+                    source={scriptReport?.source ?? "live"}
+                    onRevealScriptTestLocation={onRevealScriptTestLocation}
+                />
             )}
         </div>
     );

@@ -1,4 +1,15 @@
 import type { HttpResponseDto, Request } from "../types.ts";
+import {
+    createScriptAssertableValue,
+    createScriptExpect,
+    createScriptTestCollector,
+    stringifyScriptError,
+    type ScriptAssertableValue,
+    type ScriptExpectation,
+    type ScriptTestResult,
+} from "./scriptAssertions.ts";
+import { mapScriptTestCallLocations } from "./scriptTestLocation.ts";
+export type { ScriptTestResult } from "./scriptAssertions.ts";
 
 type ScriptPhase = "pre-request" | "post-response";
 
@@ -15,28 +26,17 @@ export type ScriptEnvironmentMutation =
     | { type: "set"; key: string; value: string }
     | { type: "unset"; key: string };
 
-export type ScriptTestResult = {
-    name: string;
-    status: "passed" | "failed";
-    error: string | null;
-};
-
-export type ScriptRunResult = {
+export type ScriptExecutionResult = {
     request: Request;
     runtimeVariables: Record<string, string>;
     environmentMutations: ScriptEnvironmentMutation[];
     tests: ScriptTestResult[];
+    scriptError: string | null;
+    // Backward-compatible alias
     error: string | null;
 };
 
-type AssertableValue<T> = {
-    toBe: (expected: unknown) => void;
-    toEqual: (expected: unknown) => void;
-    toBeTruthy: () => void;
-    toBeFalsy: () => void;
-    valueOf: () => T;
-    toString: () => string;
-};
+export type ScriptRunResult = ScriptExecutionResult;
 
 type ScriptVariableApiBase = {
     get: (name: string) => string | undefined;
@@ -52,7 +52,7 @@ type ScriptRuntimeVariableApi = ScriptVariableApiBase & {
 type ScriptEnvironmentVariableApi = ScriptVariableApiBase;
 
 type ScriptResponseApi = {
-    status: AssertableValue<number | null>;
+    status: ScriptAssertableValue<number | null>;
     statusCode: number | null;
     headers: ReturnType<typeof createHeadersApi>;
     body: string;
@@ -68,49 +68,15 @@ export type BifrostRuntimeAPI = {
     globals: ScriptRuntimeVariableApi;
     request: Request;
     response: ScriptResponseApi;
-    expect: (actual: unknown) => AssertableValue<unknown>;
+    expect: (actual: unknown) => ScriptExpectation;
     test: (name: string, callback: () => void) => void;
 };
-
-function stringifyError(error: unknown): string {
-    if (error instanceof Error) return error.message;
-    return String(error);
-}
 
 function cloneRequest(request: Request): Request {
     if (typeof structuredClone === "function") {
         return structuredClone(request);
     }
     return JSON.parse(JSON.stringify(request)) as Request;
-}
-
-function createAssertableValue<T>(label: string, actual: T): AssertableValue<T> {
-    return {
-        toBe: (expected: unknown) => {
-            if (!Object.is(actual, expected)) {
-                throw new Error(`${label}: expected ${String(expected)}, got ${String(actual)}`);
-            }
-        },
-        toEqual: (expected: unknown) => {
-            const actualSerialized = JSON.stringify(actual);
-            const expectedSerialized = JSON.stringify(expected);
-            if (actualSerialized !== expectedSerialized) {
-                throw new Error(`${label}: expected ${expectedSerialized}, got ${actualSerialized}`);
-            }
-        },
-        toBeTruthy: () => {
-            if (!actual) {
-                throw new Error(`${label}: expected truthy, got ${String(actual)}`);
-            }
-        },
-        toBeFalsy: () => {
-            if (actual) {
-                throw new Error(`${label}: expected falsy, got ${String(actual)}`);
-            }
-        },
-        valueOf: () => actual,
-        toString: () => String(actual),
-    };
 }
 
 function createHeadersApi(headers: { key: string; value: string }[]) {
@@ -143,7 +109,7 @@ function createResponseApi(response: HttpResponseDto | null) {
 
     if (!response) {
         return {
-            status: createAssertableValue("response.status", null),
+            status: createScriptAssertableValue(null),
             statusCode: null as number | null,
             headers: createHeadersApi([]),
             body: "",
@@ -161,7 +127,7 @@ function createResponseApi(response: HttpResponseDto | null) {
     let jsonParsed = false;
 
     return {
-        status: createAssertableValue("response.status", response.status),
+        status: createScriptAssertableValue(response.status),
         statusCode: response.status,
         headers,
         body: response.body_text,
@@ -186,13 +152,14 @@ function runScript({
     response,
     runtimeVariables,
     environmentValues,
-}: ScriptRunArgs): ScriptRunResult {
+}: ScriptRunArgs): ScriptExecutionResult {
     if (!script.trim()) {
         return {
             request,
             runtimeVariables,
             environmentMutations: [],
             tests: [],
+            scriptError: null,
             error: null,
         };
     }
@@ -201,7 +168,15 @@ function runScript({
     const runtime = { ...runtimeVariables };
     const responseApi = createResponseApi(response);
     const environmentMutations: ScriptEnvironmentMutation[] = [];
-    const tests: ScriptTestResult[] = [];
+    const testCallLocations = mapScriptTestCallLocations(script);
+    let testInvocationIndex = 0;
+    const testsCollector = createScriptTestCollector({
+        resolveLocation: () => {
+            const location = testCallLocations[testInvocationIndex];
+            testInvocationIndex += 1;
+            return location;
+        },
+    });
 
     const envApi: ScriptEnvironmentVariableApi = {
         get: (name: string): string | undefined => {
@@ -261,20 +236,8 @@ function runScript({
         globals: runtimeApi,
         request: mutableRequest,
         response: responseApi,
-        expect: (actual: unknown) => createAssertableValue("expect()", actual),
-        test: (name: string, callback: () => void) => {
-            const normalizedName = String(name ?? "").trim() || "Unnamed test";
-            try {
-                callback();
-                tests.push({ name: normalizedName, status: "passed", error: null });
-            } catch (error) {
-                tests.push({
-                    name: normalizedName,
-                    status: "failed",
-                    error: stringifyError(error),
-                });
-            }
-        },
+        expect: (actual: unknown) => createScriptExpect(actual),
+        test: testsCollector.test,
     };
 
     const bf = scriptingApi;
@@ -287,20 +250,25 @@ function runScript({
     try {
         const fn = new Function("bf", "pg", `"use strict";\n${normalizedScript}`);
         fn(bf, pg);
+        const tests = testsCollector.getResults().map((test) => ({ ...test, scriptPhase: phase }));
         return {
             request: mutableRequest,
             runtimeVariables: runtime,
             environmentMutations,
             tests,
+            scriptError: null,
             error: null,
         };
     } catch (error) {
+        const tests = testsCollector.getResults().map((test) => ({ ...test, scriptPhase: phase }));
+        const scriptError = `[${phase}] ${stringifyScriptError(error)}`;
         return {
             request: mutableRequest,
             runtimeVariables: runtime,
             environmentMutations,
             tests,
-            error: `[${phase}] ${stringifyError(error)}`,
+            scriptError,
+            error: scriptError,
         };
     }
 }

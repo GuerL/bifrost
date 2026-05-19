@@ -18,6 +18,9 @@ export function summarizeRunnerExecutions(
     let skipped = 0;
     let totalDurationMs = 0;
     let durationCount = 0;
+    let totalTests = 0;
+    let passedTests = 0;
+    let failedTests = 0;
 
     for (const execution of executions) {
         if (execution.status === "queued") queued += 1;
@@ -31,6 +34,10 @@ export function summarizeRunnerExecutions(
             totalDurationMs += execution.durationMs;
             durationCount += 1;
         }
+
+        totalTests += execution.testTotal ?? 0;
+        passedTests += execution.testPassed ?? 0;
+        failedTests += execution.testFailed ?? 0;
     }
 
     return {
@@ -44,6 +51,9 @@ export function summarizeRunnerExecutions(
         wasCancelledByUser,
         totalDurationMs,
         averageDurationMs: durationCount > 0 ? totalDurationMs / durationCount : null,
+        totalTests,
+        passedTests,
+        failedTests,
     };
 }
 

@@ -20,7 +20,7 @@ import KeyValueTable from "./KeyValueTable.tsx";
 import TopBar from "./TopBar.tsx";
 import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
 import RequestBodyEditor from "./components/RequestBodyEditor.tsx";
-import RequestScriptsEditor from "./components/RequestScriptsEditor.tsx";
+import RequestScriptsEditor, { type ScriptRevealLocation } from "./components/RequestScriptsEditor.tsx";
 import AppSelect from "./components/AppSelect.tsx";
 import CollectionsModal from "./components/CollectionsModal.tsx";
 import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
@@ -80,6 +80,18 @@ import {
     readPgToBfPromptedFlag,
     writePgToBfPromptedFlag,
 } from "./helpers/ScriptingPrefixMigration.ts";
+import {
+    applyDraftPatch,
+    resolveRequestForExecution as resolveRequestForExecutionSnapshot,
+    setFullDraftInMap,
+} from "./helpers/requestExecutionSnapshot.ts";
+import {
+    createPersistedTestExecution,
+    normalizeStatusTextWithTestExecution,
+    sanitizePersistedTestExecution,
+    type PersistedTestExecution,
+} from "./helpers/persistedTestExecution.ts";
+import { restorePersistedScriptReports } from "./helpers/scriptReportPersistence.ts";
 import type {
     RunnerExecutionResult,
     RunnerIterationMode,
@@ -250,6 +262,7 @@ type PersistedResponseEntry = {
     response: HttpResponseDto | null;
     statusText: string;
     updatedAt: string;
+    testExecution: PersistedTestExecution | null;
 };
 
 type PersistedResponsesCollection = Record<string, PersistedResponseEntry>;
@@ -260,6 +273,7 @@ type RequestScriptExecutionReport = {
     preRequestError: string | null;
     postResponseError: string | null;
     tests: ScriptTestResult[];
+    source: "live" | "persisted";
 };
 
 const OPEN_TABS_STORAGE_KEY = "bifrost:open-tabs:v1";
@@ -354,6 +368,32 @@ function buildDefaultAuth(type: RequestAuth["type"]): RequestAuth {
 
 function requestScriptsOrDefault(request: Request): RequestScripts {
     return request.scripts ?? { pre_request: "", post_response: "" };
+}
+
+function summarizeScriptTests(tests: ScriptTestResult[]) {
+    const total = tests.length;
+    const failed = tests.filter((test) => test.status === "failed").length;
+    const passed = total - failed;
+    return {
+        total,
+        passed,
+        failed,
+        hasFailures: failed > 0,
+    };
+}
+
+function createScriptExecutionReport(input: {
+    preRequestError: string | null;
+    postResponseError: string | null;
+    tests: ScriptTestResult[];
+    source?: "live" | "persisted";
+}): RequestScriptExecutionReport {
+    return {
+        preRequestError: input.preRequestError,
+        postResponseError: input.postResponseError,
+        tests: input.tests,
+        source: input.source ?? "live",
+    };
 }
 
 function applyEnvironmentMutationsToMap(
@@ -655,10 +695,13 @@ function sanitizeResponseEntry(entry: unknown): PersistedResponseEntry | null {
         return null;
     }
 
+    const testExecution = sanitizePersistedTestExecution(source.testExecution);
+
     return {
         response: sanitizeHttpResponse(source.response),
-        statusText: source.statusText,
+        statusText: normalizeStatusTextWithTestExecution(source.statusText, testExecution),
         updatedAt: source.updatedAt,
+        testExecution,
     };
 }
 
@@ -754,6 +797,7 @@ export default function App() {
     const [collectionRunStopOnFailure, setCollectionRunStopOnFailure] = useState(true);
     const [executionRuntimeVariables, setExecutionRuntimeVariables] = useState<Record<string, string>>({});
     const [responseTab, setResponseTab] = useState<ResponseTabId>("body");
+    const [scriptRevealLocation, setScriptRevealLocation] = useState<ScriptRevealLocation | null>(null);
     const [draftsById, setDraftsById] = useState<Record<string, Request>>({});
     const [pending, setPending] = useState(false);
     const [editorText, setEditorText] = useState("");
@@ -768,6 +812,9 @@ export default function App() {
     const [renameBusy, setRenameBusy] = useState(false);
     const [draggedRequestId, setDraggedRequestId] = useState<string | null>(null);
     const [dropIndicator, setDropIndicator] = useState<RequestDropIndicator | null>(null);
+    const draftsByIdRef = useRef<Record<string, Request>>({});
+    const currentRef = useRef<CollectionLoaded | null>(null);
+    const scriptRevealKeyRef = useRef(0);
     const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
     const [createFolderModal, setCreateFolderModal] = useState<{ parentFolderId: string | null } | null>(null);
     const [createFolderNameInput, setCreateFolderNameInput] = useState("");
@@ -935,6 +982,7 @@ export default function App() {
         setInsomniaImportBusy(false);
         setInsomniaImportError("");
         setDeleteEnvironmentModal(null);
+        draftsByIdRef.current = {};
         setDraftsById({});
         setCloseDraftModal(null);
         setCloseDraftBusy(false);
@@ -1199,6 +1247,18 @@ export default function App() {
         if (!selectedRequestId) return null;
         return draftsById[selectedRequestId] ?? selectedSavedRequest;
     }, [draftsById, selectedRequestId, selectedSavedRequest]);
+
+    useEffect(() => {
+        draftsByIdRef.current = draftsById;
+    }, [draftsById]);
+
+    useEffect(() => {
+        currentRef.current = current;
+    }, [current]);
+
+    useEffect(() => {
+        setScriptRevealLocation(null);
+    }, [selectedRequestId]);
 
     const requestsById = useMemo(
         () => new Map((current?.requests ?? []).map((request) => [request.id, request])),
@@ -1631,6 +1691,7 @@ export default function App() {
                 const drafts = await invoke<Record<string, Request>>("load_drafts", {
                     collectionId: current.meta.id,
                 });
+                draftsByIdRef.current = drafts;
                 setDraftsById(drafts);
             } catch (e) {
                 notifyError(`Failed to load drafts: ${errorMessage(e)}`);
@@ -1654,6 +1715,7 @@ export default function App() {
     useEffect(() => {
         if (!current) {
             setResponsesByRequestId({});
+            setScriptReportsByRequestId({});
             return;
         }
 
@@ -1665,10 +1727,9 @@ export default function App() {
         ) as PersistedResponsesCollection;
 
         setResponsesByRequestId(filtered);
-    }, [current?.meta.id]);
-
-    useEffect(() => {
-        setScriptReportsByRequestId({});
+        const restoredScriptReports =
+            restorePersistedScriptReports(filtered) as Record<string, RequestScriptExecutionReport>;
+        setScriptReportsByRequestId(restoredScriptReports);
     }, [current?.meta.id]);
 
     useEffect(() => {
@@ -1678,6 +1739,16 @@ export default function App() {
             const next = Object.fromEntries(
                 Object.entries(previous).filter(([requestId]) => validRequestIds.has(requestId))
             ) as PersistedResponsesCollection;
+
+            if (Object.keys(next).length === Object.keys(previous).length) {
+                return previous;
+            }
+            return next;
+        });
+        setScriptReportsByRequestId((previous) => {
+            const next = Object.fromEntries(
+                Object.entries(previous).filter(([requestId]) => validRequestIds.has(requestId))
+            ) as Record<string, RequestScriptExecutionReport>;
 
             if (Object.keys(next).length === Object.keys(previous).length) {
                 return previous;
@@ -2099,12 +2170,18 @@ export default function App() {
         (patch: Partial<Request>) => {
             if (!selectedRequestId || !draft) return;
 
+            const { nextDraft, nextDraftsById } = applyDraftPatch({
+                requestId: selectedRequestId,
+                draftsById: draftsByIdRef.current,
+                fallbackRequest: draft,
+                patch,
+            });
+
+            draftsByIdRef.current = nextDraftsById;
+
             setDraftsById((prev) => ({
                 ...prev,
-                [selectedRequestId]: {
-                    ...draft,
-                    ...patch,
-                },
+                [selectedRequestId]: nextDraft,
             }));
         },
         [selectedRequestId, draft]
@@ -2113,6 +2190,12 @@ export default function App() {
     const setFullDraft = useCallback(
         (next: Request) => {
             if (!selectedRequestId) return;
+
+            draftsByIdRef.current = setFullDraftInMap(
+                selectedRequestId,
+                draftsByIdRef.current,
+                next
+            );
 
             setDraftsById((prev) => ({
                 ...prev,
@@ -2148,6 +2231,7 @@ export default function App() {
                 setDraftsById((previous) => {
                     const next = { ...previous };
                     delete next[requestId];
+                    draftsByIdRef.current = next;
                     return next;
                 });
 
@@ -2175,6 +2259,7 @@ export default function App() {
                 setDraftsById((previous) => {
                     const next = { ...previous };
                     delete next[requestId];
+                    draftsByIdRef.current = next;
                     return next;
                 });
 
@@ -2451,14 +2536,19 @@ export default function App() {
         return () => window.cancelAnimationFrame(frame);
     }, [curlImportModal]);
 
+    function resolveRequestForExecution(requestId: string): Request | null {
+        return resolveRequestForExecutionSnapshot(
+            requestId,
+            draftsByIdRef.current,
+            currentRef.current
+        );
+    }
+
     async function sendSelected() {
         if (collectionRunPending) return;
         if (!selectedRequestId) return;
 
-        const req =
-            draft && draft.id === selectedRequestId
-                ? draft
-                : current?.requests.find((r) => r.id === selectedRequestId);
+        const req = resolveRequestForExecution(selectedRequestId);
 
         if (!req) return;
 
@@ -2467,11 +2557,11 @@ export default function App() {
         setStatus("Sending...");
         setScriptReportsByRequestId((previous) => ({
             ...previous,
-            [selectedRequestId]: {
+            [selectedRequestId]: createScriptExecutionReport({
                 preRequestError: null,
                 postResponseError: null,
                 tests: [],
-            },
+            }),
         }));
         let preScriptError: string | null = null;
         let preScriptTests: ScriptTestResult[] = [];
@@ -2487,7 +2577,7 @@ export default function App() {
                 runtimeVariables,
                 environmentValues: activeEnvironmentValues,
             });
-            preScriptError = preScript.error;
+            preScriptError = preScript.scriptError;
             preScriptTests = preScript.tests;
             scriptEnvironmentMutations.push(...preScript.environmentMutations);
             runtimeVariables = preScript.runtimeVariables;
@@ -2502,13 +2592,14 @@ export default function App() {
                     ? " • environment save issue"
                     : "";
                 const statusText = `❌ ${preparedRequest.message}${environmentErrorSuffix}`;
+                const preOnlyReport = createScriptExecutionReport({
+                    preRequestError: preScript.scriptError,
+                    postResponseError: null,
+                    tests: preScript.tests,
+                });
                 setScriptReportsByRequestId((previous) => ({
                     ...previous,
-                    [selectedRequestId]: {
-                        preRequestError: preScript.error,
-                        postResponseError: null,
-                        tests: preScript.tests,
-                    },
+                    [selectedRequestId]: preOnlyReport,
                 }));
                 setStatus(statusText);
                 setResponsesByRequestId((previous) => ({
@@ -2517,6 +2608,7 @@ export default function App() {
                         response: previous[selectedRequestId]?.response ?? null,
                         statusText,
                         updatedAt: new Date().toISOString(),
+                        testExecution: createPersistedTestExecution(preOnlyReport),
                     },
                 }));
                 notifyError(preparedRequest.message);
@@ -2542,26 +2634,27 @@ export default function App() {
             runtimeVariables = postScript.runtimeVariables;
             setExecutionRuntimeVariables(runtimeVariables);
             const scriptTests = [...preScript.tests, ...postScript.tests];
-            const failedScriptTests = scriptTests.filter((test) => test.status === "failed").length;
+            const scriptTestSummary = summarizeScriptTests(scriptTests);
+            const fullReport = createScriptExecutionReport({
+                preRequestError: preScript.scriptError,
+                postResponseError: postScript.scriptError,
+                tests: scriptTests,
+            });
             setScriptReportsByRequestId((previous) => ({
                 ...previous,
-                [selectedRequestId]: {
-                    preRequestError: preScript.error,
-                    postResponseError: postScript.error,
-                    tests: scriptTests,
-                },
+                [selectedRequestId]: fullReport,
             }));
 
             const environmentPersistError = await persistScriptEnvironmentMutations(
                 scriptEnvironmentMutations
             );
 
-            const scriptIssueCount = [preScript.error, postScript.error].filter((entry) => !!entry).length;
+            const scriptIssueCount = [preScript.scriptError, postScript.scriptError].filter((entry) => !!entry).length;
             const scriptErrorSuffix =
                 scriptIssueCount > 0 ? ` • script issues ${scriptIssueCount}` : "";
             const scriptTestsSuffix =
-                scriptTests.length > 0
-                    ? ` • tests ${scriptTests.length - failedScriptTests}/${scriptTests.length}`
+                scriptTestSummary.total > 0
+                    ? ` • tests ${scriptTestSummary.passed}/${scriptTestSummary.total}`
                     : "";
             const environmentErrorSuffix = environmentPersistError
                 ? " • environment save issue"
@@ -2578,6 +2671,7 @@ export default function App() {
                     response: r,
                     statusText,
                     updatedAt: new Date().toISOString(),
+                    testExecution: createPersistedTestExecution(fullReport),
                 },
             }));
         } catch (e: any) {
@@ -2585,13 +2679,14 @@ export default function App() {
                 scriptEnvironmentMutations
             );
             const { kind, message, durationMs } = parseHttpError(e);
+            const preOnlyReport = createScriptExecutionReport({
+                preRequestError: preScriptError,
+                postResponseError: null,
+                tests: preScriptTests,
+            });
             setScriptReportsByRequestId((previous) => ({
                 ...previous,
-                [selectedRequestId]: {
-                    preRequestError: preScriptError,
-                    postResponseError: null,
-                    tests: preScriptTests,
-                },
+                [selectedRequestId]: preOnlyReport,
             }));
             const scriptSuffix = preScriptError ? ` • script issue` : "";
             const environmentErrorSuffix = environmentPersistError
@@ -2605,6 +2700,7 @@ export default function App() {
                     response: previous[selectedRequestId]?.response ?? null,
                     statusText,
                     updatedAt: new Date().toISOString(),
+                    testExecution: createPersistedTestExecution(preOnlyReport),
                 },
             }));
         } finally {
@@ -2630,6 +2726,7 @@ export default function App() {
                     response: previous[selectedRequestId]?.response ?? null,
                     statusText,
                     updatedAt: new Date().toISOString(),
+                    testExecution: previous[selectedRequestId]?.testExecution ?? null,
                 },
             }));
         } catch (e) {
@@ -2649,6 +2746,21 @@ export default function App() {
         setRootAddMenu(null);
         void sendSelected();
     }
+
+    const revealScriptTestLocation = useCallback(
+        (test: ScriptTestResult) => {
+            if (!selectedRequestId) return;
+            setTab("scripts");
+            scriptRevealKeyRef.current += 1;
+            setScriptRevealLocation({
+                key: scriptRevealKeyRef.current,
+                scriptPhase: test.scriptPhase === "pre-request" ? "pre-request" : "post-response",
+                line: typeof test.line === "number" ? test.line : undefined,
+                column: typeof test.column === "number" ? test.column : undefined,
+            });
+        },
+        [selectedRequestId]
+    );
 
     function toggleRunnerRequestSelection(requestId: string, selected: boolean) {
         if (collectionRunPending) return;
@@ -2747,7 +2859,9 @@ export default function App() {
             summary: summarizeRunnerExecutions(currentExecutions, false),
         };
 
-        const requestById = new Map(ordered.map((request) => [request.id, draftsById[request.id] ?? request]));
+        const requestById = new Map(
+            ordered.map((request) => [request.id, draftsByIdRef.current[request.id] ?? request])
+        );
 
         function commitRun(
             nextExecutions: RunnerExecutionResult[],
@@ -2852,8 +2966,9 @@ export default function App() {
                     runtimeVariables: runVariables,
                     environmentValues: activeEnvironmentValues,
                 });
-                const preRequestScriptError = preScript.error;
+                const preRequestScriptError = preScript.scriptError;
                 const preRequestScriptTests = preScript.tests;
+                const preRequestScriptTestSummary = summarizeScriptTests(preRequestScriptTests);
                 runScriptEnvironmentMutations.push(...preScript.environmentMutations);
                 runVariables = preScript.runtimeVariables;
                 setExecutionRuntimeVariables(runVariables);
@@ -2862,6 +2977,11 @@ export default function App() {
 
                 if (!preparedRequest.ok) {
                     const statusText = `❌ invalid_request: ${preparedRequest.message}`;
+                    const preOnlyReport = createScriptExecutionReport({
+                        preRequestError: preRequestScriptError,
+                        postResponseError: null,
+                        tests: preRequestScriptTests,
+                    });
                     commitRun(
                         updateExecutionAt(planItem.planIndex, {
                             status: "failed",
@@ -2874,14 +2994,23 @@ export default function App() {
                             postResponseScriptError: null,
                             preRequestScriptTests,
                             postResponseScriptTests: [],
+                            testTotal: preRequestScriptTestSummary.total,
+                            testPassed: preRequestScriptTestSummary.passed,
+                            testFailed: preRequestScriptTestSummary.failed,
+                            hasTestFailures: preRequestScriptTestSummary.hasFailures,
                         })
                     );
                     setScriptReportsByRequestId((previous) => ({
                         ...previous,
+                        [planItem.requestId]: preOnlyReport,
+                    }));
+                    setResponsesByRequestId((previous) => ({
+                        ...previous,
                         [planItem.requestId]: {
-                            preRequestError: preRequestScriptError,
-                            postResponseError: null,
-                            tests: preRequestScriptTests,
+                            response: previous[planItem.requestId]?.response ?? null,
+                            statusText,
+                            updatedAt: new Date().toISOString(),
+                            testExecution: createPersistedTestExecution(preOnlyReport),
                         },
                     }));
 
@@ -2910,8 +3039,15 @@ export default function App() {
                         runtimeVariables: runVariables,
                         environmentValues: activeEnvironmentValues,
                     });
-                    const postResponseScriptError = postScript.error;
+                    const postResponseScriptError = postScript.scriptError;
                     const postResponseScriptTests = postScript.tests;
+                    const combinedScriptTests = [...preRequestScriptTests, ...postResponseScriptTests];
+                    const combinedScriptTestSummary = summarizeScriptTests(combinedScriptTests);
+                    const combinedReport = createScriptExecutionReport({
+                        preRequestError: preRequestScriptError,
+                        postResponseError: postResponseScriptError,
+                        tests: combinedScriptTests,
+                    });
                     runScriptEnvironmentMutations.push(...postScript.environmentMutations);
                     runVariables = postScript.runtimeVariables;
                     setExecutionRuntimeVariables(runVariables);
@@ -2919,15 +3055,11 @@ export default function App() {
                     const scriptIssues = [preRequestScriptError, postResponseScriptError].filter(
                         (entry) => !!entry
                     );
-                    const totalScriptTests = preRequestScriptTests.length + postResponseScriptTests.length;
-                    const failedScriptTests = [...preRequestScriptTests, ...postResponseScriptTests].filter(
-                        (test) => test.status === "failed"
-                    ).length;
                     const scriptErrorsSuffix =
                         scriptIssues.length > 0 ? ` • script issues ${scriptIssues.length}` : "";
                     const scriptTestsSuffix =
-                        totalScriptTests > 0
-                            ? ` • tests ${totalScriptTests - failedScriptTests}/${totalScriptTests}`
+                        combinedScriptTestSummary.total > 0
+                            ? ` • tests ${combinedScriptTestSummary.passed}/${combinedScriptTestSummary.total}`
                             : "";
                     const isHttpFailure = response.status >= 400;
                     const statusText = isHttpFailure
@@ -2952,6 +3084,10 @@ export default function App() {
                             postResponseScriptError,
                             preRequestScriptTests,
                             postResponseScriptTests,
+                            testTotal: combinedScriptTestSummary.total,
+                            testPassed: combinedScriptTestSummary.passed,
+                            testFailed: combinedScriptTestSummary.failed,
+                            hasTestFailures: combinedScriptTestSummary.hasFailures,
                         })
                     );
                     setResponsesByRequestId((previous) => ({
@@ -2960,15 +3096,12 @@ export default function App() {
                             response,
                             statusText,
                             updatedAt: new Date().toISOString(),
+                            testExecution: createPersistedTestExecution(combinedReport),
                         },
                     }));
                     setScriptReportsByRequestId((previous) => ({
                         ...previous,
-                        [planItem.requestId]: {
-                            preRequestError: preRequestScriptError,
-                            postResponseError: postResponseScriptError,
-                            tests: [...preRequestScriptTests, ...postResponseScriptTests],
-                        },
+                        [planItem.requestId]: combinedReport,
                     }));
 
                     if (isHttpFailure && collectionRunStopOnFailure) {
@@ -2987,6 +3120,11 @@ export default function App() {
                     if (requestWasCancelled) {
                         cancelledByUser = true;
                     }
+                    const preOnlyReport = createScriptExecutionReport({
+                        preRequestError: preRequestScriptError,
+                        postResponseError: null,
+                        tests: preRequestScriptTests,
+                    });
 
                     commitRun(
                         updateExecutionAt(planItem.planIndex, {
@@ -3005,6 +3143,10 @@ export default function App() {
                             postResponseScriptError: null,
                             preRequestScriptTests,
                             postResponseScriptTests: [],
+                            testTotal: preRequestScriptTestSummary.total,
+                            testPassed: preRequestScriptTestSummary.passed,
+                            testFailed: preRequestScriptTestSummary.failed,
+                            hasTestFailures: preRequestScriptTestSummary.hasFailures,
                         })
                     );
                     setResponsesByRequestId((previous) => ({
@@ -3013,15 +3155,12 @@ export default function App() {
                             response: previous[planItem.requestId]?.response ?? null,
                             statusText,
                             updatedAt: new Date().toISOString(),
+                            testExecution: createPersistedTestExecution(preOnlyReport),
                         },
                     }));
                     setScriptReportsByRequestId((previous) => ({
                         ...previous,
-                        [planItem.requestId]: {
-                            preRequestError: preRequestScriptError,
-                            postResponseError: null,
-                            tests: preRequestScriptTests,
-                        },
+                        [planItem.requestId]: preOnlyReport,
                     }));
 
                     if (requestWasCancelled || collectionRunStopOnFailure) {
@@ -3057,22 +3196,26 @@ export default function App() {
             const environmentErrorSuffix = environmentPersistError
                 ? " • environment save issue"
                 : "";
+            const testsSummarySuffix =
+                finalSummary.totalTests > 0
+                    ? ` • tests ${finalSummary.passedTests}/${finalSummary.totalTests}`
+                    : "";
 
             if (finalSummary.wasCancelledByUser) {
                 setStatus(
-                    `⛔ Run cancelled: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.cancelled} cancelled, ${finalSummary.skipped} skipped${environmentErrorSuffix}`
+                    `⛔ Run cancelled: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.cancelled} cancelled, ${finalSummary.skipped} skipped${testsSummarySuffix}${environmentErrorSuffix}`
                 );
                 return;
             }
 
             if (finalSummary.failed > 0) {
                 setStatus(
-                    `❌ Run complete: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.skipped} skipped${environmentErrorSuffix}`
+                    `❌ Run complete: ${finalSummary.success} success, ${finalSummary.failed} failed, ${finalSummary.skipped} skipped${testsSummarySuffix}${environmentErrorSuffix}`
                 );
                 return;
             }
 
-            setStatus(`✅ Run complete: ${finalSummary.success}/${finalSummary.total} success${environmentErrorSuffix}`);
+            setStatus(`✅ Run complete: ${finalSummary.success}/${finalSummary.total} success${testsSummarySuffix}${environmentErrorSuffix}`);
         } finally {
             collectionRunActiveRequestIdRef.current = null;
             collectionRunCancelRef.current = false;
@@ -3219,6 +3362,7 @@ export default function App() {
         setDraftsById((prev) => {
             const next = { ...prev };
             delete next[requestId];
+            draftsByIdRef.current = next;
             return next;
         });
         setOpenRequestIds((previous) => previous.filter((id) => id !== requestId));
@@ -3626,6 +3770,7 @@ export default function App() {
                         if (!existing) return prev;
                         const next = { ...prev };
                         next[renameTarget.id] = { ...existing, name: nextName };
+                        draftsByIdRef.current = next;
                         return next;
                     });
                     setRenameTarget(null);
@@ -5507,6 +5652,8 @@ export default function App() {
                                     editorTheme={editorTheme}
                                     editorPanelStyle={editorPanelStyle}
                                     onChange={(next) => updateDraft({ scripts: next })}
+                                    onSubmitShortcut={triggerSendFromUi}
+                                    revealLocation={scriptRevealLocation}
                                 />
                             )}
 
@@ -5545,6 +5692,7 @@ export default function App() {
                                 scriptReport={selectedScriptReport}
                                 runtimeVariables={executionRuntimeActive ? executionRuntimeVariables : {}}
                                 onClearRuntimeVariables={() => setExecutionRuntimeVariables({})}
+                                onRevealScriptTestLocation={revealScriptTestLocation}
                                 activeTab={responseTab}
                                 onTabChange={setResponseTab}
                             />
