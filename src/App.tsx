@@ -85,6 +85,13 @@ import {
     resolveRequestForExecution as resolveRequestForExecutionSnapshot,
     setFullDraftInMap,
 } from "./helpers/requestExecutionSnapshot.ts";
+import {
+    createPersistedTestExecution,
+    normalizeStatusTextWithTestExecution,
+    sanitizePersistedTestExecution,
+    type PersistedTestExecution,
+} from "./helpers/persistedTestExecution.ts";
+import { restorePersistedScriptReports } from "./helpers/scriptReportPersistence.ts";
 import type {
     RunnerExecutionResult,
     RunnerIterationMode,
@@ -255,6 +262,7 @@ type PersistedResponseEntry = {
     response: HttpResponseDto | null;
     statusText: string;
     updatedAt: string;
+    testExecution: PersistedTestExecution | null;
 };
 
 type PersistedResponsesCollection = Record<string, PersistedResponseEntry>;
@@ -265,6 +273,7 @@ type RequestScriptExecutionReport = {
     preRequestError: string | null;
     postResponseError: string | null;
     tests: ScriptTestResult[];
+    source: "live" | "persisted";
 };
 
 const OPEN_TABS_STORAGE_KEY = "bifrost:open-tabs:v1";
@@ -370,6 +379,20 @@ function summarizeScriptTests(tests: ScriptTestResult[]) {
         passed,
         failed,
         hasFailures: failed > 0,
+    };
+}
+
+function createScriptExecutionReport(input: {
+    preRequestError: string | null;
+    postResponseError: string | null;
+    tests: ScriptTestResult[];
+    source?: "live" | "persisted";
+}): RequestScriptExecutionReport {
+    return {
+        preRequestError: input.preRequestError,
+        postResponseError: input.postResponseError,
+        tests: input.tests,
+        source: input.source ?? "live",
     };
 }
 
@@ -672,10 +695,13 @@ function sanitizeResponseEntry(entry: unknown): PersistedResponseEntry | null {
         return null;
     }
 
+    const testExecution = sanitizePersistedTestExecution(source.testExecution);
+
     return {
         response: sanitizeHttpResponse(source.response),
-        statusText: source.statusText,
+        statusText: normalizeStatusTextWithTestExecution(source.statusText, testExecution),
         updatedAt: source.updatedAt,
+        testExecution,
     };
 }
 
@@ -1689,6 +1715,7 @@ export default function App() {
     useEffect(() => {
         if (!current) {
             setResponsesByRequestId({});
+            setScriptReportsByRequestId({});
             return;
         }
 
@@ -1700,10 +1727,9 @@ export default function App() {
         ) as PersistedResponsesCollection;
 
         setResponsesByRequestId(filtered);
-    }, [current?.meta.id]);
-
-    useEffect(() => {
-        setScriptReportsByRequestId({});
+        const restoredScriptReports =
+            restorePersistedScriptReports(filtered) as Record<string, RequestScriptExecutionReport>;
+        setScriptReportsByRequestId(restoredScriptReports);
     }, [current?.meta.id]);
 
     useEffect(() => {
@@ -1713,6 +1739,16 @@ export default function App() {
             const next = Object.fromEntries(
                 Object.entries(previous).filter(([requestId]) => validRequestIds.has(requestId))
             ) as PersistedResponsesCollection;
+
+            if (Object.keys(next).length === Object.keys(previous).length) {
+                return previous;
+            }
+            return next;
+        });
+        setScriptReportsByRequestId((previous) => {
+            const next = Object.fromEntries(
+                Object.entries(previous).filter(([requestId]) => validRequestIds.has(requestId))
+            ) as Record<string, RequestScriptExecutionReport>;
 
             if (Object.keys(next).length === Object.keys(previous).length) {
                 return previous;
@@ -2521,11 +2557,11 @@ export default function App() {
         setStatus("Sending...");
         setScriptReportsByRequestId((previous) => ({
             ...previous,
-            [selectedRequestId]: {
+            [selectedRequestId]: createScriptExecutionReport({
                 preRequestError: null,
                 postResponseError: null,
                 tests: [],
-            },
+            }),
         }));
         let preScriptError: string | null = null;
         let preScriptTests: ScriptTestResult[] = [];
@@ -2556,13 +2592,14 @@ export default function App() {
                     ? " • environment save issue"
                     : "";
                 const statusText = `❌ ${preparedRequest.message}${environmentErrorSuffix}`;
+                const preOnlyReport = createScriptExecutionReport({
+                    preRequestError: preScript.scriptError,
+                    postResponseError: null,
+                    tests: preScript.tests,
+                });
                 setScriptReportsByRequestId((previous) => ({
                     ...previous,
-                    [selectedRequestId]: {
-                        preRequestError: preScript.scriptError,
-                        postResponseError: null,
-                        tests: preScript.tests,
-                    },
+                    [selectedRequestId]: preOnlyReport,
                 }));
                 setStatus(statusText);
                 setResponsesByRequestId((previous) => ({
@@ -2571,6 +2608,7 @@ export default function App() {
                         response: previous[selectedRequestId]?.response ?? null,
                         statusText,
                         updatedAt: new Date().toISOString(),
+                        testExecution: createPersistedTestExecution(preOnlyReport),
                     },
                 }));
                 notifyError(preparedRequest.message);
@@ -2597,13 +2635,14 @@ export default function App() {
             setExecutionRuntimeVariables(runtimeVariables);
             const scriptTests = [...preScript.tests, ...postScript.tests];
             const scriptTestSummary = summarizeScriptTests(scriptTests);
+            const fullReport = createScriptExecutionReport({
+                preRequestError: preScript.scriptError,
+                postResponseError: postScript.scriptError,
+                tests: scriptTests,
+            });
             setScriptReportsByRequestId((previous) => ({
                 ...previous,
-                [selectedRequestId]: {
-                    preRequestError: preScript.scriptError,
-                    postResponseError: postScript.scriptError,
-                    tests: scriptTests,
-                },
+                [selectedRequestId]: fullReport,
             }));
 
             const environmentPersistError = await persistScriptEnvironmentMutations(
@@ -2632,6 +2671,7 @@ export default function App() {
                     response: r,
                     statusText,
                     updatedAt: new Date().toISOString(),
+                    testExecution: createPersistedTestExecution(fullReport),
                 },
             }));
         } catch (e: any) {
@@ -2639,13 +2679,14 @@ export default function App() {
                 scriptEnvironmentMutations
             );
             const { kind, message, durationMs } = parseHttpError(e);
+            const preOnlyReport = createScriptExecutionReport({
+                preRequestError: preScriptError,
+                postResponseError: null,
+                tests: preScriptTests,
+            });
             setScriptReportsByRequestId((previous) => ({
                 ...previous,
-                [selectedRequestId]: {
-                    preRequestError: preScriptError,
-                    postResponseError: null,
-                    tests: preScriptTests,
-                },
+                [selectedRequestId]: preOnlyReport,
             }));
             const scriptSuffix = preScriptError ? ` • script issue` : "";
             const environmentErrorSuffix = environmentPersistError
@@ -2659,6 +2700,7 @@ export default function App() {
                     response: previous[selectedRequestId]?.response ?? null,
                     statusText,
                     updatedAt: new Date().toISOString(),
+                    testExecution: createPersistedTestExecution(preOnlyReport),
                 },
             }));
         } finally {
@@ -2684,6 +2726,7 @@ export default function App() {
                     response: previous[selectedRequestId]?.response ?? null,
                     statusText,
                     updatedAt: new Date().toISOString(),
+                    testExecution: previous[selectedRequestId]?.testExecution ?? null,
                 },
             }));
         } catch (e) {
@@ -2934,6 +2977,11 @@ export default function App() {
 
                 if (!preparedRequest.ok) {
                     const statusText = `❌ invalid_request: ${preparedRequest.message}`;
+                    const preOnlyReport = createScriptExecutionReport({
+                        preRequestError: preRequestScriptError,
+                        postResponseError: null,
+                        tests: preRequestScriptTests,
+                    });
                     commitRun(
                         updateExecutionAt(planItem.planIndex, {
                             status: "failed",
@@ -2954,10 +3002,15 @@ export default function App() {
                     );
                     setScriptReportsByRequestId((previous) => ({
                         ...previous,
+                        [planItem.requestId]: preOnlyReport,
+                    }));
+                    setResponsesByRequestId((previous) => ({
+                        ...previous,
                         [planItem.requestId]: {
-                            preRequestError: preRequestScriptError,
-                            postResponseError: null,
-                            tests: preRequestScriptTests,
+                            response: previous[planItem.requestId]?.response ?? null,
+                            statusText,
+                            updatedAt: new Date().toISOString(),
+                            testExecution: createPersistedTestExecution(preOnlyReport),
                         },
                     }));
 
@@ -2990,6 +3043,11 @@ export default function App() {
                     const postResponseScriptTests = postScript.tests;
                     const combinedScriptTests = [...preRequestScriptTests, ...postResponseScriptTests];
                     const combinedScriptTestSummary = summarizeScriptTests(combinedScriptTests);
+                    const combinedReport = createScriptExecutionReport({
+                        preRequestError: preRequestScriptError,
+                        postResponseError: postResponseScriptError,
+                        tests: combinedScriptTests,
+                    });
                     runScriptEnvironmentMutations.push(...postScript.environmentMutations);
                     runVariables = postScript.runtimeVariables;
                     setExecutionRuntimeVariables(runVariables);
@@ -3038,15 +3096,12 @@ export default function App() {
                             response,
                             statusText,
                             updatedAt: new Date().toISOString(),
+                            testExecution: createPersistedTestExecution(combinedReport),
                         },
                     }));
                     setScriptReportsByRequestId((previous) => ({
                         ...previous,
-                        [planItem.requestId]: {
-                            preRequestError: preRequestScriptError,
-                            postResponseError: postResponseScriptError,
-                            tests: combinedScriptTests,
-                        },
+                        [planItem.requestId]: combinedReport,
                     }));
 
                     if (isHttpFailure && collectionRunStopOnFailure) {
@@ -3065,6 +3120,11 @@ export default function App() {
                     if (requestWasCancelled) {
                         cancelledByUser = true;
                     }
+                    const preOnlyReport = createScriptExecutionReport({
+                        preRequestError: preRequestScriptError,
+                        postResponseError: null,
+                        tests: preRequestScriptTests,
+                    });
 
                     commitRun(
                         updateExecutionAt(planItem.planIndex, {
@@ -3095,15 +3155,12 @@ export default function App() {
                             response: previous[planItem.requestId]?.response ?? null,
                             statusText,
                             updatedAt: new Date().toISOString(),
+                            testExecution: createPersistedTestExecution(preOnlyReport),
                         },
                     }));
                     setScriptReportsByRequestId((previous) => ({
                         ...previous,
-                        [planItem.requestId]: {
-                            preRequestError: preRequestScriptError,
-                            postResponseError: null,
-                            tests: preRequestScriptTests,
-                        },
+                        [planItem.requestId]: preOnlyReport,
                     }));
 
                     if (requestWasCancelled || collectionRunStopOnFailure) {

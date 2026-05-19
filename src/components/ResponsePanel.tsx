@@ -45,6 +45,7 @@ type ResponsePanelProps = {
         preRequestError: string | null;
         postResponseError: string | null;
         tests: ScriptTestResult[];
+        source?: "live" | "persisted";
     } | null;
     runtimeVariables: Record<string, string>;
     onClearRuntimeVariables: () => void;
@@ -516,6 +517,7 @@ export default function ResponsePanel({
             {activeTab === "tests" && (
                 <ResponseTestsPanel
                     tests={scriptReport?.tests ?? []}
+                    source={scriptReport?.source ?? "live"}
                     onRevealScriptTestLocation={onRevealScriptTestLocation}
                 />
             )}

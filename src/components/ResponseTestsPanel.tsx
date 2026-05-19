@@ -7,11 +7,13 @@ import {
 
 type ResponseTestsPanelProps = {
     tests: ScriptTestResult[];
+    source?: "live" | "persisted";
     onRevealScriptTestLocation?: (test: ScriptTestResult) => void;
 };
 
 export default function ResponseTestsPanel({
     tests,
+    source = "live",
     onRevealScriptTestLocation,
 }: ResponseTestsPanelProps) {
     const { failed, passed } = useMemo(() => groupScriptTests(tests), [tests]);
@@ -38,6 +40,11 @@ export default function ResponseTestsPanel({
                 <div style={{ fontSize: 13, color: "var(--pg-text-dim)", fontWeight: 700 }}>
                     {tests.length} test{tests.length === 1 ? "" : "s"} · {passed.length} passed · {failed.length} failed
                 </div>
+                {source === "persisted" && (
+                    <div style={{ fontSize: 11, color: "var(--pg-text-muted)" }}>
+                        Previous execution results
+                    </div>
+                )}
 
                 <TestSection
                     title="Failed"
