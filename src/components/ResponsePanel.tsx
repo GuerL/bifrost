@@ -260,6 +260,7 @@ export default function ResponsePanel({
                 width: "100%",
                 minHeight: 0,
                 flex: 1,
+                overflow: "hidden",
             }}
         >
             {showHeader && (
@@ -523,11 +524,13 @@ export default function ResponsePanel({
             )}
 
             {activeTab === "tests" && (
-                <ResponseTestsPanel
-                    tests={scriptReport?.tests ?? []}
-                    source={scriptReport?.source ?? "live"}
-                    onRevealScriptTestLocation={onRevealScriptTestLocation}
-                />
+                <div style={{ minHeight: 0, flex: 1, overflow: "auto" }}>
+                    <ResponseTestsPanel
+                        tests={scriptReport?.tests ?? []}
+                        source={scriptReport?.source ?? "live"}
+                        onRevealScriptTestLocation={onRevealScriptTestLocation}
+                    />
+                </div>
             )}
         </div>
     );

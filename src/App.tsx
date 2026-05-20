@@ -5709,8 +5709,7 @@ export default function App() {
                                         style={{
                                             minHeight: 0,
                                             flex: 1,
-                                            overflowY: "auto",
-                                            overflowX: "hidden",
+                                            overflow: "auto",
                                             display: "flex",
                                             flexDirection: "column",
                                             gap: 10,
@@ -6479,7 +6478,9 @@ export default function App() {
                                     style={{
                                         minHeight: 0,
                                         flex: 1,
-                                        overflow: "hidden",
+                                        overflow: "auto",
+                                        display: "flex",
+                                        flexDirection: "column",
                                         padding: 8,
                                         paddingTop: 6,
                                     }}
