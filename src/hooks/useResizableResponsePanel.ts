@@ -135,18 +135,9 @@ export function useResizableResponsePanel({
         }
 
         const bodyStyle = document.body.style;
-        const rootStyle = document.documentElement.style;
         const previousBodyCursor = bodyStyle.cursor;
-        const previousBodyUserSelect = bodyStyle.userSelect;
-        const previousRootUserSelect = rootStyle.userSelect;
-        const previousBodyWebkitUserSelect = bodyStyle.getPropertyValue("-webkit-user-select");
-        const previousRootWebkitUserSelect = rootStyle.getPropertyValue("-webkit-user-select");
-
         bodyStyle.cursor = "row-resize";
-        bodyStyle.userSelect = "none";
-        rootStyle.userSelect = "none";
-        bodyStyle.setProperty("-webkit-user-select", "none");
-        rootStyle.setProperty("-webkit-user-select", "none");
+        document.body.classList.add("bifrost-resizing");
 
         window.addEventListener("mousemove", onMouseMove);
         window.addEventListener("mouseup", onMouseUp);
@@ -155,10 +146,7 @@ export function useResizableResponsePanel({
             window.removeEventListener("mousemove", onMouseMove);
             window.removeEventListener("mouseup", onMouseUp);
             bodyStyle.cursor = previousBodyCursor;
-            bodyStyle.userSelect = previousBodyUserSelect;
-            rootStyle.userSelect = previousRootUserSelect;
-            bodyStyle.setProperty("-webkit-user-select", previousBodyWebkitUserSelect || "");
-            rootStyle.setProperty("-webkit-user-select", previousRootWebkitUserSelect || "");
+            document.body.classList.remove("bifrost-resizing");
         };
     }, [availableHeightPx, clampRatioToBounds, isDragging]);
 

@@ -267,6 +267,17 @@ button {
   user-select: text;
 }
 
+body.bifrost-resizing,
+body.bifrost-resizing * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+body.bifrost-resizing .monaco-editor,
+body.bifrost-resizing .monaco-editor * {
+  pointer-events: none !important;
+}
+
 button:hover:not(:disabled),
 select:hover,
 input:hover,
