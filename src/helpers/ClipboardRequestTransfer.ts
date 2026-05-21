@@ -1,11 +1,14 @@
 import { readText as readTextFromPlugin, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type {
     Body,
+    GeneratedHeaderControl,
+    GeneratedHeaderName,
     KeyValue,
     MultipartField,
     Request,
     RequestAuth,
     RequestScripts,
+    RequestTls,
     ResponseExtractorRule,
 } from "../types.ts";
 
@@ -38,7 +41,33 @@ function isKeyValueArray(value: unknown): value is KeyValue[] {
             (entry) =>
                 isObject(entry) &&
                 typeof entry.key === "string" &&
-                typeof entry.value === "string"
+                typeof entry.value === "string" &&
+                (entry.enabled === undefined || typeof entry.enabled === "boolean")
+        )
+    );
+}
+
+function isGeneratedHeaderName(value: unknown): value is GeneratedHeaderName {
+    return (
+        value === "host" ||
+        value === "user-agent" ||
+        value === "accept" ||
+        value === "accept-encoding" ||
+        value === "connection" ||
+        value === "content-length" ||
+        value === "content-type" ||
+        value === "cookie"
+    );
+}
+
+function isGeneratedHeaderControlArray(value: unknown): value is GeneratedHeaderControl[] {
+    return (
+        Array.isArray(value) &&
+        value.every(
+            (entry) =>
+                isObject(entry) &&
+                isGeneratedHeaderName(entry.key) &&
+                typeof entry.enabled === "boolean"
         )
     );
 }
@@ -228,12 +257,47 @@ function parseScripts(value: unknown): RequestScripts | null {
     };
 }
 
+function parseTls(value: unknown): RequestTls | null {
+    if (!isObject(value)) return null;
+
+    if (
+        value.allow_invalid_certificates !== undefined &&
+        typeof value.allow_invalid_certificates !== "boolean"
+    ) {
+        return null;
+    }
+    if (
+        value.ca_certificate_path !== undefined &&
+        typeof value.ca_certificate_path !== "string"
+    ) {
+        return null;
+    }
+    if (
+        value.client_certificate_path !== undefined &&
+        typeof value.client_certificate_path !== "string"
+    ) {
+        return null;
+    }
+
+    return {
+        allow_invalid_certificates: value.allow_invalid_certificates,
+        ca_certificate_path: value.ca_certificate_path,
+        client_certificate_path: value.client_certificate_path,
+    };
+}
+
 function parseRequest(value: unknown): Request | null {
     if (!isObject(value)) return null;
     if (typeof value.id !== "string" || typeof value.name !== "string") return null;
     if (typeof value.method !== "string" || !REQUEST_METHODS.has(value.method)) return null;
     if (typeof value.url !== "string") return null;
     if (value.headers !== undefined && !isKeyValueArray(value.headers)) return null;
+    if (
+        value.generated_headers !== undefined &&
+        !isGeneratedHeaderControlArray(value.generated_headers)
+    ) {
+        return null;
+    }
     if (value.query !== undefined && !isKeyValueArray(value.query)) return null;
 
     const body =
@@ -252,7 +316,11 @@ function parseRequest(value: unknown): Request | null {
         value.scripts === undefined
             ? ({ pre_request: "", post_response: "" } satisfies RequestScripts)
             : parseScripts(value.scripts);
-    if (!body || !auth || !extractors || !scripts) return null;
+    const tlsParsed =
+        value.tls === undefined
+            ? undefined
+            : parseTls(value.tls);
+    if (!body || !auth || !extractors || !scripts || (value.tls !== undefined && !tlsParsed)) return null;
 
     return {
         id: value.id,
@@ -260,9 +328,11 @@ function parseRequest(value: unknown): Request | null {
         method: value.method as Request["method"],
         url: value.url,
         headers: value.headers ?? [],
+        generated_headers: value.generated_headers ?? [],
         query: value.query ?? [],
         body,
         auth,
+        tls: tlsParsed ?? undefined,
         extractors,
         scripts,
     };
@@ -278,9 +348,11 @@ export function serializeRequestForClipboard(request: Request): string {
             method: request.method,
             url: request.url,
             headers: request.headers,
+            generated_headers: request.generated_headers,
             query: request.query,
             body: request.body,
             auth: request.auth,
+            tls: request.tls,
             extractors: request.extractors,
             scripts: request.scripts,
         },

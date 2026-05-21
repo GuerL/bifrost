@@ -27,7 +27,22 @@ export type CollectionRequestRefNode = {
 
 export type CollectionNode = CollectionFolderNode | CollectionRequestRefNode;
 
-export type KeyValue = { key: string; value: string };
+export type KeyValue = { key: string; value: string; enabled?: boolean };
+
+export type GeneratedHeaderName =
+    | "host"
+    | "user-agent"
+    | "accept"
+    | "accept-encoding"
+    | "connection"
+    | "content-length"
+    | "content-type"
+    | "cookie";
+
+export type GeneratedHeaderControl = {
+    key: GeneratedHeaderName;
+    enabled: boolean;
+};
 
 export type Body =
     | { type: "none" }
@@ -51,15 +66,23 @@ export type RequestScripts = {
     post_response: string;
 };
 
+export type RequestTls = {
+    allow_invalid_certificates?: boolean;
+    ca_certificate_path?: string;
+    client_certificate_path?: string;
+};
+
 export type Request = {
     id: string;
     name: string;
     method: "get" | "post" | "put" | "patch" | "delete" | "head" | "options";
     url: string;
     headers: KeyValue[];
+    generated_headers?: GeneratedHeaderControl[];
     query: KeyValue[];
     body: Body;
     auth: RequestAuth;
+    tls?: RequestTls;
     extractors: ResponseExtractorRule[];
     scripts: RequestScripts;
 };

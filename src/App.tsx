@@ -1,4 +1,11 @@
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+    type ChangeEvent,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isPending } from "./helpers/HttpHelper";
 import Editor from "@monaco-editor/react";
@@ -29,6 +36,7 @@ import NoCollectionsModal from "./components/NoCollectionsModal.tsx";
 import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.tsx";
 import CollectionRunnerModal from "./components/CollectionRunnerModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
+import { useResizableResponsePanel } from "./hooks/useResizableResponsePanel.ts";
 import {
     copyTextToClipboard,
     copyRequestToClipboard,
@@ -86,6 +94,16 @@ import {
     setFullDraftInMap,
 } from "./helpers/requestExecutionSnapshot.ts";
 import {
+    defaultGeneratedHeaderControls,
+    GENERATED_HEADER_DISABLE_WARNING,
+    generatedHeaderControlsWithDefaults,
+} from "./helpers/requestHeadersPreview.ts";
+import {
+    buildRequestDebugInfo,
+    buildRequestDebugText,
+    generatedHeaderDisplayRows,
+} from "./helpers/requestDebug.ts";
+import {
     createPersistedTestExecution,
     normalizeStatusTextWithTestExecution,
     sanitizePersistedTestExecution,
@@ -101,6 +119,7 @@ import type {
     CollectionLoaded,
     CollectionMeta,
     Environment,
+    GeneratedHeaderName,
     HttpResponseDto,
     ImportPostmanResult,
     ImportPortableResult,
@@ -276,9 +295,20 @@ type RequestScriptExecutionReport = {
     source: "live" | "persisted";
 };
 
+type RequestTlsResolved = {
+    allow_invalid_certificates: boolean;
+    ca_certificate_path: string;
+    client_certificate_path: string;
+};
+
 const OPEN_TABS_STORAGE_KEY = "bifrost:open-tabs:v1";
 const RESPONSES_STORAGE_KEY = "bifrost:last-responses:v1";
 const SAVED_REQUESTS_COLLAPSED_FOLDERS_STORAGE_KEY = "bifrost:saved-requests:collapsed-folders:v1";
+const GENERATED_HEADERS_VISIBLE_STORAGE_KEY = "bifrost:generated-headers:visible:v1";
+const REQUEST_RESPONSE_PANEL_STORAGE_PREFIX = "bifrost:request-response-panel:v2";
+const REQUEST_RESPONSE_DIVIDER_HEIGHT_PX = 6;
+const REQUEST_PANEL_MIN_HEIGHT_PX = 44;
+const RESPONSE_PANEL_MIN_HEIGHT_PX = 44;
 const IS_MACOS =
     typeof navigator !== "undefined" &&
     /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
@@ -366,6 +396,24 @@ function buildDefaultAuth(type: RequestAuth["type"]): RequestAuth {
     return { type: "none" };
 }
 
+function defaultRequestTls(): RequestTlsResolved {
+    return {
+        allow_invalid_certificates: false,
+        ca_certificate_path: "",
+        client_certificate_path: "",
+    };
+}
+
+function requestTlsOrDefault(request: Request): RequestTlsResolved {
+    const defaults = defaultRequestTls();
+    const tls = request.tls;
+    return {
+        allow_invalid_certificates: tls?.allow_invalid_certificates ?? defaults.allow_invalid_certificates,
+        ca_certificate_path: tls?.ca_certificate_path ?? defaults.ca_certificate_path,
+        client_certificate_path: tls?.client_certificate_path ?? defaults.client_certificate_path,
+    };
+}
+
 function requestScriptsOrDefault(request: Request): RequestScripts {
     return request.scripts ?? { pre_request: "", post_response: "" };
 }
@@ -422,18 +470,34 @@ function dynamicVariablePreview(name: string): string | undefined {
     return DYNAMIC_VARIABLE_PREVIEWS[normalizeDynamicVariableKey(name)];
 }
 
-function parseHttpError(error: unknown): { kind: string; message: string; durationMs?: number } {
+function parseHttpError(error: unknown): { kind: string; message: string; detail?: string; durationMs?: number } {
     const source = error as {
         kind?: unknown;
         message?: unknown;
+        detail?: unknown;
         duration_ms?: unknown;
     };
 
     return {
         kind: typeof source?.kind === "string" ? source.kind : "unknown",
         message: typeof source?.message === "string" ? source.message : String(error),
+        detail: typeof source?.detail === "string" ? source.detail : undefined,
         durationMs: typeof source?.duration_ms === "number" ? source.duration_ms : undefined,
     };
+}
+
+function httpErrorKindLabel(kind: string): string {
+    const normalized = kind.trim().toLowerCase();
+    if (normalized === "dns") return "DNS error";
+    if (normalized === "connect") return "Connection error";
+    if (normalized === "timeout") return "Timeout";
+    if (normalized === "tls" || normalized === "tls_config") return "TLS error";
+    if (normalized === "invalid_header") return "Invalid header";
+    if (normalized === "protocol") return "Protocol error";
+    if (normalized === "invalid_url") return "Invalid URL";
+    if (normalized === "cancelled") return "Cancelled";
+    if (normalized === "invalid_request") return "Invalid request";
+    return normalized || "unknown";
 }
 
 function errorMessage(error: unknown): string {
@@ -556,6 +620,32 @@ function isCurlClipboardCommand(clipboardText: string): boolean {
     if (!trimmed.toLowerCase().startsWith("curl")) return false;
     if (!/\s/.test(trimmed.slice(4, 5))) return false;
     return trimmed.slice(4).trim().length > 0;
+}
+
+function readBooleanPreference(storageKey: string, defaultValue: boolean): boolean {
+    if (typeof window === "undefined") return defaultValue;
+
+    try {
+        const raw = window.localStorage.getItem(storageKey);
+        if (raw === null) return defaultValue;
+        if (raw === "true") return true;
+        if (raw === "false") return false;
+        const parsed = JSON.parse(raw) as unknown;
+        if (typeof parsed === "boolean") return parsed;
+        return defaultValue;
+    } catch {
+        return defaultValue;
+    }
+}
+
+function writeBooleanPreference(storageKey: string, value: boolean) {
+    if (typeof window === "undefined") return;
+
+    try {
+        window.localStorage.setItem(storageKey, String(value));
+    } catch {
+        // ignore storage write failures
+    }
 }
 
 function readPersistedTabsState(): PersistedTabsState {
@@ -801,9 +891,15 @@ export default function App() {
     const [draftsById, setDraftsById] = useState<Record<string, Request>>({});
     const [pending, setPending] = useState(false);
     const [editorText, setEditorText] = useState("");
-    const [tab, setTab] = useState<"headers" | "query" | "body" | "auth" | "scripts" | "json">(
+    const [tab, setTab] = useState<"headers" | "query" | "body" | "auth" | "tls" | "scripts" | "debug" | "json">(
         "headers"
     );
+    const [showGeneratedHeaders, setShowGeneratedHeaders] = useState<boolean>(() =>
+        readBooleanPreference(GENERATED_HEADERS_VISIBLE_STORAGE_KEY, true)
+    );
+    const [showRequestDebug, setShowRequestDebug] = useState(false);
+    const [requestResponseSplitElement, setRequestResponseSplitElement] =
+        useState<HTMLDivElement | null>(null);
     const [contextMenu, setContextMenu] = useState<SidebarContextMenu | null>(null);
     const [rootAddMenu, setRootAddMenu] = useState<RootAddMenu | null>(null);
     const [renameTarget, setRenameTarget] = useState<{ kind: "request" | "folder"; id: string } | null>(null);
@@ -888,6 +984,7 @@ export default function App() {
     const curlImportTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
+    const requestResponseSplitRef = useRef<HTMLDivElement | null>(null);
     const expandedFoldersRef = useRef<Record<string, boolean>>({});
     const hydratedTabsCollectionIdRef = useRef<string | null>(null);
     const hydratedCollapsedFoldersCollectionIdRef = useRef<string | null>(null);
@@ -904,12 +1001,39 @@ export default function App() {
     const collectionRunActiveRequestIdRef = useRef<string | null>(null);
     const collectionRunPending = runnerRun?.status === "running";
     const executionRuntimeActive = pending || collectionRunPending;
+    const {
+        dividerHeightPx: responsePanelDividerHeightPx,
+        requestHeightPx: requestPanelHeightPx,
+        responseHeightPx,
+        isDragging: isResponsePanelDragging,
+        onDividerMouseDown,
+        onDividerKeyDown,
+    } = useResizableResponsePanel({
+        containerRef: requestResponseSplitRef,
+        containerElement: requestResponseSplitElement,
+        storageKeyPrefix: REQUEST_RESPONSE_PANEL_STORAGE_PREFIX,
+        defaultRequestRatio: 0.55,
+        dividerHeightPx: REQUEST_RESPONSE_DIVIDER_HEIGHT_PX,
+        minRequestHeightPx: REQUEST_PANEL_MIN_HEIGHT_PX,
+        minResponseHeightPx: RESPONSE_PANEL_MIN_HEIGHT_PX,
+    });
+    const bindRequestResponseSplitRef = useCallback((node: HTMLDivElement | null) => {
+        requestResponseSplitRef.current = node;
+        setRequestResponseSplitElement(node);
+    }, []);
 
     useEffect(() => {
         if (executionRuntimeActive) return;
         if (Object.keys(executionRuntimeVariables).length === 0) return;
         setExecutionRuntimeVariables({});
     }, [executionRuntimeActive, executionRuntimeVariables]);
+
+    useEffect(() => {
+        writeBooleanPreference(
+            GENERATED_HEADERS_VISIBLE_STORAGE_KEY,
+            showGeneratedHeaders
+        );
+    }, [showGeneratedHeaders]);
 
     function resetCollapsedFoldersHydrationRefs() {
         hydratedCollapsedFoldersCollectionIdRef.current = null;
@@ -1260,6 +1384,10 @@ export default function App() {
         setScriptRevealLocation(null);
     }, [selectedRequestId]);
 
+    useEffect(() => {
+        setShowRequestDebug(false);
+    }, [selectedRequestId]);
+
     const requestsById = useMemo(
         () => new Map((current?.requests ?? []).map((request) => [request.id, request])),
         [current?.requests]
@@ -1368,6 +1496,36 @@ export default function App() {
         if (!selectedRequestId) return null;
         return scriptReportsByRequestId[selectedRequestId] ?? null;
     }, [selectedRequestId, scriptReportsByRequestId]);
+    const selectedResponseDurationText = useMemo(() => {
+        if (!resp) return "n/a";
+        if (!Number.isFinite(resp.duration_ms)) return "n/a";
+        return `${Math.max(0, Math.round(resp.duration_ms))}ms`;
+    }, [resp]);
+    const selectedResponseCodeText = useMemo(() => {
+        if (!resp) return "n/a";
+        return String(resp.status);
+    }, [resp]);
+    const selectedResponseTestsSummaryText = useMemo(() => {
+        const tests = selectedScriptReport?.tests ?? [];
+        if (tests.length === 0) return "Tests: none";
+        const summary = summarizeScriptTests(tests);
+        return summary.failed > 0
+            ? `Tests: ${summary.failed} failed, ${summary.passed} passed`
+            : `Tests: ${summary.passed}/${summary.total} passed`;
+    }, [selectedScriptReport]);
+    const selectedResponseHeaderSummaryText = useMemo(() => {
+        const testsSummary = selectedResponseTestsSummaryText.replace(/^Tests:\s*/i, "tests ");
+        return `Status ${selectedResponseCodeText} in ${selectedResponseDurationText} · ${testsSummary}`;
+    }, [
+        selectedResponseCodeText,
+        selectedResponseDurationText,
+        selectedResponseTestsSummaryText,
+    ]);
+    const responsePanelSizePercent = useMemo(() => {
+        const total = requestPanelHeightPx + responseHeightPx;
+        if (total <= 0) return 0;
+        return Math.round((responseHeightPx / total) * 100);
+    }, [requestPanelHeightPx, responseHeightPx]);
 
     const activeEnvironment = useMemo(
         () => environments.find((env) => env.id === activeEnvironmentId) ?? null,
@@ -1440,6 +1598,27 @@ export default function App() {
         },
         [runtimeVariableValues]
     );
+
+    const generatedHeaderRows = useMemo(() => {
+        if (!draft) return [];
+        return generatedHeaderDisplayRows({
+            request: draft,
+            variableValues: runtimeVariableValues,
+        });
+    }, [draft, runtimeVariableValues]);
+
+    const requestDebugInfo = useMemo(() => {
+        if (!draft) return null;
+        return buildRequestDebugInfo({
+            request: draft,
+            variableValues: runtimeVariableValues,
+        });
+    }, [draft, runtimeVariableValues]);
+
+    const requestDebugText = useMemo(() => {
+        if (!requestDebugInfo) return "";
+        return buildRequestDebugText(requestDebugInfo);
+    }, [requestDebugInfo]);
 
     const {
         beforeMountMonaco,
@@ -2205,6 +2384,33 @@ export default function App() {
         [selectedRequestId]
     );
 
+    const setGeneratedHeaderEnabled = useCallback(
+        (headerName: GeneratedHeaderName, enabled: boolean) => {
+            if (!draft) return;
+            const nextControls = generatedHeaderControlsWithDefaults(draft).map((entry) =>
+                entry.key === headerName
+                    ? { ...entry, enabled }
+                    : entry
+            );
+            updateDraft({ generated_headers: nextControls });
+        },
+        [draft, updateDraft]
+    );
+
+    const copyRequestDebugInfo = useCallback(async () => {
+        if (!requestDebugText) {
+            notifyError("No debug info to copy");
+            return;
+        }
+
+        try {
+            await copyTextToClipboard(requestDebugText);
+            notifySuccess("Copied debug info");
+        } catch {
+            notifyError("Failed to copy debug info");
+        }
+    }, [requestDebugText]);
+
     const saveDraftById = useCallback(
         async (requestId: string): Promise<boolean> => {
             if (!current) return false;
@@ -2678,7 +2884,8 @@ export default function App() {
             const environmentPersistError = await persistScriptEnvironmentMutations(
                 scriptEnvironmentMutations
             );
-            const { kind, message, durationMs } = parseHttpError(e);
+            const { kind, message, detail, durationMs } = parseHttpError(e);
+            const kindLabel = httpErrorKindLabel(kind);
             const preOnlyReport = createScriptExecutionReport({
                 preRequestError: preScriptError,
                 postResponseError: null,
@@ -2692,7 +2899,9 @@ export default function App() {
             const environmentErrorSuffix = environmentPersistError
                 ? " • environment save issue"
                 : "";
-            const statusText = `❌ ${kind}: ${message}${durationMs != null ? ` (${durationMs}ms)` : ""}${scriptSuffix}${environmentErrorSuffix}`;
+            const detailSuffix =
+                detail && detail.length <= 180 ? ` • ${detail}` : "";
+            const statusText = `❌ ${kindLabel} (${kind}): ${message}${durationMs != null ? ` (${durationMs}ms)` : ""}${scriptSuffix}${environmentErrorSuffix}${detailSuffix}`;
             setStatus(statusText);
             setResponsesByRequestId((previous) => ({
                 ...previous,
@@ -3112,10 +3321,15 @@ export default function App() {
                     }
                 } catch (error) {
                     const parsed = parseRunnerHttpError(error);
+                    const kindLabel = httpErrorKindLabel(parsed.code);
                     const requestWasCancelled = parsed.code === "cancelled" || collectionRunCancelRef.current;
+                    const detailSuffix =
+                        parsed.detail && parsed.detail.length <= 180
+                            ? ` • ${parsed.detail}`
+                            : "";
                     const statusText = requestWasCancelled
                         ? `⛔ ${parsed.message}${parsed.durationMs != null ? ` (${parsed.durationMs}ms)` : ""}`
-                        : `❌ ${parsed.code}: ${parsed.message}${parsed.durationMs != null ? ` (${parsed.durationMs}ms)` : ""}`;
+                        : `❌ ${kindLabel} (${parsed.code}): ${parsed.message}${parsed.durationMs != null ? ` (${parsed.durationMs}ms)` : ""}${detailSuffix}`;
 
                     if (requestWasCancelled) {
                         cancelledByUser = true;
@@ -3542,6 +3756,7 @@ export default function App() {
         const headers = parsed.headers.map((entry) => ({
             key: entry.name,
             value: entry.value,
+            enabled: entry.enabled !== false,
         }));
         const contentType = findHeaderValue(parsed.headers, "content-type") ?? "text/plain";
         const body: Request["body"] =
@@ -3578,9 +3793,15 @@ export default function App() {
             method,
             url: parsed.url,
             headers,
+            generated_headers: defaultGeneratedHeaderControls(),
             query: [],
             body,
             auth: { type: "none" },
+            tls: {
+                allow_invalid_certificates: false,
+                ca_certificate_path: "",
+                client_certificate_path: "",
+            },
             extractors: [],
             scripts: { pre_request: "", post_response: "" },
         };
@@ -3655,9 +3876,11 @@ export default function App() {
             id: crypto.randomUUID(),
             name: buildSafeImportedRequestName(source.name, current.requests),
             headers: source.headers.map((entry) => ({ ...entry })),
+            generated_headers: (source.generated_headers ?? []).map((entry) => ({ ...entry })),
             query: source.query.map((entry) => ({ ...entry })),
             body: structuredClone(source.body),
             auth: structuredClone(source.auth),
+            tls: source.tls ? { ...source.tls } : undefined,
             extractors: source.extractors.map((entry) => ({ ...entry })),
             scripts: { ...source.scripts },
         };
@@ -4976,6 +5199,7 @@ export default function App() {
                         }}
                     >
                         <div
+                            className="no-select"
                             style={{
                                 marginTop: 16,
                                 marginBottom: 8,
@@ -5010,6 +5234,7 @@ export default function App() {
                         </div>
 
                         <div
+                            className="no-select"
                             style={{
                                 display: "flex",
                                 flexDirection: "column",
@@ -5259,6 +5484,7 @@ export default function App() {
                 >
                     {current && openTabs.length > 0 && (
                         <div
+                            className="no-select"
                             style={{
                                 display: "flex",
                                 alignItems: "center",
@@ -5344,102 +5570,277 @@ export default function App() {
                     )}
 
                     {current && draft && (
-                        <>
-                            {/*<div*/}
-                            {/*    style={{*/}
-                            {/*        display: "flex",*/}
-                            {/*        justifyContent: "space-between",*/}
-                            {/*        alignItems: "center",*/}
-                            {/*        gap: 8,*/}
-                            {/*        marginTop: 12,*/}
-                            {/*        flexShrink: 0,*/}
-                            {/*    }}*/}
-                            {/*>*/}
-                            {/*    <h3>Editor</h3>*/}
-                            {/*    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>*/}
-                            {/*        {isDirty && <span style={{ color: "var(--pg-warning)" }}>● Unsaved</span>}*/}
-                            {/*        {selectedRequestId ? (pending ? "⏳ pending" : "✅ idle") : ""}*/}
-                            {/*    </div>*/}
-                            {/*</div>*/}
-
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
-                                <AppSelect
-                                    value={draft.method}
-                                    options={REQUEST_METHOD_OPTIONS}
-                                    ariaLabel="Request method"
-                                    onValueChange={(nextValue) =>
-                                        updateDraft({ method: nextValue as Request["method"] })
-                                    }
-                                />
-
-                                <VariableInput
-                                    placeholder="URL"
-                                    value={draft.url}
-                                    onChange={(nextUrl) => updateDraft({ url: nextUrl })}
-                                    resolveVariableStatus={resolveVariableStatus}
-                                    resolveVariableValue={resolveVariableValue}
-                                    variableSuggestions={variableSuggestions}
-                                    containerStyle={{ flex: 1 }}
-                                />
-
-                                <button
-                                    onClick={triggerSendFromUi}
-                                    disabled={!selectedRequestId || pending || collectionRunPending}
-                                    style={primaryButtonStyle(!selectedRequestId || pending || collectionRunPending)}
+                        <div
+                            style={{
+                                flex: 1,
+                                minHeight: 0,
+                                display: "grid",
+                                gridTemplateRows: "auto minmax(0, 1fr)",
+                                gap: 8,
+                                overflow: "hidden",
+                            }}
+                        >
+                            <div
+                                className="no-select"
+                                style={requestShellStyle()}
+                            >
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        flexWrap: "nowrap",
+                                        flexShrink: 0,
+                                        width: "100%",
+                                        minWidth: 0,
+                                    }}
                                 >
-                                    Send
-                                </button>
+                                    <AppSelect
+                                        value={draft.method}
+                                        options={REQUEST_METHOD_OPTIONS}
+                                        ariaLabel="Request method"
+                                        onValueChange={(nextValue) =>
+                                            updateDraft({ method: nextValue as Request["method"] })
+                                        }
+                                    />
 
-                                <button
-                                    onClick={cancel}
-                                    disabled={!selectedRequestId || !pending || collectionRunPending}
-                                    style={buttonStyle(!selectedRequestId || !pending || collectionRunPending)}
-                                >
-                                    Cancel
-                                </button>
+                                    <VariableInput
+                                        placeholder="URL"
+                                        value={draft.url}
+                                        onChange={(nextUrl) => updateDraft({ url: nextUrl })}
+                                        resolveVariableStatus={resolveVariableStatus}
+                                        resolveVariableValue={resolveVariableValue}
+                                        variableSuggestions={variableSuggestions}
+                                        containerStyle={{ flex: 1, minWidth: 0 }}
+                                    />
+
+                                    <button
+                                        onClick={triggerSendFromUi}
+                                        disabled={!selectedRequestId || pending || collectionRunPending}
+                                        style={primaryButtonStyle(!selectedRequestId || pending || collectionRunPending)}
+                                    >
+                                        Send
+                                    </button>
+
+                                    <button
+                                        onClick={cancel}
+                                        disabled={!selectedRequestId || !pending || collectionRunPending}
+                                        style={buttonStyle(!selectedRequestId || !pending || collectionRunPending)}
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+
                             </div>
 
-                            <div style={{ display: "flex", gap: 8, marginTop: 12, flexShrink: 0 }}>
-                                <button
-                                    onClick={() => setTab("headers")}
-                                    style={editorTabStyle(tab === "headers")}
+                            <div
+                                ref={bindRequestResponseSplitRef}
+                                style={{
+                                    minHeight: 0,
+                                    display: "grid",
+                                    gridTemplateRows: `minmax(${REQUEST_PANEL_MIN_HEIGHT_PX}px, ${requestPanelHeightPx}px) ${responsePanelDividerHeightPx*2-1}px minmax(${RESPONSE_PANEL_MIN_HEIGHT_PX}px, ${responseHeightPx}px)`,
+                                    overflow: "hidden",
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        minHeight: 0,
+                                        overflow: "hidden",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        border: "1px solid var(--pg-border)",
+                                        borderRadius: 10,
+                                        background: "var(--pg-surface-0)",
+                                    }}
                                 >
-                                    Headers
-                                </button>
-                                <button
-                                    onClick={() => setTab("query")}
-                                    style={editorTabStyle(tab === "query")}
-                                >
-                                    Query
-                                </button>
-                                <button
-                                    onClick={() => setTab("body")}
-                                    style={editorTabStyle(tab === "body")}
-                                >
-                                    Body
-                                </button>
-                                <button
-                                    onClick={() => setTab("auth")}
-                                    style={editorTabStyle(tab === "auth")}
-                                >
-                                    Auth
-                                </button>
-                                <button
-                                    onClick={() => setTab("scripts")}
-                                    style={editorTabStyle(tab === "scripts")}
-                                >
-                                    Scripts
-                                </button>
-                            </div>
-
+                                    <div
+                                        className="no-select"
+                                        style={requestPanelHeaderStyle()}
+                                    >
+                                        <span style={{ fontWeight: 700, fontSize: 13, color: "var(--pg-text)" }}>
+                                            Request
+                                        </span>
+                                        <div style={requestPanelTabsStyle()}>
+                                            <button
+                                                onClick={() => setTab("headers")}
+                                                style={editorTabStyle(tab === "headers")}
+                                            >
+                                                Headers
+                                            </button>
+                                            <button
+                                                onClick={() => setTab("query")}
+                                                style={editorTabStyle(tab === "query")}
+                                            >
+                                                Query
+                                            </button>
+                                            <button
+                                                onClick={() => setTab("body")}
+                                                style={editorTabStyle(tab === "body")}
+                                            >
+                                                Body
+                                            </button>
+                                            <button
+                                                onClick={() => setTab("auth")}
+                                                style={editorTabStyle(tab === "auth")}
+                                            >
+                                                Auth
+                                            </button>
+                                            <button
+                                                onClick={() => setTab("tls")}
+                                                style={editorTabStyle(tab === "tls")}
+                                            >
+                                                TLS
+                                            </button>
+                                            <button
+                                                onClick={() => setTab("scripts")}
+                                                style={editorTabStyle(tab === "scripts")}
+                                            >
+                                                Scripts
+                                            </button>
+                                            <button
+                                                onClick={() => setTab("debug")}
+                                                style={editorTabStyle(tab === "debug")}
+                                            >
+                                                Debug
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div
+                                        style={{
+                                            minHeight: 0,
+                                            flex: 1,
+                                            overflow: "auto",
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            gap: 10,
+                                            padding: 10,
+                                            boxSizing: "border-box",
+                                        }}
+                                    >
                             {tab === "headers" && (
-                                <KeyValueTable
-                                    rows={draft.headers}
-                                    onChange={(next) => updateDraft({ headers: next })}
-                                    resolveVariableStatus={resolveVariableStatus}
-                                    resolveVariableValue={resolveVariableValue}
-                                    variableSuggestions={variableSuggestions}
-                                />
+                                <div style={{ display: "grid", gap: 10 }}>
+                                    <div
+                                        style={{
+                                            border: "1px solid var(--pg-border)",
+                                            borderRadius: 8,
+                                            padding: "10px 12px",
+                                            display: "grid",
+                                            gap: 8,
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                fontSize: 12,
+                                                color: "var(--pg-text-muted)",
+                                                fontWeight: 600,
+                                            }}
+                                        >
+                                            Custom headers
+                                        </div>
+                                        <KeyValueTable
+                                            rows={draft.headers}
+                                            onChange={(next) => updateDraft({ headers: next })}
+                                            resolveVariableStatus={resolveVariableStatus}
+                                            resolveVariableValue={resolveVariableValue}
+                                            variableSuggestions={variableSuggestions}
+                                            showEnabledToggle
+                                            enabledToggleTitle="Disabled custom headers are kept but not sent."
+                                        />
+                                    </div>
+
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            gap: 8,
+                                            flexWrap: "wrap",
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                fontSize: 12,
+                                                color: "var(--pg-text)",
+                                                fontWeight: 600,
+                                            }}
+                                        >
+                                            Auto-generated headers
+                                        </div>
+                                        <button
+                                            onClick={() =>
+                                                setShowGeneratedHeaders((previous) => !previous)
+                                            }
+                                        >
+                                            {showGeneratedHeaders
+                                                ? "Hide auto-generated headers"
+                                                : "Show auto-generated headers"}
+                                        </button>
+                                    </div>
+
+                                    {showGeneratedHeaders && (
+                                        <div
+                                            style={{
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 8,
+                                                padding: "10px 12px",
+                                                display: "grid",
+                                                gap: 6,
+                                            }}
+                                        >
+                                            {generatedHeaderRows.map((row) => (
+                                                <label
+                                                    key={row.key}
+                                                    style={{
+                                                        display: "grid",
+                                                        gridTemplateColumns: "24px minmax(140px, 210px) minmax(0, 1fr)",
+                                                        gap: 8,
+                                                        alignItems: "center",
+                                                        opacity: row.enabled ? 1 : 0.7,
+                                                    }}
+                                                    title={!row.enabled ? GENERATED_HEADER_DISABLE_WARNING : row.note}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={row.enabled}
+                                                        onChange={(event) =>
+                                                            setGeneratedHeaderEnabled(
+                                                                row.key,
+                                                                event.target.checked
+                                                            )
+                                                        }
+                                                        title={GENERATED_HEADER_DISABLE_WARNING}
+                                                    />
+                                                    <span
+                                                        style={{
+                                                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                                            fontSize: 12,
+                                                            color: "var(--pg-text-muted)",
+                                                        }}
+                                                    >
+                                                        {row.label}
+                                                    </span>
+                                                    <span
+                                                        style={{
+                                                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                                            fontSize: 12,
+                                                            color: "var(--pg-text)",
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                            whiteSpace: "nowrap",
+                                                        }}
+                                                        title={`${row.value}\n${row.note}`}
+                                                    >
+                                                        {row.value}
+                                                    </span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    <div style={{ fontSize: 11, color: "var(--pg-text-muted)" }}>
+                                        {GENERATED_HEADER_DISABLE_WARNING}
+                                    </div>
+                                </div>
                             )}
 
                             {tab === "query" && (
@@ -5453,22 +5854,25 @@ export default function App() {
                             )}
 
                             {tab === "body" && (
-                                <RequestBodyEditor
-                                    draft={draft}
-                                    selectedRequestId={selectedRequestId}
-                                    beforeMountMonaco={beforeMountMonaco}
-                                    editorOptions={editorOptions}
-                                    editorTheme={editorTheme}
-                                    onPatchDraft={updateDraft}
-                                    onSetFullDraft={setFullDraft}
-                                    onMountBodyJsonEditor={bindBodyJsonEditor}
-                                    onMountBodyRawEditor={bindBodyRawEditor}
-                                    resolveVariableStatus={resolveVariableStatus}
-                                    resolveVariableValue={resolveVariableValue}
-                                    variableSuggestions={variableSuggestions}
-                                    editorPanelStyle={editorPanelStyle}
-                                    onSubmitShortcut={triggerSendFromUi}
-                                />
+                                <div style={{ minHeight: 0, flex: 1, display: "flex", flexDirection: "column" }}>
+                                    <RequestBodyEditor
+                                        draft={draft}
+                                        selectedRequestId={selectedRequestId}
+                                        beforeMountMonaco={beforeMountMonaco}
+                                        editorOptions={editorOptions}
+                                        editorTheme={editorTheme}
+                                        onPatchDraft={updateDraft}
+                                        onSetFullDraft={setFullDraft}
+                                        onMountBodyJsonEditor={bindBodyJsonEditor}
+                                        onMountBodyRawEditor={bindBodyRawEditor}
+                                        resolveVariableStatus={resolveVariableStatus}
+                                        resolveVariableValue={resolveVariableValue}
+                                        variableSuggestions={variableSuggestions}
+                                        editorPanelStyle={editorPanelStyle}
+                                        onSubmitShortcut={triggerSendFromUi}
+                                        fillHeight
+                                    />
+                                </div>
                             )}
 
                             {tab === "auth" &&
@@ -5643,23 +6047,310 @@ export default function App() {
                                     );
                                 })()}
 
+                            {tab === "tls" &&
+                                (() => {
+                                    const tls = requestTlsOrDefault(draft);
+                                    return (
+                                        <div
+                                            style={{
+                                                marginTop: 12,
+                                                display: "grid",
+                                                gap: 12,
+                                            }}
+                                        >
+                                            <label
+                                                style={{
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: 8,
+                                                    fontSize: 13,
+                                                    color: "var(--pg-text)",
+                                                }}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={tls.allow_invalid_certificates === true}
+                                                    onChange={(event) =>
+                                                        updateDraft({
+                                                            tls: {
+                                                                ...tls,
+                                                                allow_invalid_certificates: event.target.checked,
+                                                            },
+                                                        })
+                                                    }
+                                                />
+                                                Allow invalid certificates (development only)
+                                            </label>
+                                            <div style={{ display: "grid", gap: 6 }}>
+                                                <span
+                                                    style={{
+                                                        fontSize: 12,
+                                                        color: "var(--pg-text-muted)",
+                                                        fontWeight: 600,
+                                                    }}
+                                                >
+                                                    Custom CA certificate path (PEM or DER)
+                                                </span>
+                                                <VariableInput
+                                                    value={tls.ca_certificate_path}
+                                                    onChange={(value) =>
+                                                        updateDraft({
+                                                            tls: {
+                                                                ...tls,
+                                                                ca_certificate_path: value,
+                                                            },
+                                                        })
+                                                    }
+                                                    placeholder="/path/to/ca-bundle.pem"
+                                                    resolveVariableStatus={resolveVariableStatus}
+                                                    resolveVariableValue={resolveVariableValue}
+                                                    variableSuggestions={variableSuggestions}
+                                                />
+                                            </div>
+                                            <div style={{ display: "grid", gap: 6 }}>
+                                                <span
+                                                    style={{
+                                                        fontSize: 12,
+                                                        color: "var(--pg-text-muted)",
+                                                        fontWeight: 600,
+                                                    }}
+                                                >
+                                                    Client certificate path (PEM with private key)
+                                                </span>
+                                                <VariableInput
+                                                    value={tls.client_certificate_path}
+                                                    onChange={(value) =>
+                                                        updateDraft({
+                                                            tls: {
+                                                                ...tls,
+                                                                client_certificate_path: value,
+                                                            },
+                                                        })
+                                                    }
+                                                    placeholder="/path/to/client-identity.pem"
+                                                    resolveVariableStatus={resolveVariableStatus}
+                                                    resolveVariableValue={resolveVariableValue}
+                                                    variableSuggestions={variableSuggestions}
+                                                />
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+
                             {tab === "scripts" && (
-                                <RequestScriptsEditor
-                                    scripts={requestScriptsOrDefault(draft)}
-                                    selectedRequestId={selectedRequestId}
-                                    beforeMountMonaco={beforeMountMonaco}
-                                    editorOptions={editorOptions}
-                                    editorTheme={editorTheme}
-                                    editorPanelStyle={editorPanelStyle}
-                                    onChange={(next) => updateDraft({ scripts: next })}
-                                    onSubmitShortcut={triggerSendFromUi}
-                                    revealLocation={scriptRevealLocation}
-                                />
+                                <div style={{ minHeight: 0, flex: 1, display: "flex", flexDirection: "column" }}>
+                                    <RequestScriptsEditor
+                                        scripts={requestScriptsOrDefault(draft)}
+                                        selectedRequestId={selectedRequestId}
+                                        beforeMountMonaco={beforeMountMonaco}
+                                        editorOptions={editorOptions}
+                                        editorTheme={editorTheme}
+                                        editorPanelStyle={editorPanelStyle}
+                                        onChange={(next) => updateDraft({ scripts: next })}
+                                        onSubmitShortcut={triggerSendFromUi}
+                                        revealLocation={scriptRevealLocation}
+                                        fillHeight
+                                    />
+                                </div>
+                            )}
+
+                            {tab === "debug" && requestDebugInfo && (
+                                <div
+                                    style={{
+                                        display: "grid",
+                                        gap: 10,
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            gap: 8,
+                                            flexWrap: "wrap",
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                fontSize: 12,
+                                                color: "var(--pg-text-muted)",
+                                                fontWeight: 600,
+                                            }}
+                                        >
+                                            Request debug
+                                        </div>
+                                        <div style={{ display: "flex", gap: 8 }}>
+                                            <button
+                                                onClick={() => void copyRequestDebugInfo()}
+                                                disabled={!requestDebugText}
+                                                style={buttonStyle(!requestDebugText)}
+                                            >
+                                                Copy debug info
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div
+                                        style={{
+                                            border: "1px solid var(--pg-border)",
+                                            borderRadius: 8,
+                                            padding: "10px 12px",
+                                            display: "grid",
+                                            gap: 10,
+                                        }}
+                                    >
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Method</div>
+                                        <div
+                                            style={{
+                                                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                                fontSize: 12,
+                                            }}
+                                        >
+                                            {requestDebugInfo.method}
+                                        </div>
+                                    </div>
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Final URL</div>
+                                        <div
+                                            style={{
+                                                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                                fontSize: 12,
+                                                whiteSpace: "normal",
+                                                overflowWrap: "anywhere",
+                                                wordBreak: "break-word",
+                                            }}
+                                            title={requestDebugInfo.resolvedUrl}
+                                        >
+                                            {requestDebugInfo.resolvedUrl}
+                                        </div>
+                                    </div>
+                                    {requestDebugInfo.unresolvedVariables.length > 0 && (
+                                        <div style={{ display: "grid", gap: 4 }}>
+                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                                Unresolved variables
+                                            </div>
+                                            <div
+                                                style={{
+                                                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                                    fontSize: 12,
+                                                }}
+                                            >
+                                                {requestDebugInfo.unresolvedVariables.join(", ")}
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Enabled headers</div>
+                                        <pre
+                                            style={{
+                                                margin: 0,
+                                                padding: 8,
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 6,
+                                                background: "var(--pg-surface-alt)",
+                                                color: "var(--pg-text)",
+                                                fontSize: 12,
+                                                whiteSpace: "pre-wrap",
+                                                overflowX: "auto",
+                                                maxWidth: "100%",
+                                                overflowWrap: "anywhere",
+                                            }}
+                                        >
+                                            {requestDebugInfo.enabledHeaders.length > 0
+                                                ? requestDebugInfo.enabledHeaders
+                                                      .map((entry) => `${entry.key}: ${entry.value}`)
+                                                      .join("\n")
+                                                : "(none)"}
+                                        </pre>
+                                    </div>
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Disabled headers</div>
+                                        <pre
+                                            style={{
+                                                margin: 0,
+                                                padding: 8,
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 6,
+                                                background: "var(--pg-surface-alt)",
+                                                color: "var(--pg-text)",
+                                                fontSize: 12,
+                                                whiteSpace: "pre-wrap",
+                                                overflowX: "auto",
+                                                maxWidth: "100%",
+                                                overflowWrap: "anywhere",
+                                            }}
+                                        >
+                                            {requestDebugInfo.disabledHeaders.length > 0
+                                                ? requestDebugInfo.disabledHeaders.join("\n")
+                                                : "(none)"}
+                                        </pre>
+                                    </div>
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Body</div>
+                                        <div
+                                            style={{
+                                                fontSize: 12,
+                                                color: "var(--pg-text-muted)",
+                                            }}
+                                        >
+                                            Type: {requestDebugInfo.bodyType} · Content-Type:{" "}
+                                            {requestDebugInfo.contentTypeMode} · Content-Length:{" "}
+                                            {requestDebugInfo.contentLengthMode}
+                                        </div>
+                                        <pre
+                                            style={{
+                                                margin: 0,
+                                                padding: 8,
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 6,
+                                                background: "var(--pg-surface-alt)",
+                                                color: "var(--pg-text)",
+                                                fontSize: 12,
+                                                whiteSpace: "pre-wrap",
+                                                maxHeight: 220,
+                                                overflowX: "auto",
+                                                overflowY: "auto",
+                                                maxWidth: "100%",
+                                                overflowWrap: "anywhere",
+                                            }}
+                                        >
+                                            {requestDebugInfo.bodyPreview}
+                                        </pre>
+                                    </div>
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Transport</div>
+                                        <pre
+                                            style={{
+                                                margin: 0,
+                                                padding: 8,
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 6,
+                                                background: "var(--pg-surface-alt)",
+                                                color: "var(--pg-text)",
+                                                fontSize: 12,
+                                                whiteSpace: "pre-wrap",
+                                                overflowX: "auto",
+                                                maxWidth: "100%",
+                                                overflowWrap: "anywhere",
+                                            }}
+                                        >
+                                            {[
+                                                `TLS validation: ${requestDebugInfo.transport.tlsValidation}`,
+                                                `Custom CA certificate: ${requestDebugInfo.transport.customCaCertificate}`,
+                                                `Client certificate: ${requestDebugInfo.transport.clientCertificate}`,
+                                                `Redirects: ${requestDebugInfo.transport.redirects}`,
+                                                `Timeout: ${requestDebugInfo.transport.timeoutMs}ms`,
+                                            ].join("\n")}
+                                        </pre>
+                                    </div>
+                                    </div>
+                                </div>
                             )}
 
                             {tab === "json" && (
                                 <>
-                                    <div style={editorPanelStyle("52vh", 360)}>
+                                    <div style={editorPanelStyle("min(40vh, 360px)", 220)}>
                                         <Editor
                                             key={`request-json-${selectedRequestId ?? "none"}`}
                                             height="100%"
@@ -5686,17 +6377,118 @@ export default function App() {
                                 </>
                             )}
 
-                            <ResponsePanel
-                                response={resp}
-                                statusText={selectedResponseStatusText}
-                                scriptReport={selectedScriptReport}
-                                runtimeVariables={executionRuntimeActive ? executionRuntimeVariables : {}}
-                                onClearRuntimeVariables={() => setExecutionRuntimeVariables({})}
-                                onRevealScriptTestLocation={revealScriptTestLocation}
-                                activeTab={responseTab}
-                                onTabChange={setResponseTab}
+                            </div>
+                                </div>
+
+                            <div
+                                role="separator"
+                                aria-orientation="horizontal"
+                                aria-label="Resize request and response panels"
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={responsePanelSizePercent}
+                                tabIndex={0}
+                                onMouseDown={onDividerMouseDown}
+                                onKeyDown={onDividerKeyDown}
+                                className="no-select"
+                                style={{
+                                    cursor: "row-resize",
+                                    background: isResponsePanelDragging
+                                        ? "var(--pg-primary)"
+                                        : "var(--pg-border)",
+                                    borderRadius: 999,
+                                    margin: "2px 0",
+                                    height: responsePanelDividerHeightPx,
+                                    userSelect: "none",
+                                }}
                             />
-                        </>
+
+                            <div
+                                style={{
+                                    minHeight: 0,
+                                    overflow: "hidden",
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    border: "1px solid var(--pg-border)",
+                                    borderRadius: 10,
+                                    background: "var(--pg-surface-0)",
+                                }}
+                            >
+                                <div
+                                    className="no-select"
+                                    style={responsePanelHeaderStyle()}
+                                >
+                                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
+                                        <span style={{ fontWeight: 700, fontSize: 13, color: "var(--pg-text)" }}>
+                                            Response
+                                        </span>
+                                        <div style={responsePanelTabsStyle()}>
+                                            <button
+                                                onClick={() => setResponseTab("body")}
+                                                style={editorTabStyle(responseTab === "body")}
+                                            >
+                                                Body
+                                            </button>
+                                            <button
+                                                onClick={() => setResponseTab("cookies")}
+                                                style={editorTabStyle(responseTab === "cookies")}
+                                            >
+                                                Cookies
+                                            </button>
+                                            <button
+                                                onClick={() => setResponseTab("headers")}
+                                                style={editorTabStyle(responseTab === "headers")}
+                                            >
+                                                Headers
+                                            </button>
+                                            <button
+                                                onClick={() => setResponseTab("runtime")}
+                                                style={editorTabStyle(responseTab === "runtime")}
+                                            >
+                                                Runtime
+                                            </button>
+                                            <button
+                                                onClick={() => setResponseTab("tests")}
+                                                style={editorTabStyle(responseTab === "tests")}
+                                            >
+                                                Tests
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <span
+                                        style={responsePanelSummaryTextStyle()}
+                                        title={selectedResponseHeaderSummaryText}
+                                    >
+                                        {selectedResponseHeaderSummaryText}
+                                    </span>
+                                </div>
+                                <div
+                                    style={{
+                                        minHeight: 0,
+                                        flex: 1,
+                                        overflow: "auto",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        padding: 8,
+                                        paddingTop: 6,
+                                    }}
+                                >
+                                    <ResponsePanel
+                                        response={resp}
+                                        statusText={selectedResponseStatusText}
+                                        scriptReport={selectedScriptReport}
+                                        runtimeVariables={executionRuntimeActive ? executionRuntimeVariables : {}}
+                                        onClearRuntimeVariables={() => setExecutionRuntimeVariables({})}
+                                        onRevealScriptTestLocation={revealScriptTestLocation}
+                                        activeTab={responseTab}
+                                        onTabChange={setResponseTab}
+                                        showHeader={false}
+                                        showTabs={false}
+                                    />
+                                </div>
+                            </div>
+                            </div>
+                        </div>
                     )}
 
                     {current && !draft && (
@@ -6898,10 +7690,89 @@ export default function App() {
     );
 }
 
+function requestShellStyle(): React.CSSProperties {
+    return {
+        display: "block",
+        width: "100%",
+        minWidth: 0,
+        padding: "0 2px",
+        flexShrink: 0,
+    };
+}
+
+function requestPanelHeaderStyle(): React.CSSProperties {
+    return {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        gap: 10,
+        padding: "8px 10px",
+        borderBottom: "1px solid var(--pg-border)",
+        minHeight: 40,
+        boxSizing: "border-box",
+        flexShrink: 0,
+        flexWrap: "nowrap",
+        minWidth: 0,
+    };
+}
+
+function requestPanelTabsStyle(): React.CSSProperties {
+    return {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "nowrap",
+        minWidth: 0,
+        overflowX: "auto",
+        overflowY: "hidden",
+    };
+}
+
+function responsePanelHeaderStyle(): React.CSSProperties {
+    return {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+        padding: "8px 10px",
+        borderBottom: "1px solid var(--pg-border)",
+        minHeight: 40,
+        boxSizing: "border-box",
+        flexShrink: 0,
+        flexWrap: "nowrap",
+        minWidth: 0,
+    };
+}
+
+function responsePanelTabsStyle(): React.CSSProperties {
+    return {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "nowrap",
+        minWidth: 0,
+        overflowX: "auto",
+        overflowY: "hidden",
+    };
+}
+
+function responsePanelSummaryTextStyle(): React.CSSProperties {
+    return {
+        fontSize: 12,
+        color: "var(--pg-text-dim)",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        maxWidth: "46%",
+        textAlign: "right",
+        minWidth: 0,
+    };
+}
+
 function requestListItemStyle(active: boolean, hasLocalDraft: boolean): React.CSSProperties {
     return {
         ...buttonStyle(false),
-        height: 30,
+        height: 28,
         padding: "0 10px",
         borderColor: active
             ? "var(--pg-primary)"
@@ -6969,7 +7840,7 @@ function dropInsideOutlineStyle(): React.CSSProperties {
 function editorTabStyle(active: boolean): React.CSSProperties {
     return {
         ...buttonStyle(false),
-        height: 28,
+        height: 26,
         padding: "0 9px",
         fontSize: 12,
         borderColor: active ? "var(--pg-primary)" : "var(--pg-border)",
@@ -6982,7 +7853,7 @@ function draftTabContainerStyle(active: boolean): React.CSSProperties {
     return {
         display: "flex",
         alignItems: "center",
-        borderRadius: 9,
+        borderRadius: 7,
         overflow: "hidden",
         border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
         background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
@@ -6996,7 +7867,7 @@ function draftTabButtonStyle(active: boolean): React.CSSProperties {
         border: "none",
         background: "transparent",
         color: active ? "var(--pg-primary-ink)" : "var(--pg-text-dim)",
-        padding: "6px 10px",
+        padding: "5px 9px",
         fontWeight: 600,
         fontSize: 12,
         lineHeight: 1.2,
@@ -7012,8 +7883,8 @@ function draftTabButtonStyle(active: boolean): React.CSSProperties {
 
 function draftTabCloseButtonStyle(): React.CSSProperties {
     return {
-        width: 28,
-        height: 28,
+        width: 26,
+        height: 26,
         border: "none",
         borderLeft: "1px solid rgba(var(--pg-primary-rgb), 0.3)",
         background: "transparent",
@@ -7031,7 +7902,7 @@ function openTabDropWrapStyle(dropBefore: boolean, dropAfter: boolean): React.CS
         position: "relative",
         display: "flex",
         alignItems: "stretch",
-        borderRadius: 10,
+        borderRadius: 8,
         paddingLeft: 1,
         paddingRight: 1,
         background: dropBefore || dropAfter ? "rgba(var(--pg-primary-rgb), 0.08)" : "transparent",

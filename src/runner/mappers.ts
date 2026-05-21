@@ -6,6 +6,7 @@ const MAX_RESPONSE_BODY_CHARS = 24_000;
 export type ParsedRunnerHttpError = {
     code: string;
     message: string;
+    detail: string | null;
     durationMs: number | null;
 };
 
@@ -13,12 +14,14 @@ export function parseRunnerHttpError(error: unknown): ParsedRunnerHttpError {
     const source = error as {
         kind?: unknown;
         message?: unknown;
+        detail?: unknown;
         duration_ms?: unknown;
     };
 
     return {
         code: typeof source?.kind === "string" ? source.kind : "unknown",
         message: typeof source?.message === "string" ? source.message : String(error),
+        detail: typeof source?.detail === "string" ? source.detail : null,
         durationMs: typeof source?.duration_ms === "number" ? source.duration_ms : null,
     };
 }

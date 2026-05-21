@@ -2,53 +2,53 @@ import type { CSSProperties } from "react";
 
 export function buttonStyle(disabled: boolean): CSSProperties {
     return {
-        height: 30,
+        height: 28,
         padding: "0 10px",
-        borderRadius: 9,
+        borderRadius: 7,
         border: "1px solid var(--pg-border)",
-        background: disabled ? "var(--pg-surface-2)" : "var(--pg-surface-gradient)",
+        background: disabled ? "var(--pg-surface-1)" : "var(--pg-surface-gradient)",
         color: disabled ? "var(--pg-disabled)" : "var(--pg-text)",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
         fontSize: 12,
-        boxShadow: disabled ? "none" : "0 6px 14px var(--pg-shadow-color)",
+        boxShadow: disabled ? "none" : "0 2px 8px var(--pg-shadow-color)",
     };
 }
 
 export function primaryButtonStyle(disabled: boolean): CSSProperties {
     return {
-        height: 30,
-        padding: "0 12px",
-        borderRadius: 9,
+        height: 28,
+        padding: "0 11px",
+        borderRadius: 7,
         border: "1px solid var(--pg-primary-strong)",
-        background: disabled ? "rgba(var(--pg-primary-rgb), 0.45)" : "var(--pg-primary)",
+        background: disabled ? "rgba(var(--pg-primary-rgb), 0.35)" : "var(--pg-primary)",
         color: "var(--pg-primary-ink)",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 700,
         fontSize: 12,
-        boxShadow: disabled ? "none" : "0 8px 18px rgba(var(--pg-primary-rgb), 0.3)",
+        boxShadow: disabled ? "none" : "0 4px 12px rgba(var(--pg-primary-rgb), 0.24)",
     };
 }
 
 export function dangerButtonStyle(disabled: boolean): CSSProperties {
     return {
-        height: 30,
-        padding: "0 12px",
-        borderRadius: 9,
+        height: 28,
+        padding: "0 11px",
+        borderRadius: 7,
         border: "1px solid var(--pg-danger)",
         background: disabled ? "var(--pg-danger-dark)" : "var(--pg-danger)",
         color: "var(--pg-text)",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
         fontSize: 12,
-        boxShadow: disabled ? "none" : "0 8px 18px rgba(220, 38, 38, 0.22)",
+        boxShadow: disabled ? "none" : "0 4px 12px rgba(220, 38, 38, 0.2)",
     };
 }
 
 export function selectStyle(): CSSProperties {
     return {
-        height: 30,
-        borderRadius: 9,
+        height: 28,
+        borderRadius: 7,
         border: "1px solid var(--pg-border)",
         background: "var(--pg-surface-0)",
         color: "var(--pg-text)",
@@ -59,9 +59,9 @@ export function selectStyle(): CSSProperties {
 
 export function topbarSelectStyle(): CSSProperties {
     return {
-        height: 30,
+        height: 28,
         minWidth: 170,
-        borderRadius: 9,
+        borderRadius: 7,
         border: "1px solid var(--pg-border)",
         background: "var(--pg-surface-0)",
         color: "var(--pg-text)",
@@ -73,8 +73,8 @@ export function topbarSelectStyle(): CSSProperties {
 
 export function modalInputStyle(): CSSProperties {
     return {
-        height: 36,
-        borderRadius: 10,
+        height: 34,
+        borderRadius: 8,
         border: "1px solid var(--pg-border)",
         background: "var(--pg-surface-0)",
         color: "var(--pg-text)",
@@ -88,9 +88,9 @@ export function windowButtonStyle(
     borderColor = "var(--pg-border)"
 ): CSSProperties {
     return {
-        width: 30,
-        height: 28,
-        borderRadius: 7,
+        width: 28,
+        height: 26,
+        borderRadius: 6,
         border: `1px solid ${borderColor}`,
         background: "var(--pg-surface-gradient)",
         color,
@@ -98,7 +98,7 @@ export function windowButtonStyle(
         lineHeight: 1,
         padding: 0,
         fontSize: 12,
-        boxShadow: "0 6px 14px var(--pg-shadow-color)",
+        boxShadow: "0 2px 8px var(--pg-shadow-color)",
     };
 }
 

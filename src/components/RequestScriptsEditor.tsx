@@ -20,6 +20,7 @@ type RequestScriptsEditorProps = {
     onChange: (next: RequestScripts) => void;
     onSubmitShortcut: () => void;
     revealLocation?: ScriptRevealLocation | null;
+    fillHeight?: boolean;
 };
 
 export default function RequestScriptsEditor({
@@ -32,6 +33,7 @@ export default function RequestScriptsEditor({
     onChange,
     onSubmitShortcut,
     revealLocation,
+    fillHeight = false,
 }: RequestScriptsEditorProps) {
     const [activePanel, setActivePanel] = useState<"pre" | "post">("pre");
     const showingPre = activePanel === "pre";
@@ -67,7 +69,16 @@ export default function RequestScriptsEditor({
     }, [activePanel, revealLocation]);
 
     return (
-        <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
+        <div
+            style={{
+                display: "grid",
+                gap: 12,
+                marginTop: 12,
+                minHeight: fillHeight ? 0 : undefined,
+                height: fillHeight ? "100%" : undefined,
+                gridTemplateRows: fillHeight ? "auto auto minmax(0, 1fr)" : undefined,
+            }}
+        >
             <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
                 Available APIs: <code>bf.runtime.get/set/unset/clear</code>, <code>bf.env.get/set/unset</code>,{" "}
                 <code>bf.request</code>, <code>bf.response</code>, <code>bf.test(name, fn)</code>,{" "}
@@ -77,7 +88,7 @@ export default function RequestScriptsEditor({
                 <code>bf.environment</code>, <code>bf.collectionVariables</code>, and <code>bf.globals</code> are
                 still supported for backward compatibility.
             </div>
-            <div style={{ display: "flex", gap: 12, minHeight: 0 }}>
+            <div style={{ display: "flex", gap: 12, minHeight: 0, height: fillHeight ? "100%" : undefined }}>
                 <div
                     style={{
                         marginTop: 25,
@@ -111,11 +122,20 @@ bf.env.set("lastAccessToken", response?.token ?? "");`}
                     </div>
                 </div>
 
-                <div style={{ display: "grid", gap: 6, flex: 1, minWidth: 0 }}>
+                <div
+                    style={{
+                        display: "grid",
+                        gap: 6,
+                        flex: 1,
+                        minWidth: 0,
+                        minHeight: 0,
+                        gridTemplateRows: fillHeight ? "auto minmax(0, 1fr)" : undefined,
+                    }}
+                >
                     <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 600 }}>
                         {showingPre ? "Pre-request script" : "Post-response script"}
                     </span>
-                    <div style={editorPanelStyle("24vh", 160)}>
+                    <div style={editorPanelStyle(fillHeight ? "100%" : "min(26vh, 280px)", 160)}>
                         <Editor
                             key={`script-${showingPre ? "pre" : "post"}-${selectedRequestId ?? "none"}`}
                             height="100%"

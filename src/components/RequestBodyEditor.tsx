@@ -22,6 +22,7 @@ type RequestBodyEditorProps = {
     variableSuggestions: string[];
     editorPanelStyle: (height: number | string, minHeight?: number) => React.CSSProperties;
     onSubmitShortcut: () => void;
+    fillHeight?: boolean;
 };
 
 function languageFromContentType(contentType: string): string {
@@ -154,6 +155,7 @@ export default function RequestBodyEditor({
     variableSuggestions,
     editorPanelStyle,
     onSubmitShortcut,
+    fillHeight = false,
 }: RequestBodyEditorProps) {
     const submitShortcutRef = useRef(onSubmitShortcut);
     const textDraftByRequestIdRef = useRef<Record<string, string>>({});
@@ -257,8 +259,18 @@ export default function RequestBodyEditor({
         onPatchDraft({ body: nextBody });
     }
 
+    const rootStyle: React.CSSProperties = fillHeight
+        ? {
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+            height: "100%",
+            gap: 8,
+        }
+        : {};
+
     return (
-        <>
+        <div style={rootStyle}>
             <AppSelect
                 value={draft.body.type}
                 options={BODY_TYPE_OPTIONS}
@@ -280,46 +292,48 @@ export default function RequestBodyEditor({
             {draft.body.type === "json" && (() => {
                 const jsonBody = draft.body;
                 return (
-                    <div style={editorPanelStyle("34vh", 280)}>
-                        <Editor
-                            key={`body-json-${selectedRequestId ?? "none"}`}
-                            height="100%"
-                            language="json"
-                            path={`/bifrost-body/${selectedRequestId ?? "none"}.json`}
-                            theme={editorTheme}
-                            beforeMount={beforeMountMonaco}
-                            onMount={(editor, monaco) => {
-                                onMountBodyJsonEditor(editor);
-                                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-                                    submitShortcutRef.current();
-                                });
-                            }}
-                            defaultValue={
-                                jsonBody.text && jsonBody.text.trim().length > 0
-                                    ? jsonBody.text
-                                    : JSON.stringify(jsonBody.value ?? {}, null, 2)
-                            }
-                            onChange={(value) => {
-                                const nextText = value ?? "";
-                                try {
-                                    const parsed = parseJsonc(nextText);
-                                    onSetFullDraft({
-                                        ...draft,
-                                        body: { type: "json", value: parsed, text: nextText },
+                    <div style={fillHeight ? { minHeight: 0, flex: 1 } : undefined}>
+                        <div style={editorPanelStyle(fillHeight ? "100%" : "min(34vh, 320px)", fillHeight ? 160 : 180)}>
+                            <Editor
+                                key={`body-json-${selectedRequestId ?? "none"}`}
+                                height="100%"
+                                language="json"
+                                path={`/bifrost-body/${selectedRequestId ?? "none"}.json`}
+                                theme={editorTheme}
+                                beforeMount={beforeMountMonaco}
+                                onMount={(editor, monaco) => {
+                                    onMountBodyJsonEditor(editor);
+                                    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+                                        submitShortcutRef.current();
                                     });
-                                } catch {
-                                    onSetFullDraft({
-                                        ...draft,
-                                        body: {
-                                            type: "json",
-                                            value: jsonBody.value ?? {},
-                                            text: nextText,
-                                        },
-                                    });
+                                }}
+                                defaultValue={
+                                    jsonBody.text && jsonBody.text.trim().length > 0
+                                        ? jsonBody.text
+                                        : JSON.stringify(jsonBody.value ?? {}, null, 2)
                                 }
-                            }}
-                            options={editorOptions}
-                        />
+                                onChange={(value) => {
+                                    const nextText = value ?? "";
+                                    try {
+                                        const parsed = parseJsonc(nextText);
+                                        onSetFullDraft({
+                                            ...draft,
+                                            body: { type: "json", value: parsed, text: nextText },
+                                        });
+                                    } catch {
+                                        onSetFullDraft({
+                                            ...draft,
+                                            body: {
+                                                type: "json",
+                                                value: jsonBody.value ?? {},
+                                                text: nextText,
+                                            },
+                                        });
+                                    }
+                                }}
+                                options={editorOptions}
+                            />
+                        </div>
                     </div>
                 );
             })()}
@@ -327,7 +341,15 @@ export default function RequestBodyEditor({
             {draft.body.type === "raw" && (() => {
                 const rawBody = draft.body;
                 return (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div
+                        style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 8,
+                            minHeight: fillHeight ? 0 : undefined,
+                            flex: fillHeight ? 1 : undefined,
+                        }}
+                    >
                         <VariableInput
                             placeholder="Content-Type"
                             value={rawBody.content_type}
@@ -345,33 +367,35 @@ export default function RequestBodyEditor({
                             resolveVariableValue={resolveVariableValue}
                             variableSuggestions={variableSuggestions}
                         />
-                        <div style={editorPanelStyle("34vh", 280)}>
-                            <Editor
-                                key={`body-raw-${selectedRequestId ?? "none"}`}
-                                height="100%"
-                                language={languageFromContentType(rawBody.content_type)}
-                                path={`/bifrost-body/${selectedRequestId ?? "none"}.raw`}
-                                theme={editorTheme}
-                                beforeMount={beforeMountMonaco}
-                                onMount={(editor, monaco) => {
-                                    onMountBodyRawEditor(editor);
-                                    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-                                        submitShortcutRef.current();
-                                    });
-                                }}
-                                defaultValue={rawBody.text}
-                                onChange={(value) =>
-                                    onSetFullDraft({
-                                        ...draft,
-                                        body: {
-                                            type: "raw",
-                                            content_type: rawBody.content_type,
-                                            text: value ?? "",
-                                        },
-                                    })
-                                }
-                                options={editorOptions}
-                            />
+                        <div style={fillHeight ? { minHeight: 0, flex: 1 } : undefined}>
+                            <div style={editorPanelStyle(fillHeight ? "100%" : "min(34vh, 320px)", fillHeight ? 160 : 180)}>
+                                <Editor
+                                    key={`body-raw-${selectedRequestId ?? "none"}`}
+                                    height="100%"
+                                    language={languageFromContentType(rawBody.content_type)}
+                                    path={`/bifrost-body/${selectedRequestId ?? "none"}.raw`}
+                                    theme={editorTheme}
+                                    beforeMount={beforeMountMonaco}
+                                    onMount={(editor, monaco) => {
+                                        onMountBodyRawEditor(editor);
+                                        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+                                            submitShortcutRef.current();
+                                        });
+                                    }}
+                                    defaultValue={rawBody.text}
+                                    onChange={(value) =>
+                                        onSetFullDraft({
+                                            ...draft,
+                                            body: {
+                                                type: "raw",
+                                                content_type: rawBody.content_type,
+                                                text: value ?? "",
+                                            },
+                                        })
+                                    }
+                                    options={editorOptions}
+                                />
+                            </div>
                         </div>
                     </div>
                 );
@@ -406,6 +430,6 @@ export default function RequestBodyEditor({
                     variableSuggestions={variableSuggestions}
                 />
             )}
-        </>
+        </div>
     );
 }

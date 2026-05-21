@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct KeyValue {
     pub key: String,
     pub value: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 fn default_true() -> bool {
@@ -120,6 +122,23 @@ pub struct RequestScripts {
     pub post_response: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct RequestTls {
+    #[serde(default)]
+    pub allow_invalid_certificates: bool,
+    #[serde(default)]
+    pub ca_certificate_path: String,
+    #[serde(default)]
+    pub client_certificate_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GeneratedHeaderControl {
+    pub key: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Request {
     pub id: String,
@@ -127,10 +146,14 @@ pub struct Request {
     pub method: HttpMethod,
     pub url: String,
     pub headers: Vec<KeyValue>,
+    #[serde(default)]
+    pub generated_headers: Vec<GeneratedHeaderControl>,
     pub query: Vec<KeyValue>,
     pub body: Body,
     #[serde(default)]
     pub auth: Auth,
+    #[serde(default)]
+    pub tls: RequestTls,
     #[serde(default)]
     pub extractors: Vec<ResponseExtractorRule>,
     #[serde(default)]

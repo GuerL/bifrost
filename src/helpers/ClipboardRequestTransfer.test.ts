@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseBifrostClipboardPayload } from "./ClipboardRequestTransfer.ts";
+import {
+    parseBifrostClipboardPayload,
+    serializeRequestForClipboard,
+} from "./ClipboardRequestTransfer.ts";
 
 describe("parseBifrostClipboardPayload", () => {
     it("accepts multipart file metadata serialized as null", () => {
@@ -43,5 +46,31 @@ describe("parseBifrostClipboardPayload", () => {
         if (field.kind !== "file") return;
         expect(field.mime_type).toBeUndefined();
         expect(field.size).toBeUndefined();
+    });
+
+    it("preserves generated header controls when serializing", () => {
+        const serialized = serializeRequestForClipboard({
+            id: "req_1",
+            name: "Request",
+            method: "get",
+            url: "https://example.com",
+            headers: [],
+            generated_headers: [
+                { key: "host", enabled: false },
+                { key: "content-type", enabled: true },
+            ],
+            query: [],
+            body: { type: "none" },
+            auth: { type: "none" },
+            extractors: [],
+            scripts: { pre_request: "", post_response: "" },
+        });
+
+        const parsed = parseBifrostClipboardPayload(serialized);
+        expect(parsed).not.toBeNull();
+        expect(parsed?.request.generated_headers).toEqual([
+            { key: "host", enabled: false },
+            { key: "content-type", enabled: true },
+        ]);
     });
 });

@@ -372,9 +372,11 @@ fn map_request(
         method,
         url,
         headers,
+        generated_headers: vec![],
         query,
         body,
         auth,
+        tls: Default::default(),
         extractors: vec![],
         scripts: map_scripts(events),
     }
@@ -423,6 +425,7 @@ fn map_url(url: Option<&PostmanUrlUnionDto>) -> (String, Vec<KeyValue>) {
                     Some(KeyValue {
                         key,
                         value: json_value_to_string(entry.value.as_ref()),
+                        enabled: true,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -480,6 +483,7 @@ fn map_headers(headers: &[PostmanHeaderUnionDto]) -> Vec<KeyValue> {
                 Some(KeyValue {
                     key,
                     value: json_value_to_string(entry.value.as_ref()),
+                    enabled: true,
                 })
             }
             PostmanHeaderUnionDto::String(raw) => {
@@ -491,6 +495,7 @@ fn map_headers(headers: &[PostmanHeaderUnionDto]) -> Vec<KeyValue> {
                 Some(KeyValue {
                     key,
                     value: value.trim().to_string(),
+                    enabled: true,
                 })
             }
         })
@@ -574,6 +579,7 @@ fn map_body(
                 Some(KeyValue {
                     key,
                     value: json_value_to_string(entry.value.as_ref()),
+                    enabled: true,
                 })
             })
             .collect::<Vec<_>>();

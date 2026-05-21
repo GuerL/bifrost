@@ -1,7 +1,7 @@
 use crate::commands::environment::load_environment_values;
 use crate::commands::state::{RequestRegistry, RunningRequest};
 use crate::model::collection::{
-    Auth, AuthLocation, Body, HttpMethod, KeyValue, MultipartField, Request,
+    Auth, AuthLocation, Body, HttpMethod, KeyValue, MultipartField, Request, RequestTls,
 };
 use crate::model::http::{HttpErrorDto, HttpResponseDto};
 use rand::Rng;
@@ -33,41 +33,75 @@ fn err(
 }
 
 fn map_reqwest_error(e: reqwest::Error, duration_ms: Option<u128>) -> HttpErrorDto {
+    let msg = e.to_string();
+    let msg_lower = msg.to_lowercase();
+
+    if msg_lower.contains("invalid header")
+        || msg_lower.contains("header name")
+        || msg_lower.contains("header value")
+    {
+        return err(
+            "invalid_header",
+            "Invalid header name or value",
+            Some(msg),
+            duration_ms,
+        );
+    }
+
     // Url invalide / parsing
     if e.is_builder() {
+        if msg_lower.contains("url") {
+            return err("invalid_url", "Invalid URL", Some(msg), duration_ms);
+        }
         return err(
-            "invalid_url",
+            "invalid_request",
             "Invalid request (URL/headers/body)",
-            Some(e.to_string()),
+            Some(msg),
             duration_ms,
         );
     }
 
     // Timeout
     if e.is_timeout() {
-        return err(
-            "timeout",
-            "Request timed out",
-            Some(e.to_string()),
-            duration_ms,
-        );
+        return err("timeout", "Request timed out", Some(msg), duration_ms);
     }
 
     // TLS / certificate
     // (reqwest does not provide an "is_tls" helper, keep a soft heuristic)
-    let msg = e.to_string();
-    if msg.to_lowercase().contains("tls") || msg.to_lowercase().contains("certificate") {
-        return err("tls", "TLS / certificate error", Some(msg), duration_ms);
+    if msg_lower.contains("tls")
+        || msg_lower.contains("certificate")
+        || msg_lower.contains("unknownissuer")
+        || msg_lower.contains("x509")
+        || msg_lower.contains("ssl")
+    {
+        let explanation = if msg_lower.contains("unknownissuer")
+            || msg_lower.contains("unknown issuer")
+            || msg_lower.contains("self signed")
+            || msg_lower.contains("unable to get local issuer certificate")
+        {
+            "TLS certificate is not trusted. Add a custom CA certificate path in TLS settings, or allow invalid certificates for local testing."
+        } else if msg_lower.contains("expired") || msg_lower.contains("not yet valid") {
+            "TLS certificate is expired or not yet valid."
+        } else if msg_lower.contains("hostname")
+            || msg_lower.contains("dns name")
+            || msg_lower.contains("not valid for")
+        {
+            "TLS hostname verification failed. The certificate does not match the request host."
+        } else if msg_lower.contains("handshake") {
+            "TLS handshake failed. Check protocol/cipher compatibility and certificate settings."
+        } else {
+            "TLS handshake failed. Check certificate chain and TLS settings."
+        };
+
+        return err("tls", explanation, Some(msg), duration_ms);
     }
 
     // DNS (typically a domain typo)
     // (heuristic, but works well)
-    if msg.to_lowercase().contains("dns")
-        || msg.to_lowercase().contains("failed to lookup address")
-        || msg.to_lowercase().contains("name or service not known")
-        || msg
-            .to_lowercase()
-            .contains("nodename nor servname provided")
+    if msg_lower.contains("dns")
+        || msg_lower.contains("failed to lookup address")
+        || msg_lower.contains("name or service not known")
+        || msg_lower.contains("nodename nor servname provided")
     {
         return err(
             "dns",
@@ -79,20 +113,37 @@ fn map_reqwest_error(e: reqwest::Error, duration_ms: Option<u128>) -> HttpErrorD
 
     // Connect
     if e.is_connect() {
+        if msg_lower.contains("connection refused") {
+            return err(
+                "connect",
+                "Connection refused by remote host",
+                Some(msg),
+                duration_ms,
+            );
+        }
         return err(
             "connect",
             "Could not connect to server",
-            Some(e.to_string()),
+            Some(msg),
             duration_ms,
         );
     }
 
-    err(
-        "unknown",
-        "Request failed",
-        Some(e.to_string()),
-        duration_ms,
-    )
+    if msg_lower.contains("http/2")
+        || msg_lower.contains("frame")
+        || msg_lower.contains("unexpected eof")
+        || msg_lower.contains("connection reset")
+        || msg_lower.contains("broken pipe")
+    {
+        return err(
+            "protocol",
+            "HTTP protocol/connection error",
+            Some(msg),
+            duration_ms,
+        );
+    }
+
+    err("unknown", "Request failed", Some(msg), duration_ms)
 }
 
 fn replace_vars_in_text(
@@ -315,6 +366,19 @@ fn resolve_request_vars(
         },
     };
 
+    req.tls.ca_certificate_path = replace_vars_in_text(
+        &req.tls.ca_certificate_path,
+        vars,
+        &mut unresolved,
+        &mut dynamic_values,
+    );
+    req.tls.client_certificate_path = replace_vars_in_text(
+        &req.tls.client_certificate_path,
+        vars,
+        &mut unresolved,
+        &mut dynamic_values,
+    );
+
     let mut unresolved_vec: Vec<String> = unresolved.into_iter().collect();
     unresolved_vec.sort();
     (req, unresolved_vec)
@@ -326,25 +390,85 @@ fn upsert_header(headers: &mut Vec<KeyValue>, key: &str, value: String) {
         .find(|header| header.key.eq_ignore_ascii_case(key))
     {
         entry.value = value;
+        entry.enabled = true;
         return;
     }
 
     headers.push(KeyValue {
         key: key.to_string(),
         value,
+        enabled: true,
     });
 }
 
 fn upsert_query(query: &mut Vec<KeyValue>, key: &str, value: String) {
     if let Some(entry) = query.iter_mut().find(|param| param.key == key) {
         entry.value = value;
+        entry.enabled = true;
         return;
     }
 
     query.push(KeyValue {
         key: key.to_string(),
         value,
+        enabled: true,
     });
+}
+
+fn has_enabled_header(headers: &[KeyValue], key: &str) -> bool {
+    headers
+        .iter()
+        .any(|entry| entry.enabled && entry.key.trim().eq_ignore_ascii_case(key))
+}
+
+fn is_generated_header_key(key: &str) -> bool {
+    match key.trim().to_ascii_lowercase().as_str() {
+        "host" | "user-agent" | "accept" | "accept-encoding" | "connection" | "content-length"
+        | "content-type" | "cookie" => true,
+        _ => false,
+    }
+}
+
+fn is_generated_header_enabled(req: &Request, key: &str) -> bool {
+    if !is_generated_header_key(key) {
+        return true;
+    }
+
+    req.generated_headers
+        .iter()
+        .find(|entry| entry.key.trim().eq_ignore_ascii_case(key))
+        .map(|entry| entry.enabled)
+        .unwrap_or(true)
+}
+
+fn should_send_explicit_header(header: &KeyValue, body_is_multipart: bool) -> bool {
+    if !header.enabled {
+        return false;
+    }
+
+    let header_name = header.key.trim();
+    if header_name.is_empty() {
+        return false;
+    }
+
+    if body_is_multipart
+        && (header_name.eq_ignore_ascii_case("content-type")
+            || header_name.eq_ignore_ascii_case("content-length"))
+    {
+        return false;
+    }
+
+    true
+}
+
+fn should_auto_set_generated_content_type(req: &Request, content_type: &str) -> bool {
+    if content_type.trim().is_empty() {
+        return false;
+    }
+    if has_enabled_header(&req.headers, "content-type") {
+        return false;
+    }
+    is_generated_header_enabled(req, "content-type")
 }
 
 fn apply_auth_to_request(req: &mut Request) {
@@ -460,6 +584,83 @@ fn strip_json_comments(input: &str) -> String {
     out
 }
 
+fn load_custom_ca_certificates(path: &str) -> Result<Vec<reqwest::Certificate>, HttpErrorDto> {
+    let bytes = std::fs::read(path).map_err(|e| {
+        err(
+            "tls_config",
+            format!("Failed to read custom CA certificate file '{path}'"),
+            Some(e.to_string()),
+            None,
+        )
+    })?;
+
+    if let Ok(bundle) = reqwest::Certificate::from_pem_bundle(&bytes) {
+        if !bundle.is_empty() {
+            return Ok(bundle);
+        }
+    }
+
+    if let Ok(cert) = reqwest::Certificate::from_pem(&bytes) {
+        return Ok(vec![cert]);
+    }
+
+    if let Ok(cert) = reqwest::Certificate::from_der(&bytes) {
+        return Ok(vec![cert]);
+    }
+
+    Err(err(
+        "tls_config",
+        format!("Invalid CA certificate file '{path}'. Expected PEM or DER."),
+        None,
+        None,
+    ))
+}
+
+fn load_client_identity(path: &str) -> Result<reqwest::Identity, HttpErrorDto> {
+    let bytes = std::fs::read(path).map_err(|e| {
+        err(
+            "tls_config",
+            format!("Failed to read client certificate file '{path}'"),
+            Some(e.to_string()),
+            None,
+        )
+    })?;
+
+    reqwest::Identity::from_pem(&bytes).map_err(|e| {
+        err(
+            "tls_config",
+            format!("Invalid client certificate file '{path}'. Expected PEM containing certificate and private key."),
+            Some(e.to_string()),
+            None,
+        )
+    })
+}
+
+fn apply_tls_settings(
+    mut builder: reqwest::ClientBuilder,
+    tls: &RequestTls,
+) -> Result<reqwest::ClientBuilder, HttpErrorDto> {
+    if tls.allow_invalid_certificates {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+
+    let ca_path = tls.ca_certificate_path.trim();
+    if !ca_path.is_empty() {
+        let certs = load_custom_ca_certificates(ca_path)?;
+        for cert in certs {
+            builder = builder.add_root_certificate(cert);
+        }
+    }
+
+    let identity_path = tls.client_certificate_path.trim();
+    if !identity_path.is_empty() {
+        let identity = load_client_identity(identity_path)?;
+        builder = builder.identity(identity);
+    }
+
+    Ok(builder)
+}
+
 fn build_multipart_form(
     fields: &[MultipartField],
 ) -> Result<reqwest::multipart::Form, HttpErrorDto> {
@@ -569,25 +770,25 @@ fn build_multipart_form(
 
 pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpErrorDto> {
     apply_auth_to_request(&mut req);
-    const REQUEST_TIMEOUT_SECONDS: u64 = 120;
+    const REQUEST_TIMEOUT_SECONDS: u64 = 60;
 
     // 1) validate URL early
     let url = reqwest::Url::parse(&req.url)
         .map_err(|e| err("invalid_url", "Invalid URL", Some(e.to_string()), None))?;
 
-    // 2) client with explicit 60s timeout budget
-    let client = reqwest::Client::builder()
+    // 2) client with explicit timeout budget + TLS options
+    let client_builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
-        .connect_timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
-        .build()
-        .map_err(|e| {
-            err(
-                "unknown",
-                "Failed to create HTTP client",
-                Some(e.to_string()),
-                None,
-            )
-        })?;
+        .connect_timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECONDS));
+    let client_builder = apply_tls_settings(client_builder, &req.tls)?;
+    let client = client_builder.build().map_err(|e| {
+        err(
+            "unknown",
+            "Failed to create HTTP client",
+            Some(e.to_string()),
+            None,
+        )
+    })?;
 
     // 3) method + builder
     let mut builder = match req.method {
@@ -603,21 +804,11 @@ pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpEr
     // headers
     let body_is_multipart = matches!(&req.body, Body::Multipart { .. });
     for h in &req.headers {
+        if !should_send_explicit_header(h, body_is_multipart) {
+            continue;
+        }
+
         let header_name = h.key.trim();
-        if header_name.is_empty() {
-            continue;
-        }
-
-        if body_is_multipart
-            && header_name.eq_ignore_ascii_case("content-type")
-            && h.value
-                .trim()
-                .to_ascii_lowercase()
-                .starts_with("multipart/form-data")
-        {
-            continue;
-        }
-
         builder = builder.header(header_name, h.value.clone());
     }
 
@@ -626,7 +817,7 @@ pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpEr
         let pairs: Vec<(String, String)> = req
             .query
             .iter()
-            .filter(|kv| !kv.key.trim().is_empty())
+            .filter(|kv| kv.enabled && !kv.key.trim().is_empty())
             .map(|kv| (kv.key.clone(), kv.value.clone()))
             .collect();
         builder = builder.query(&pairs);
@@ -642,23 +833,42 @@ pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpEr
     // body
     builder = match &req.body {
         Body::None => builder,
-        Body::Raw { content_type, text } => builder
-            .header("Content-Type", content_type.clone())
-            .body(text.clone()),
+        Body::Raw { content_type, text } => {
+            if !should_auto_set_generated_content_type(&req, content_type) {
+                builder.body(text.clone())
+            } else {
+                builder
+                    .header("Content-Type", content_type.trim())
+                    .body(text.clone())
+            }
+        }
         Body::Json { value, text } => {
+            let should_auto_content_type = !has_enabled_header(&req.headers, "content-type")
+                && is_generated_header_enabled(&req, "content-type");
             if text.trim().is_empty() {
-                builder.json(value)
+                let json_body = value.to_string();
+                if !should_auto_content_type {
+                    builder.body(json_body)
+                } else {
+                    builder
+                        .header("Content-Type", "application/json")
+                        .body(json_body)
+                }
             } else {
                 let stripped = strip_json_comments(text);
-                builder
-                    .header("Content-Type", "application/json")
-                    .body(stripped)
+                if !should_auto_content_type {
+                    builder.body(stripped)
+                } else {
+                    builder
+                        .header("Content-Type", "application/json")
+                        .body(stripped)
+                }
             }
         }
         Body::Form { fields } => {
             let pairs: Vec<(String, String)> = fields
                 .iter()
-                .filter(|kv| !kv.key.trim().is_empty())
+                .filter(|kv| kv.enabled && !kv.key.trim().is_empty())
                 .map(|kv| (kv.key.clone(), kv.value.clone()))
                 .collect();
             builder.form(&pairs)
@@ -684,6 +894,7 @@ pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpEr
         headers_out.push(KeyValue {
             key: k.to_string(),
             value: v.to_str().unwrap_or("").to_string(),
+            enabled: true,
         });
     }
 
@@ -790,4 +1001,68 @@ pub fn cancel_request(
         return Ok(());
     }
     Err("No in-flight request with this id".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::collection::{Auth, Body, HttpMethod, Request, RequestScripts, RequestTls};
+
+    fn build_request() -> Request {
+        Request {
+            id: "req_1".to_string(),
+            name: "Request".to_string(),
+            method: HttpMethod::Post,
+            url: "http://localhost:8080/test".to_string(),
+            headers: vec![],
+            generated_headers: vec![],
+            query: vec![],
+            body: Body::None,
+            auth: Auth::None,
+            tls: RequestTls::default(),
+            extractors: vec![],
+            scripts: RequestScripts::default(),
+        }
+    }
+
+    #[test]
+    fn disabled_custom_headers_are_not_sent_explicitly() {
+        let header = KeyValue {
+            key: "X-Test".to_string(),
+            value: "value".to_string(),
+            enabled: false,
+        };
+
+        assert!(!should_send_explicit_header(&header, false));
+    }
+
+    #[test]
+    fn disabled_generated_content_type_prevents_auto_content_type_injection() {
+        let mut request = build_request();
+        request.generated_headers = vec![crate::model::collection::GeneratedHeaderControl {
+            key: "content-type".to_string(),
+            enabled: false,
+        }];
+        assert!(!should_auto_set_generated_content_type(
+            &request,
+            "application/json"
+        ));
+    }
+
+    #[test]
+    fn generated_headers_default_to_enabled() {
+        let request = build_request();
+        assert!(is_generated_header_enabled(&request, "content-type"));
+        assert!(is_generated_header_enabled(&request, "host"));
+    }
+
+    #[test]
+    fn multipart_content_type_is_never_sent_explicitly() {
+        let header = KeyValue {
+            key: "Content-Type".to_string(),
+            value: "multipart/form-data".to_string(),
+            enabled: true,
+        };
+        assert!(!should_send_explicit_header(&header, true));
+    }
 }
