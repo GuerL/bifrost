@@ -6157,7 +6157,6 @@ export default function App() {
                             {tab === "debug" && requestDebugInfo && (
                                 <div
                                     style={{
-                                        marginTop: 12,
                                         display: "grid",
                                         gap: 10,
                                     }}
@@ -6182,15 +6181,6 @@ export default function App() {
                                         </div>
                                         <div style={{ display: "flex", gap: 8 }}>
                                             <button
-                                                onClick={() =>
-                                                    setShowRequestDebug((previous) => !previous)
-                                                }
-                                            >
-                                                {showRequestDebug
-                                                    ? "Hide generated request"
-                                                    : "View generated request"}
-                                            </button>
-                                            <button
                                                 onClick={() => void copyRequestDebugInfo()}
                                                 disabled={!requestDebugText}
                                                 style={buttonStyle(!requestDebugText)}
@@ -6200,163 +6190,161 @@ export default function App() {
                                         </div>
                                     </div>
 
-                                    {showRequestDebug && (
+                                    <div
+                                        style={{
+                                            border: "1px solid var(--pg-border)",
+                                            borderRadius: 8,
+                                            padding: "10px 12px",
+                                            display: "grid",
+                                            gap: 10,
+                                        }}
+                                    >
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Method</div>
                                         <div
                                             style={{
-                                                border: "1px solid var(--pg-border)",
-                                                borderRadius: 8,
-                                                padding: "10px 12px",
-                                                display: "grid",
-                                                gap: 10,
+                                                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                                fontSize: 12,
                                             }}
                                         >
+                                            {requestDebugInfo.method}
+                                        </div>
+                                    </div>
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Final URL</div>
+                                        <div
+                                            style={{
+                                                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                                fontSize: 12,
+                                                whiteSpace: "normal",
+                                                overflowWrap: "anywhere",
+                                                wordBreak: "break-word",
+                                            }}
+                                            title={requestDebugInfo.resolvedUrl}
+                                        >
+                                            {requestDebugInfo.resolvedUrl}
+                                        </div>
+                                    </div>
+                                    {requestDebugInfo.unresolvedVariables.length > 0 && (
                                         <div style={{ display: "grid", gap: 4 }}>
-                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Method</div>
+                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                                Unresolved variables
+                                            </div>
                                             <div
                                                 style={{
                                                     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                                                     fontSize: 12,
                                                 }}
                                             >
-                                                {requestDebugInfo.method}
+                                                {requestDebugInfo.unresolvedVariables.join(", ")}
                                             </div>
-                                        </div>
-                                        <div style={{ display: "grid", gap: 4 }}>
-                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Final URL</div>
-                                            <div
-                                                style={{
-                                                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                                                    fontSize: 12,
-                                                    whiteSpace: "normal",
-                                                    overflowWrap: "anywhere",
-                                                    wordBreak: "break-word",
-                                                }}
-                                                title={requestDebugInfo.resolvedUrl}
-                                            >
-                                                {requestDebugInfo.resolvedUrl}
-                                            </div>
-                                        </div>
-                                        {requestDebugInfo.unresolvedVariables.length > 0 && (
-                                            <div style={{ display: "grid", gap: 4 }}>
-                                                <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
-                                                    Unresolved variables
-                                                </div>
-                                                <div
-                                                    style={{
-                                                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                                                        fontSize: 12,
-                                                    }}
-                                                >
-                                                    {requestDebugInfo.unresolvedVariables.join(", ")}
-                                                </div>
-                                            </div>
-                                        )}
-                                        <div style={{ display: "grid", gap: 4 }}>
-                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Enabled headers</div>
-                                            <pre
-                                                style={{
-                                                    margin: 0,
-                                                    padding: 8,
-                                                    border: "1px solid var(--pg-border)",
-                                                    borderRadius: 6,
-                                                    background: "var(--pg-surface-alt)",
-                                                    color: "var(--pg-text)",
-                                                    fontSize: 12,
-                                                    whiteSpace: "pre-wrap",
-                                                    overflowX: "auto",
-                                                    maxWidth: "100%",
-                                                    overflowWrap: "anywhere",
-                                                }}
-                                            >
-                                                {requestDebugInfo.enabledHeaders.length > 0
-                                                    ? requestDebugInfo.enabledHeaders
-                                                          .map((entry) => `${entry.key}: ${entry.value}`)
-                                                          .join("\n")
-                                                    : "(none)"}
-                                            </pre>
-                                        </div>
-                                        <div style={{ display: "grid", gap: 4 }}>
-                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Disabled headers</div>
-                                            <pre
-                                                style={{
-                                                    margin: 0,
-                                                    padding: 8,
-                                                    border: "1px solid var(--pg-border)",
-                                                    borderRadius: 6,
-                                                    background: "var(--pg-surface-alt)",
-                                                    color: "var(--pg-text)",
-                                                    fontSize: 12,
-                                                    whiteSpace: "pre-wrap",
-                                                    overflowX: "auto",
-                                                    maxWidth: "100%",
-                                                    overflowWrap: "anywhere",
-                                                }}
-                                            >
-                                                {requestDebugInfo.disabledHeaders.length > 0
-                                                    ? requestDebugInfo.disabledHeaders.join("\n")
-                                                    : "(none)"}
-                                            </pre>
-                                        </div>
-                                        <div style={{ display: "grid", gap: 4 }}>
-                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Body</div>
-                                            <div
-                                                style={{
-                                                    fontSize: 12,
-                                                    color: "var(--pg-text-muted)",
-                                                }}
-                                            >
-                                                Type: {requestDebugInfo.bodyType} · Content-Type:{" "}
-                                                {requestDebugInfo.contentTypeMode} · Content-Length:{" "}
-                                                {requestDebugInfo.contentLengthMode}
-                                            </div>
-                                            <pre
-                                                style={{
-                                                    margin: 0,
-                                                    padding: 8,
-                                                    border: "1px solid var(--pg-border)",
-                                                    borderRadius: 6,
-                                                    background: "var(--pg-surface-alt)",
-                                                    color: "var(--pg-text)",
-                                                    fontSize: 12,
-                                                    whiteSpace: "pre-wrap",
-                                                    maxHeight: 220,
-                                                    overflowX: "auto",
-                                                    overflowY: "auto",
-                                                    maxWidth: "100%",
-                                                    overflowWrap: "anywhere",
-                                                }}
-                                            >
-                                                {requestDebugInfo.bodyPreview}
-                                            </pre>
-                                        </div>
-                                        <div style={{ display: "grid", gap: 4 }}>
-                                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Transport</div>
-                                            <pre
-                                                style={{
-                                                    margin: 0,
-                                                    padding: 8,
-                                                    border: "1px solid var(--pg-border)",
-                                                    borderRadius: 6,
-                                                    background: "var(--pg-surface-alt)",
-                                                    color: "var(--pg-text)",
-                                                    fontSize: 12,
-                                                    whiteSpace: "pre-wrap",
-                                                    overflowX: "auto",
-                                                    maxWidth: "100%",
-                                                    overflowWrap: "anywhere",
-                                                }}
-                                            >
-                                                {[
-                                                    `TLS validation: ${requestDebugInfo.transport.tlsValidation}`,
-                                                    `Custom CA certificate: ${requestDebugInfo.transport.customCaCertificate}`,
-                                                    `Client certificate: ${requestDebugInfo.transport.clientCertificate}`,
-                                                    `Redirects: ${requestDebugInfo.transport.redirects}`,
-                                                    `Timeout: ${requestDebugInfo.transport.timeoutMs}ms`,
-                                                ].join("\n")}
-                                            </pre>
-                                        </div>
                                         </div>
                                     )}
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Enabled headers</div>
+                                        <pre
+                                            style={{
+                                                margin: 0,
+                                                padding: 8,
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 6,
+                                                background: "var(--pg-surface-alt)",
+                                                color: "var(--pg-text)",
+                                                fontSize: 12,
+                                                whiteSpace: "pre-wrap",
+                                                overflowX: "auto",
+                                                maxWidth: "100%",
+                                                overflowWrap: "anywhere",
+                                            }}
+                                        >
+                                            {requestDebugInfo.enabledHeaders.length > 0
+                                                ? requestDebugInfo.enabledHeaders
+                                                      .map((entry) => `${entry.key}: ${entry.value}`)
+                                                      .join("\n")
+                                                : "(none)"}
+                                        </pre>
+                                    </div>
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Disabled headers</div>
+                                        <pre
+                                            style={{
+                                                margin: 0,
+                                                padding: 8,
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 6,
+                                                background: "var(--pg-surface-alt)",
+                                                color: "var(--pg-text)",
+                                                fontSize: 12,
+                                                whiteSpace: "pre-wrap",
+                                                overflowX: "auto",
+                                                maxWidth: "100%",
+                                                overflowWrap: "anywhere",
+                                            }}
+                                        >
+                                            {requestDebugInfo.disabledHeaders.length > 0
+                                                ? requestDebugInfo.disabledHeaders.join("\n")
+                                                : "(none)"}
+                                        </pre>
+                                    </div>
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Body</div>
+                                        <div
+                                            style={{
+                                                fontSize: 12,
+                                                color: "var(--pg-text-muted)",
+                                            }}
+                                        >
+                                            Type: {requestDebugInfo.bodyType} · Content-Type:{" "}
+                                            {requestDebugInfo.contentTypeMode} · Content-Length:{" "}
+                                            {requestDebugInfo.contentLengthMode}
+                                        </div>
+                                        <pre
+                                            style={{
+                                                margin: 0,
+                                                padding: 8,
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 6,
+                                                background: "var(--pg-surface-alt)",
+                                                color: "var(--pg-text)",
+                                                fontSize: 12,
+                                                whiteSpace: "pre-wrap",
+                                                maxHeight: 220,
+                                                overflowX: "auto",
+                                                overflowY: "auto",
+                                                maxWidth: "100%",
+                                                overflowWrap: "anywhere",
+                                            }}
+                                        >
+                                            {requestDebugInfo.bodyPreview}
+                                        </pre>
+                                    </div>
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Transport</div>
+                                        <pre
+                                            style={{
+                                                margin: 0,
+                                                padding: 8,
+                                                border: "1px solid var(--pg-border)",
+                                                borderRadius: 6,
+                                                background: "var(--pg-surface-alt)",
+                                                color: "var(--pg-text)",
+                                                fontSize: 12,
+                                                whiteSpace: "pre-wrap",
+                                                overflowX: "auto",
+                                                maxWidth: "100%",
+                                                overflowWrap: "anywhere",
+                                            }}
+                                        >
+                                            {[
+                                                `TLS validation: ${requestDebugInfo.transport.tlsValidation}`,
+                                                `Custom CA certificate: ${requestDebugInfo.transport.customCaCertificate}`,
+                                                `Client certificate: ${requestDebugInfo.transport.clientCertificate}`,
+                                                `Redirects: ${requestDebugInfo.transport.redirects}`,
+                                                `Timeout: ${requestDebugInfo.transport.timeoutMs}ms`,
+                                            ].join("\n")}
+                                        </pre>
+                                    </div>
+                                    </div>
                                 </div>
                             )}
 
