@@ -897,7 +897,6 @@ export default function App() {
     const [showGeneratedHeaders, setShowGeneratedHeaders] = useState<boolean>(() =>
         readBooleanPreference(GENERATED_HEADERS_VISIBLE_STORAGE_KEY, true)
     );
-    const [showRequestDebug, setShowRequestDebug] = useState(false);
     const [requestResponseSplitElement, setRequestResponseSplitElement] =
         useState<HTMLDivElement | null>(null);
     const [contextMenu, setContextMenu] = useState<SidebarContextMenu | null>(null);
@@ -1382,10 +1381,6 @@ export default function App() {
 
     useEffect(() => {
         setScriptRevealLocation(null);
-    }, [selectedRequestId]);
-
-    useEffect(() => {
-        setShowRequestDebug(false);
     }, [selectedRequestId]);
 
     const requestsById = useMemo(
