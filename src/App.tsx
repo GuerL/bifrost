@@ -312,9 +312,11 @@ const REQUEST_RESPONSE_DIVIDER_HEIGHT_PX = 6;
 const REQUEST_PANEL_MIN_HEIGHT_PX = 56;
 const RESPONSE_PANEL_MIN_HEIGHT_PX = 56;
 const SIDEBAR_DEFAULT_WIDTH_PX = 246;
-const SIDEBAR_MIN_WIDTH_PX = 188;
+const SIDEBAR_MIN_WIDTH_PX = 80;
 const SIDEBAR_MAX_WIDTH_PX = 420;
 const SIDEBAR_COLLAPSED_WIDTH_PX = 56;
+const SIDEBAR_COLLAPSE_TRIGGER_WIDTH_PX = SIDEBAR_MIN_WIDTH_PX - 8;
+const SIDEBAR_EXPAND_TRIGGER_WIDTH_PX = SIDEBAR_MIN_WIDTH_PX + 2;
 const IS_MACOS =
     typeof navigator !== "undefined" &&
     /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
@@ -1024,6 +1026,8 @@ export default function App() {
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
     const sidebarResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
     const sidebarExpandedWidthRef = useRef(sidebarWidthPx);
+    const sidebarWidthRef = useRef(sidebarWidthPx);
+    const sidebarCollapsedRef = useRef(sidebarCollapsed);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
     const requestResponseSplitRef = useRef<HTMLDivElement | null>(null);
     const expandedFoldersRef = useRef<Record<string, boolean>>({});
@@ -1071,7 +1075,7 @@ export default function App() {
         );
     }, []);
 
-    const clampSidebarWidthToViewport = useCallback(
+    const clampSidebarExpandedWidthPx = useCallback(
         (widthPx: number) => {
             const maxWidth = resolveSidebarMaxWidthPx();
             return Math.min(maxWidth, Math.max(SIDEBAR_MIN_WIDTH_PX, widthPx));
@@ -1079,20 +1083,21 @@ export default function App() {
         [resolveSidebarMaxWidthPx]
     );
 
-    const sidebarEffectiveWidthPx = sidebarCollapsed
-        ? SIDEBAR_COLLAPSED_WIDTH_PX
-        : clampSidebarWidthToViewport(sidebarWidthPx);
+    const clampSidebarDragWidthPx = useCallback(
+        (widthPx: number) => {
+            const maxWidth = resolveSidebarMaxWidthPx();
+            return Math.min(maxWidth, Math.max(SIDEBAR_COLLAPSED_WIDTH_PX, widthPx));
+        },
+        [resolveSidebarMaxWidthPx]
+    );
+
+    const sidebarEffectiveWidthPx = clampSidebarDragWidthPx(sidebarWidthPx);
 
     const onSidebarResizeStart = useCallback(
         (event: React.MouseEvent<HTMLDivElement>) => {
             if (event.button !== 0) return;
             event.preventDefault();
-            if (sidebarCollapsed) {
-                setSidebarCollapsed(false);
-            }
-            const startWidth = sidebarCollapsed
-                ? clampSidebarWidthToViewport(sidebarExpandedWidthRef.current)
-                : clampSidebarWidthToViewport(sidebarWidthPx);
+            const startWidth = clampSidebarDragWidthPx(sidebarEffectiveWidthPx);
             sidebarResizeStateRef.current = {
                 startX: event.clientX,
                 startWidth,
@@ -1100,7 +1105,7 @@ export default function App() {
             setSidebarWidthPx(startWidth);
             setIsSidebarResizing(true);
         },
-        [clampSidebarWidthToViewport, sidebarCollapsed, sidebarWidthPx]
+        [clampSidebarDragWidthPx, sidebarEffectiveWidthPx]
     );
 
     const onSidebarResizeHandleKeyDown = useCallback(
@@ -1110,26 +1115,36 @@ export default function App() {
             event.preventDefault();
             if (sidebarCollapsed && event.key === "ArrowRight") {
                 setSidebarCollapsed(false);
-                setSidebarWidthPx(clampSidebarWidthToViewport(sidebarExpandedWidthRef.current));
+                setSidebarWidthPx(clampSidebarExpandedWidthPx(sidebarExpandedWidthRef.current));
                 return;
             }
-            if (sidebarCollapsed) return;
             const delta = event.key === "ArrowRight" ? step : -step;
-            setSidebarWidthPx((previous) =>
-                clampSidebarWidthToViewport(previous + delta)
-            );
+            setSidebarWidthPx((previous) => {
+                const nextWidth = clampSidebarDragWidthPx(previous + delta);
+                if (nextWidth <= SIDEBAR_COLLAPSE_TRIGGER_WIDTH_PX) {
+                    setSidebarCollapsed(true);
+                    return SIDEBAR_COLLAPSED_WIDTH_PX;
+                }
+                if (nextWidth >= SIDEBAR_EXPAND_TRIGGER_WIDTH_PX) {
+                    setSidebarCollapsed(false);
+                }
+                return nextWidth;
+            });
         },
-        [clampSidebarWidthToViewport, sidebarCollapsed]
+        [clampSidebarDragWidthPx, clampSidebarExpandedWidthPx, sidebarCollapsed]
     );
 
     function toggleSidebarCollapsed() {
         if (sidebarCollapsed) {
             setSidebarCollapsed(false);
-            setSidebarWidthPx(clampSidebarWidthToViewport(sidebarExpandedWidthRef.current));
+            setSidebarWidthPx(clampSidebarExpandedWidthPx(sidebarExpandedWidthRef.current));
             return;
         }
-        sidebarExpandedWidthRef.current = clampSidebarWidthToViewport(sidebarWidthPx);
+        sidebarExpandedWidthRef.current = clampSidebarExpandedWidthPx(
+            Math.max(sidebarWidthPx, SIDEBAR_MIN_WIDTH_PX)
+        );
         setSidebarCollapsed(true);
+        setSidebarWidthPx(SIDEBAR_COLLAPSED_WIDTH_PX);
     }
 
     useEffect(() => {
@@ -1146,6 +1161,14 @@ export default function App() {
     }, [showGeneratedHeaders]);
 
     useEffect(() => {
+        sidebarWidthRef.current = sidebarWidthPx;
+    }, [sidebarWidthPx]);
+
+    useEffect(() => {
+        sidebarCollapsedRef.current = sidebarCollapsed;
+    }, [sidebarCollapsed]);
+
+    useEffect(() => {
         writeBooleanPreference(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed);
     }, [sidebarCollapsed]);
 
@@ -1160,19 +1183,25 @@ export default function App() {
     }, [sidebarCollapsed, sidebarWidthPx]);
 
     useEffect(() => {
-        if (sidebarCollapsed) return;
-        setSidebarWidthPx((previous) => clampSidebarWidthToViewport(previous));
-    }, [clampSidebarWidthToViewport, sidebarCollapsed]);
+        setSidebarWidthPx((previous) =>
+            sidebarCollapsed
+                ? clampSidebarDragWidthPx(previous)
+                : clampSidebarExpandedWidthPx(previous)
+        );
+    }, [clampSidebarDragWidthPx, clampSidebarExpandedWidthPx, sidebarCollapsed]);
 
     useEffect(() => {
-        if (sidebarCollapsed) return;
         if (typeof window === "undefined") return;
         function onResize() {
-            setSidebarWidthPx((previous) => clampSidebarWidthToViewport(previous));
+            setSidebarWidthPx((previous) =>
+                sidebarCollapsed
+                    ? clampSidebarDragWidthPx(previous)
+                    : clampSidebarExpandedWidthPx(previous)
+            );
         }
         window.addEventListener("resize", onResize);
         return () => window.removeEventListener("resize", onResize);
-    }, [clampSidebarWidthToViewport, sidebarCollapsed]);
+    }, [clampSidebarDragWidthPx, clampSidebarExpandedWidthPx, sidebarCollapsed]);
 
     useEffect(() => {
         if (!isSidebarResizing) return;
@@ -1181,11 +1210,28 @@ export default function App() {
             const state = sidebarResizeStateRef.current;
             if (!state) return;
             const deltaX = event.clientX - state.startX;
-            const nextWidth = clampSidebarWidthToViewport(state.startWidth + deltaX);
+            const nextWidth = clampSidebarDragWidthPx(state.startWidth + deltaX);
             setSidebarWidthPx(nextWidth);
+            setSidebarCollapsed((previous) => {
+                if (nextWidth <= SIDEBAR_COLLAPSE_TRIGGER_WIDTH_PX) return true;
+                if (nextWidth >= SIDEBAR_EXPAND_TRIGGER_WIDTH_PX) return false;
+                return previous;
+            });
         }
 
         function onMouseUp() {
+            const releaseWidth = sidebarWidthRef.current;
+            const shouldCollapse =
+                releaseWidth <= SIDEBAR_COLLAPSE_TRIGGER_WIDTH_PX ||
+                (sidebarCollapsedRef.current &&
+                    releaseWidth < SIDEBAR_EXPAND_TRIGGER_WIDTH_PX);
+            if (shouldCollapse) {
+                setSidebarCollapsed(true);
+                setSidebarWidthPx(SIDEBAR_COLLAPSED_WIDTH_PX);
+            } else {
+                setSidebarCollapsed(false);
+                setSidebarWidthPx(clampSidebarExpandedWidthPx(releaseWidth));
+            }
             setIsSidebarResizing(false);
             sidebarResizeStateRef.current = null;
         }
@@ -1203,7 +1249,7 @@ export default function App() {
             bodyStyle.cursor = previousBodyCursor;
             document.body.classList.remove("bifrost-sidebar-resizing");
         };
-    }, [clampSidebarWidthToViewport, isSidebarResizing]);
+    }, [clampSidebarDragWidthPx, clampSidebarExpandedWidthPx, isSidebarResizing]);
 
     function resetCollapsedFoldersHydrationRefs() {
         hydratedCollapsedFoldersCollectionIdRef.current = null;
@@ -5356,9 +5402,11 @@ export default function App() {
                         flexShrink: 0,
                         border: "1px solid var(--pg-border-soft)",
                         borderRadius: 10,
-                        background: "var(--pg-surface-alt)",
+                        background: sidebarCollapsed ? "var(--pg-surface-1)" : "var(--pg-surface-alt)",
                         boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.03)",
-                        transition: isSidebarResizing ? undefined : "width 130ms ease",
+                        transition: isSidebarResizing
+                            ? undefined
+                            : "width 140ms ease, background-color 140ms ease",
                         overflow: "hidden",
                     }}
                 >
@@ -5369,17 +5417,17 @@ export default function App() {
                             minHeight: 0,
                             flex: 1,
                             overflow: "hidden",
-                            padding: sidebarCollapsed ? "6px 5px" : "8px 9px",
+                            padding: sidebarCollapsed ? "8px 6px" : "8px 9px",
                         }}
                     >
                         <div
                             className="no-select"
                             style={{
-                                marginBottom: 6,
+                                marginBottom: sidebarCollapsed ? 8 : 6,
                                 display: "flex",
                                 alignItems: "center",
-                                justifyContent: "space-between",
-                                gap: 8,
+                                justifyContent: sidebarCollapsed ? "center" : "space-between",
+                                gap: sidebarCollapsed ? 6 : 8,
                                 flexShrink: 0,
                             }}
                             onContextMenu={(event) => {
@@ -5402,12 +5450,19 @@ export default function App() {
                                     Saved Requests
                                 </h3>
                             )}
-                            <div style={{ display: "flex", gap: 6 }}>
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexDirection: sidebarCollapsed ? "column" : "row",
+                                    alignItems: "center",
+                                    gap: 6,
+                                }}
+                            >
                                 <button
                                     style={{
                                         ...buttonStyle(false),
-                                        width: 28,
-                                        minWidth: 28,
+                                        width: sidebarCollapsed ? 30 : 28,
+                                        minWidth: sidebarCollapsed ? 30 : 28,
                                         padding: 0,
                                         borderRadius: 6,
                                     }}
@@ -5421,8 +5476,8 @@ export default function App() {
                                     ref={rootAddButtonRef}
                                     style={{
                                         ...buttonStyle(!current),
-                                        width: 28,
-                                        minWidth: 28,
+                                        width: sidebarCollapsed ? 30 : 28,
+                                        minWidth: sidebarCollapsed ? 30 : 28,
                                         padding: 0,
                                         borderRadius: 6,
                                     }}
@@ -5443,11 +5498,12 @@ export default function App() {
                             style={{
                                 display: "flex",
                                 flexDirection: "column",
-                                gap: 2,
+                                gap: sidebarCollapsed ? 4 : 2,
                                 overflowY: "auto",
                                 minHeight: 0,
                                 flex: 1,
                                 paddingRight: sidebarCollapsed ? 0 : 2,
+                                paddingTop: sidebarCollapsed ? 1 : 0,
                             }}
                         >
                             {current &&
@@ -5471,7 +5527,7 @@ export default function App() {
                                         row.kind === "request" && row.request === null;
                                     const rowIndentPx =
                                         sidebarCollapsed
-                                            ? Math.min(row.depth * 6, 16)
+                                            ? Math.min(row.depth * 3, 8)
                                             : row.depth * 10 +
                                               (row.kind === "request" && row.parentFolderId ? 6 : 0);
 
@@ -5578,8 +5634,8 @@ export default function App() {
                                                     cursor: draggedRequestId === row.nodeId ? "grabbing" : "pointer",
                                                     userSelect: "none",
                                                     justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                                                    paddingLeft: sidebarCollapsed ? 5 : 8,
-                                                    paddingRight: sidebarCollapsed ? 5 : 8,
+                                                    paddingLeft: sidebarCollapsed ? 4 : 9,
+                                                    paddingRight: sidebarCollapsed ? 4 : 9,
                                                     opacity: missingRequest ? 0.75 : 1,
                                                 }}
                                             >
@@ -5588,31 +5644,39 @@ export default function App() {
                                                         style={{
                                                             display: "flex",
                                                             alignItems: "center",
-                                                            gap: sidebarCollapsed ? 3 : 7,
+                                                            justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                                                            gap: 7,
                                                             width: "100%",
                                                             minWidth: 0,
                                                         }}
                                                         title={row.name}
                                                     >
-                                                        <span
-                                                            style={{
-                                                                width: 12,
-                                                                display: "inline-flex",
-                                                                justifyContent: "center",
-                                                                color: "var(--pg-text-muted)",
-                                                                flexShrink: 0,
-                                                                fontSize: 10,
-                                                            }}
-                                                        >
-                                                            {expandedFolders[row.folderId] === false ? "▸" : "▾"}
-                                                        </span>
+                                                        {!sidebarCollapsed && (
+                                                            <span
+                                                                style={{
+                                                                    width: 12,
+                                                                    display: "inline-flex",
+                                                                    justifyContent: "center",
+                                                                    color: "var(--pg-text-muted)",
+                                                                    flexShrink: 0,
+                                                                    fontSize: 10,
+                                                                }}
+                                                            >
+                                                                {expandedFolders[row.folderId] === false ? "▸" : "▾"}
+                                                            </span>
+                                                        )}
                                                         <svg
-                                                            width={sidebarCollapsed ? "13" : "12"}
-                                                            height={sidebarCollapsed ? "13" : "12"}
+                                                            width={sidebarCollapsed ? "14" : "12"}
+                                                            height={sidebarCollapsed ? "14" : "12"}
                                                             viewBox="0 0 24 24"
                                                             fill="none"
                                                             xmlns="http://www.w3.org/2000/svg"
-                                                            style={{ flexShrink: 0, color: "var(--pg-text-muted)" }}
+                                                            style={{
+                                                                flexShrink: 0,
+                                                                color: sidebarCollapsed
+                                                                    ? "var(--pg-text-dim)"
+                                                                    : "var(--pg-text-muted)",
+                                                            }}
                                                         >
                                                             <path
                                                                 d="M3 7.5C3 6.67157 3.67157 6 4.5 6H9.1C9.56335 6 9.99834 6.214 10.2789 6.57998L11.4211 8.07002C11.7017 8.436 12.1367 8.65 12.6 8.65H19.5C20.3284 8.65 21 9.32157 21 10.15V17.5C21 18.3284 20.3284 19 19.5 19H4.5C3.67157 19 3 18.3284 3 17.5V7.5Z"
@@ -5644,6 +5708,9 @@ export default function App() {
                                                             display: "flex",
                                                             alignItems: "center",
                                                             gap: 7,
+                                                            justifyContent: sidebarCollapsed
+                                                                ? "center"
+                                                                : "flex-start",
                                                             width: "100%",
                                                             minWidth: 0,
                                                         }}
@@ -5667,7 +5734,10 @@ export default function App() {
                                                                     textOverflow: "ellipsis",
                                                                     whiteSpace: "nowrap",
                                                                     fontSize: 12,
-                                                                    color: "var(--pg-text-dim)",
+                                                                    lineHeight: 1.2,
+                                                                    color: isSelected
+                                                                        ? "var(--pg-text)"
+                                                                        : "var(--pg-text-dim)",
                                                                 }}
                                                             >
                                                                 {row.request.name}
@@ -5721,18 +5791,18 @@ export default function App() {
                     role="separator"
                     aria-orientation="vertical"
                     aria-label="Resize sidebar"
-                    aria-valuemin={SIDEBAR_MIN_WIDTH_PX}
+                    aria-valuemin={SIDEBAR_COLLAPSED_WIDTH_PX}
                     aria-valuemax={SIDEBAR_MAX_WIDTH_PX}
-                    aria-valuenow={sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH_PX : sidebarWidthPx}
+                    aria-valuenow={Math.round(sidebarEffectiveWidthPx)}
                     tabIndex={0}
                     onMouseDown={onSidebarResizeStart}
                     onKeyDown={onSidebarResizeHandleKeyDown}
                     className="no-select pg-sidebar-divider"
                     style={{
-                        width: 8,
+                        width: 4,
                         cursor: "col-resize",
                         flexShrink: 0,
-                        marginInline: 4,
+                        marginInline: 2,
                         borderRadius: 999,
                         background: isSidebarResizing
                             ? "rgba(var(--pg-primary-rgb), 0.36)"
@@ -8090,6 +8160,8 @@ function requestListItemStyle(
     folderRow: boolean
 ): React.CSSProperties {
     return {
+        display: "flex",
+        alignItems: "center",
         height: compact ? 22 : 24,
         minHeight: compact ? 22 : 24,
         borderRadius: 7,
@@ -8112,6 +8184,8 @@ function requestListItemStyle(
         transition: "background-color 130ms ease, border-color 130ms ease, color 130ms ease",
         outline: "none",
         cursor: "pointer",
+        boxSizing: "border-box",
+        lineHeight: 1,
     };
 }
 
@@ -8161,9 +8235,10 @@ function requestMethodBadgeStyle(
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        minWidth: compact ? 16 : 38,
-        height: compact ? 16 : 17,
-        padding: compact ? "0 2px" : "0 5px",
+        width: compact ? 18 : 42,
+        minWidth: compact ? 18 : 42,
+        height: compact ? 18 : 16,
+        padding: 0,
         borderRadius: 5,
         fontSize: compact ? 9 : 10,
         fontWeight: 700,
