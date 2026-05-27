@@ -6,6 +6,7 @@ import FindBar from "./FindBar.tsx";
 import { copyTextToClipboard } from "../helpers/ClipboardRequestTransfer.ts";
 import { notifyError, notifySuccess } from "../helpers/Toast.tsx";
 import ResponseTestsPanel from "./ResponseTestsPanel.tsx";
+import { buttonStyle } from "../helpers/UiStyles.ts";
 
 export type ResponseTabId = "body" | "cookies" | "headers" | "runtime" | "tests";
 
@@ -479,7 +480,10 @@ export default function ResponsePanel({
                         <button
                             onClick={onClearRuntimeVariables}
                             disabled={Object.keys(runtimeVariables).length === 0}
-                            style={responseTabStyle(false)}
+                            style={{
+                                ...buttonStyle(Object.keys(runtimeVariables).length === 0),
+                                minWidth: 64,
+                            }}
                         >
                             Clear
                         </button>
@@ -714,16 +718,17 @@ function parseSetCookieHeader(value: string): CookieItem | null {
 
 function responseTabStyle(active: boolean): React.CSSProperties {
     return {
-        height: 26,
-        padding: "0 9px",
-        borderRadius: 7,
-        border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
-        background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
-        color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
+        ...buttonStyle(false),
+        height: 28,
+        padding: "0 10px",
+        borderRadius: 8,
+        border: active ? "1px solid var(--pg-tab-active-border)" : "1px solid transparent",
+        background: active ? "var(--pg-tab-active-bg)" : "transparent",
+        color: active ? "var(--pg-text)" : "var(--pg-text-muted)",
         cursor: "pointer",
-        fontWeight: 600,
+        fontWeight: active ? 700 : 600,
         fontSize: 12,
-        boxShadow: "none",
+        boxShadow: active ? "inset 0 1px 0 rgba(255, 255, 255, 0.05)" : "none",
     };
 }
 
@@ -755,12 +760,13 @@ function bodyModeControlsStyle(visible: boolean): React.CSSProperties {
 
 function bodyModeButtonStyle(active: boolean): React.CSSProperties {
     return {
-        height: 22,
-        padding: "0 8px",
+        ...buttonStyle(false),
+        height: 24,
+        padding: "0 9px",
         borderRadius: 7,
-        border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
-        background: active ? "var(--pg-primary)" : "var(--pg-topbar-body-toggle-bg)",
-        color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
+        border: active ? "1px solid var(--pg-tab-active-border)" : "1px solid transparent",
+        background: active ? "var(--pg-tab-active-bg)" : "var(--pg-topbar-body-toggle-bg)",
+        color: active ? "var(--pg-text)" : "var(--pg-text-muted)",
         cursor: "pointer",
         fontWeight: 600,
         fontSize: 11,
@@ -789,7 +795,7 @@ function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSS
         height: 30,
         marginLeft: "auto",
         padding: 0,
-        borderRadius: 7,
+        borderRadius: 8,
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
@@ -798,16 +804,16 @@ function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSS
 
     if (disabled) {
         return {
+            ...buttonStyle(true),
             ...baseStyle,
-            ...responseTabStyle(false),
             cursor: "not-allowed",
         };
     }
 
     if (copyState === "copied") {
         return {
+            ...buttonStyle(false),
             ...baseStyle,
-            ...responseTabStyle(false),
             border: "1px solid rgba(34, 197, 94, 0.7)",
             background: "rgba(22, 163, 74, 0.16)",
             color: "var(--pg-copy-success-text)",
@@ -816,8 +822,8 @@ function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSS
 
     if (copyState === "error") {
         return {
+            ...buttonStyle(false),
             ...baseStyle,
-            ...responseTabStyle(false),
             border: "1px solid rgba(239, 68, 68, 0.75)",
             background: "rgba(239, 68, 68, 0.14)",
             color: "var(--pg-copy-error-text)",
@@ -825,8 +831,8 @@ function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSS
     }
 
     return {
+        ...buttonStyle(false),
         ...baseStyle,
-        ...responseTabStyle(false),
     };
 }
 
@@ -889,7 +895,7 @@ function responsePreStyle(isJson: boolean, hasBodyModeControls: boolean): React.
         flex: 1,
         overflow: "auto",
         borderRadius: 12,
-        border: isJson ? "1px solid rgba(var(--pg-primary-rgb), 0.38)" : "1px solid var(--pg-border)",
+        border: isJson ? "1px solid rgba(var(--pg-primary-rgb), 0.3)" : "1px solid var(--pg-border-soft)",
         padding: hasBodyModeControls ? "42px 12px 12px" : 12,
         boxSizing: "border-box",
         fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
@@ -908,7 +914,7 @@ function responsePreviewWrapStyle(): React.CSSProperties {
         minHeight: 0,
         flex: 1,
         borderRadius: 12,
-        border: "1px solid var(--pg-border)",
+        border: "1px solid var(--pg-border-soft)",
         background: "var(--pg-preview-bg)",
         overflow: "hidden",
     };
@@ -961,9 +967,10 @@ function responsePanelStyle(): React.CSSProperties {
         flex: 1,
         overflow: "auto",
         borderRadius: 12,
-        border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-1)",
-        padding: 10,
+        border: "1px solid var(--pg-border-soft)",
+        background: "var(--pg-surface-alt)",
+        padding: 11,
+        boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.03)",
         boxSizing: "border-box",
     };
 }
@@ -988,8 +995,8 @@ function thStyle(): React.CSSProperties {
         textAlign: "left",
         fontSize: 12,
         color: "var(--pg-text-muted)",
-        borderBottom: "1px solid var(--pg-border)",
-        padding: "8px 6px",
+        borderBottom: "1px solid var(--pg-border-soft)",
+        padding: "8px 8px",
     };
 }
 
@@ -997,8 +1004,8 @@ function tdStyle(): React.CSSProperties {
     return {
         fontSize: 13,
         color: "var(--pg-text-dim)",
-        borderBottom: "1px solid var(--pg-border)",
-        padding: "8px 6px",
+        borderBottom: "1px solid var(--pg-border-soft)",
+        padding: "8px 8px",
         verticalAlign: "top",
         wordBreak: "break-word",
     };
@@ -1006,10 +1013,10 @@ function tdStyle(): React.CSSProperties {
 
 function scriptPanelStyle(): React.CSSProperties {
     return {
-        border: "1px solid var(--pg-border)",
+        border: "1px solid var(--pg-border-soft)",
         borderRadius: 12,
-        background: "var(--pg-surface-1)",
-        padding: 10,
+        background: "var(--pg-surface-alt)",
+        padding: 11,
         display: "grid",
         gap: 8,
         flexShrink: 0,

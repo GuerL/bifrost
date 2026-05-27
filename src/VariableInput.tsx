@@ -147,12 +147,14 @@ export default function VariableInput({
     const [selectedCompletionIndex, setSelectedCompletionIndex] = useState(0);
     const [hoverState, setHoverState] = useState<HoverState | null>(null);
     const sharedTextStyle: React.CSSProperties = {
-        padding: "0.6em 0.9em",
+        height: "var(--pg-control-height)",
+        padding: "0 var(--pg-control-padding-x)",
+        boxSizing: "border-box",
         fontFamily: "inherit",
-        fontSize: "0.80em",
-        fontWeight: 200,
-        lineHeight: 1.11,
-        letterSpacing: "normal",
+        fontSize: 12,
+        fontWeight: 500,
+        lineHeight: "var(--pg-control-height)",
+        letterSpacing: 0,
     };
 
     const { parts, matches } = useMemo(
@@ -334,15 +336,15 @@ export default function VariableInput({
             style={{
                 display: "flex",
                 position: "relative",
-                borderRadius: 10,
-                border: isFocused ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
+                borderRadius: 8,
+                border: isFocused ? "1px solid rgba(var(--pg-primary-rgb), 0.92)" : "1px solid var(--pg-border)",
                 background: disabled
                     ? "var(--pg-surface-overlay-disabled)"
-                    : "var(--pg-surface-overlay)",
+                    : "var(--pg-control-bg)",
                 boxShadow: isFocused
-                    ? "0 0 0 3px rgba(var(--pg-primary-rgb), 0.25), inset 0 1px 0 rgba(255,255,255,0.02)"
-                    : "inset 0 1px 0 rgba(255,255,255,0.03)",
-                transition: "border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease",
+                    ? "0 0 0 2px rgba(var(--pg-primary-rgb), 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.05)"
+                    : "inset 0 1px 0 rgba(255, 255, 255, 0.04)",
+                transition: "border-color 130ms ease, box-shadow 130ms ease, background-color 130ms ease",
                 ...containerStyle,
             }}
         >
@@ -352,7 +354,7 @@ export default function VariableInput({
                     inset: 0,
                     pointerEvents: "none",
                     overflow: "hidden",
-                    borderRadius: 8,
+                    borderRadius: 7,
                 }}
             >
                 <div

@@ -1,4 +1,5 @@
 import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
+import { buttonStyle } from "./helpers/UiStyles.ts";
 
 type KeyValueTableProps = {
     rows: { key: string; value: string; enabled?: boolean }[];
@@ -20,7 +21,7 @@ export default function KeyValueTable({
     enabledToggleTitle,
 }: KeyValueTableProps) {
     return (
-        <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+        <div style={{ display: "grid", gap: 8 }}>
             {rows.map((kv, i) => (
                 <div key={i} style={{ display: "flex", gap: 8 }}>
                     {showEnabledToggle && (
@@ -76,8 +77,18 @@ export default function KeyValueTable({
                             next.splice(i, 1);
                             onChange(next);
                         }}
+                        style={{
+                            ...buttonStyle(false),
+                            width: 30,
+                            minWidth: 30,
+                            padding: 0,
+                            fontSize: 14,
+                            lineHeight: 1,
+                            flexShrink: 0,
+                        }}
+                        title="Remove row"
                     >
-                        -
+                        −
                     </button>
                 </div>
             ))}
@@ -92,6 +103,11 @@ export default function KeyValueTable({
                         },
                     ])
                 }
+                style={{
+                    ...buttonStyle(false),
+                    width: "fit-content",
+                    paddingInline: 12,
+                }}
             >
                 + Add
             </button>

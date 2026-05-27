@@ -1,4 +1,5 @@
 import type { CSSProperties, RefObject } from "react";
+import { buttonStyle } from "../helpers/UiStyles.ts";
 
 type FindBarProps = {
     query: string;
@@ -92,10 +93,10 @@ function findBarStyle(): CSSProperties {
         display: "flex",
         alignItems: "center",
         gap: 6,
-        border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-1)",
+        border: "1px solid var(--pg-border-soft)",
+        background: "var(--pg-surface-alt)",
         borderRadius: 10,
-        padding: 6,
+        padding: 7,
     };
 }
 
@@ -103,10 +104,10 @@ function findInputStyle(): CSSProperties {
     return {
         minWidth: 0,
         flex: 1,
-        height: 28,
+        height: 30,
         borderRadius: 8,
-        border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-0)",
+        border: "1px solid var(--pg-border-soft)",
+        background: "var(--pg-control-bg)",
         color: "var(--pg-text)",
         fontSize: 12,
         padding: "0 8px",
@@ -126,13 +127,11 @@ function findCountStyle(): CSSProperties {
 
 function findButtonStyle(disabled: boolean): CSSProperties {
     return {
-        width: 28,
-        height: 28,
+        ...buttonStyle(disabled),
+        width: 30,
+        height: 30,
         borderRadius: 8,
-        border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-gradient)",
-        color: "var(--pg-text)",
-        cursor: disabled ? "not-allowed" : "pointer",
+        color: disabled ? "var(--pg-disabled)" : "var(--pg-text)",
         opacity: disabled ? 0.5 : 1,
         padding: 0,
         boxShadow: "none",
@@ -144,12 +143,13 @@ function findButtonStyle(disabled: boolean): CSSProperties {
 
 function findCaseButtonStyle(active: boolean): CSSProperties {
     return {
+        ...buttonStyle(false),
         minWidth: 36,
-        height: 28,
+        height: 30,
         borderRadius: 8,
-        border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
-        background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
-        color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
+        border: active ? "1px solid var(--pg-tab-active-border)" : "1px solid var(--pg-border-soft)",
+        background: active ? "var(--pg-tab-active-bg)" : "var(--pg-control-bg)",
+        color: active ? "var(--pg-text)" : "var(--pg-text)",
         cursor: "pointer",
         padding: "0 8px",
         boxShadow: "none",

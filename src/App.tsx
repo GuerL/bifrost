@@ -307,8 +307,8 @@ const SAVED_REQUESTS_COLLAPSED_FOLDERS_STORAGE_KEY = "bifrost:saved-requests:col
 const GENERATED_HEADERS_VISIBLE_STORAGE_KEY = "bifrost:generated-headers:visible:v1";
 const REQUEST_RESPONSE_PANEL_STORAGE_PREFIX = "bifrost:request-response-panel:v2";
 const REQUEST_RESPONSE_DIVIDER_HEIGHT_PX = 6;
-const REQUEST_PANEL_MIN_HEIGHT_PX = 44;
-const RESPONSE_PANEL_MIN_HEIGHT_PX = 44;
+const REQUEST_PANEL_MIN_HEIGHT_PX = 56;
+const RESPONSE_PANEL_MIN_HEIGHT_PX = 56;
 const IS_MACOS =
     typeof navigator !== "undefined" &&
     /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
@@ -5485,7 +5485,10 @@ export default function App() {
                                 alignItems: "center",
                                 gap: 8,
                                 overflowX: "auto",
-                                paddingBottom: 4,
+                                padding: "3px 3px",
+                                borderRadius: 10,
+                                border: "1px solid var(--pg-tab-track-border)",
+                                background: "var(--pg-tab-track-bg)",
                                 flexShrink: 0,
                             }}
                         >
@@ -5580,20 +5583,13 @@ export default function App() {
                                 style={requestShellStyle()}
                             >
                                 <div
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 8,
-                                        flexWrap: "nowrap",
-                                        flexShrink: 0,
-                                        width: "100%",
-                                        minWidth: 0,
-                                    }}
+                                    style={requestToolbarRowStyle()}
                                 >
                                     <AppSelect
                                         value={draft.method}
                                         options={REQUEST_METHOD_OPTIONS}
                                         ariaLabel="Request method"
+                                        style={{ minWidth: 108, flexShrink: 0 }}
                                         onValueChange={(nextValue) =>
                                             updateDraft({ method: nextValue as Request["method"] })
                                         }
@@ -5612,7 +5608,11 @@ export default function App() {
                                     <button
                                         onClick={triggerSendFromUi}
                                         disabled={!selectedRequestId || pending || collectionRunPending}
-                                        style={primaryButtonStyle(!selectedRequestId || pending || collectionRunPending)}
+                                        style={{
+                                            ...primaryButtonStyle(!selectedRequestId || pending || collectionRunPending),
+                                            minWidth: 76,
+                                            paddingInline: 14,
+                                        }}
                                     >
                                         Send
                                     </button>
@@ -5620,7 +5620,10 @@ export default function App() {
                                     <button
                                         onClick={cancel}
                                         disabled={!selectedRequestId || !pending || collectionRunPending}
-                                        style={buttonStyle(!selectedRequestId || !pending || collectionRunPending)}
+                                        style={{
+                                            ...buttonStyle(!selectedRequestId || !pending || collectionRunPending),
+                                            minWidth: 82,
+                                        }}
                                     >
                                         Cancel
                                     </button>
@@ -5643,8 +5646,9 @@ export default function App() {
                                         overflow: "hidden",
                                         display: "flex",
                                         flexDirection: "column",
-                                        border: "1px solid var(--pg-border)",
-                                        borderRadius: 10,
+                                        border: "1px solid var(--pg-panel-border)",
+                                        boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.03)",
+                                        borderRadius: 12,
                                         background: "var(--pg-surface-0)",
                                     }}
                                 >
@@ -5652,7 +5656,7 @@ export default function App() {
                                         className="no-select"
                                         style={requestPanelHeaderStyle()}
                                     >
-                                        <span style={{ fontWeight: 700, fontSize: 13, color: "var(--pg-text)" }}>
+                                        <span style={{ fontWeight: 700, fontSize: 12, color: "var(--pg-text-muted)" }}>
                                             Request
                                         </span>
                                         <div style={requestPanelTabsStyle()}>
@@ -5707,8 +5711,8 @@ export default function App() {
                                             overflow: "auto",
                                             display: "flex",
                                             flexDirection: "column",
-                                            gap: 10,
-                                            padding: 10,
+                                            gap: 12,
+                                            padding: 12,
                                             boxSizing: "border-box",
                                         }}
                                     >
@@ -5716,9 +5720,10 @@ export default function App() {
                                 <div style={{ display: "grid", gap: 10 }}>
                                     <div
                                         style={{
-                                            border: "1px solid var(--pg-border)",
-                                            borderRadius: 8,
-                                            padding: "10px 12px",
+                                            border: "1px solid var(--pg-border-soft)",
+                                            borderRadius: 10,
+                                            background: "var(--pg-surface-alt)",
+                                            padding: "11px 12px",
                                             display: "grid",
                                             gap: 8,
                                         }}
@@ -5775,9 +5780,10 @@ export default function App() {
                                     {showGeneratedHeaders && (
                                         <div
                                             style={{
-                                                border: "1px solid var(--pg-border)",
-                                                borderRadius: 8,
-                                                padding: "10px 12px",
+                                                border: "1px solid var(--pg-border-soft)",
+                                                borderRadius: 10,
+                                                background: "var(--pg-surface-alt)",
+                                                padding: "11px 12px",
                                                 display: "grid",
                                                 gap: 6,
                                             }}
@@ -6187,9 +6193,10 @@ export default function App() {
 
                                     <div
                                         style={{
-                                            border: "1px solid var(--pg-border)",
-                                            borderRadius: 8,
-                                            padding: "10px 12px",
+                                            border: "1px solid var(--pg-border-soft)",
+                                            borderRadius: 10,
+                                            background: "var(--pg-surface-alt)",
+                                            padding: "11px 12px",
                                             display: "grid",
                                             gap: 10,
                                         }}
@@ -6241,7 +6248,7 @@ export default function App() {
                                             style={{
                                                 margin: 0,
                                                 padding: 8,
-                                                border: "1px solid var(--pg-border)",
+                                                border: "1px solid var(--pg-border-soft)",
                                                 borderRadius: 6,
                                                 background: "var(--pg-surface-alt)",
                                                 color: "var(--pg-text)",
@@ -6265,7 +6272,7 @@ export default function App() {
                                             style={{
                                                 margin: 0,
                                                 padding: 8,
-                                                border: "1px solid var(--pg-border)",
+                                                border: "1px solid var(--pg-border-soft)",
                                                 borderRadius: 6,
                                                 background: "var(--pg-surface-alt)",
                                                 color: "var(--pg-text)",
@@ -6297,7 +6304,7 @@ export default function App() {
                                             style={{
                                                 margin: 0,
                                                 padding: 8,
-                                                border: "1px solid var(--pg-border)",
+                                                border: "1px solid var(--pg-border-soft)",
                                                 borderRadius: 6,
                                                 background: "var(--pg-surface-alt)",
                                                 color: "var(--pg-text)",
@@ -6319,7 +6326,7 @@ export default function App() {
                                             style={{
                                                 margin: 0,
                                                 padding: 8,
-                                                border: "1px solid var(--pg-border)",
+                                                border: "1px solid var(--pg-border-soft)",
                                                 borderRadius: 6,
                                                 background: "var(--pg-surface-alt)",
                                                 color: "var(--pg-text)",
@@ -6404,8 +6411,9 @@ export default function App() {
                                     overflow: "hidden",
                                     display: "flex",
                                     flexDirection: "column",
-                                    border: "1px solid var(--pg-border)",
-                                    borderRadius: 10,
+                                    border: "1px solid var(--pg-panel-border)",
+                                    boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.03)",
+                                    borderRadius: 12,
                                     background: "var(--pg-surface-0)",
                                 }}
                             >
@@ -6414,7 +6422,7 @@ export default function App() {
                                     style={responsePanelHeaderStyle()}
                                 >
                                     <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
-                                        <span style={{ fontWeight: 700, fontSize: 13, color: "var(--pg-text)" }}>
+                                        <span style={{ fontWeight: 700, fontSize: 12, color: "var(--pg-text-muted)" }}>
                                             Response
                                         </span>
                                         <div style={responsePanelTabsStyle()}>
@@ -6464,8 +6472,8 @@ export default function App() {
                                         overflow: "auto",
                                         display: "flex",
                                         flexDirection: "column",
-                                        padding: 8,
-                                        paddingTop: 6,
+                                        padding: 10,
+                                        paddingTop: 8,
                                     }}
                                 >
                                     <ResponsePanel
@@ -7690,8 +7698,26 @@ function requestShellStyle(): React.CSSProperties {
         display: "block",
         width: "100%",
         minWidth: 0,
-        padding: "0 2px",
+        padding: "0 1px",
         flexShrink: 0,
+    };
+}
+
+function requestToolbarRowStyle(): React.CSSProperties {
+    return {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "nowrap",
+        flexShrink: 0,
+        width: "100%",
+        minWidth: 0,
+        borderRadius: 10,
+        border: "1px solid var(--pg-toolbar-border)",
+        background: "var(--pg-toolbar-bg)",
+        boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.03)",
+        padding: "6px 8px",
+        boxSizing: "border-box",
     };
 }
 
@@ -7700,10 +7726,10 @@ function requestPanelHeaderStyle(): React.CSSProperties {
         display: "flex",
         alignItems: "center",
         justifyContent: "flex-start",
-        gap: 10,
-        padding: "8px 10px",
-        borderBottom: "1px solid var(--pg-border)",
-        minHeight: 40,
+        gap: 12,
+        padding: "9px 12px 8px",
+        borderBottom: "1px solid var(--pg-border-soft)",
+        minHeight: 44,
         boxSizing: "border-box",
         flexShrink: 0,
         flexWrap: "nowrap",
@@ -7715,11 +7741,15 @@ function requestPanelTabsStyle(): React.CSSProperties {
     return {
         display: "flex",
         alignItems: "center",
-        gap: 8,
+        gap: 4,
         flexWrap: "nowrap",
         minWidth: 0,
         overflowX: "auto",
         overflowY: "hidden",
+        background: "var(--pg-tab-track-bg)",
+        border: "1px solid var(--pg-tab-track-border)",
+        borderRadius: 9,
+        padding: 3,
     };
 }
 
@@ -7728,10 +7758,10 @@ function responsePanelHeaderStyle(): React.CSSProperties {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        gap: 10,
-        padding: "8px 10px",
-        borderBottom: "1px solid var(--pg-border)",
-        minHeight: 40,
+        gap: 12,
+        padding: "9px 12px 8px",
+        borderBottom: "1px solid var(--pg-border-soft)",
+        minHeight: 44,
         boxSizing: "border-box",
         flexShrink: 0,
         flexWrap: "nowrap",
@@ -7743,17 +7773,21 @@ function responsePanelTabsStyle(): React.CSSProperties {
     return {
         display: "flex",
         alignItems: "center",
-        gap: 8,
+        gap: 4,
         flexWrap: "nowrap",
         minWidth: 0,
         overflowX: "auto",
         overflowY: "hidden",
+        background: "var(--pg-tab-track-bg)",
+        border: "1px solid var(--pg-tab-track-border)",
+        borderRadius: 9,
+        padding: 3,
     };
 }
 
 function responsePanelSummaryTextStyle(): React.CSSProperties {
     return {
-        fontSize: 12,
+        fontSize: 11,
         color: "var(--pg-text-dim)",
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -7761,6 +7795,11 @@ function responsePanelSummaryTextStyle(): React.CSSProperties {
         maxWidth: "46%",
         textAlign: "right",
         minWidth: 0,
+        padding: "5px 9px",
+        borderRadius: 999,
+        border: "1px solid rgba(var(--pg-primary-rgb), 0.36)",
+        background: "rgba(var(--pg-primary-rgb), 0.12)",
+        fontWeight: 600,
     };
 }
 
@@ -7835,12 +7874,15 @@ function dropInsideOutlineStyle(): React.CSSProperties {
 function editorTabStyle(active: boolean): React.CSSProperties {
     return {
         ...buttonStyle(false),
-        height: 26,
-        padding: "0 9px",
+        height: 28,
+        padding: "0 10px",
         fontSize: 12,
-        borderColor: active ? "var(--pg-primary)" : "var(--pg-border)",
-        background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
-        color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
+        borderColor: active ? "var(--pg-tab-active-border)" : "transparent",
+        background: active ? "var(--pg-tab-active-bg)" : "transparent",
+        color: active ? "var(--pg-text)" : "var(--pg-text-muted)",
+        boxShadow: active ? "inset 0 1px 0 rgba(255, 255, 255, 0.05)" : "none",
+        fontWeight: active ? 700 : 600,
+        transition: "border-color 130ms ease, background-color 130ms ease, color 130ms ease",
     };
 }
 
@@ -7848,12 +7890,12 @@ function draftTabContainerStyle(active: boolean): React.CSSProperties {
     return {
         display: "flex",
         alignItems: "center",
-        borderRadius: 7,
+        borderRadius: 9,
         overflow: "hidden",
-        border: active ? "1px solid var(--pg-primary)" : "1px solid var(--pg-border)",
-        background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
+        border: active ? "1px solid var(--pg-tab-active-border)" : "1px solid var(--pg-tab-track-border)",
+        background: active ? "var(--pg-tab-active-bg)" : "var(--pg-tab-track-bg)",
         minWidth: 160,
-        boxShadow: active ? "0 8px 16px rgba(var(--pg-primary-rgb), 0.28)" : "none",
+        boxShadow: active ? "0 3px 10px rgba(var(--pg-primary-rgb), 0.2)" : "none",
     };
 }
 
@@ -7861,8 +7903,8 @@ function draftTabButtonStyle(active: boolean): React.CSSProperties {
     return {
         border: "none",
         background: "transparent",
-        color: active ? "var(--pg-primary-ink)" : "var(--pg-text-dim)",
-        padding: "5px 9px",
+        color: active ? "var(--pg-text)" : "var(--pg-text-dim)",
+        padding: "6px 10px",
         fontWeight: 600,
         fontSize: 12,
         lineHeight: 1.2,
@@ -7878,10 +7920,10 @@ function draftTabButtonStyle(active: boolean): React.CSSProperties {
 
 function draftTabCloseButtonStyle(): React.CSSProperties {
     return {
-        width: 26,
-        height: 26,
+        width: 28,
+        height: 28,
         border: "none",
-        borderLeft: "1px solid rgba(var(--pg-primary-rgb), 0.3)",
+        borderLeft: "1px solid var(--pg-tab-track-border)",
         background: "transparent",
         color: "var(--pg-text-dim)",
         padding: 0,
@@ -7897,10 +7939,10 @@ function openTabDropWrapStyle(dropBefore: boolean, dropAfter: boolean): React.CS
         position: "relative",
         display: "flex",
         alignItems: "stretch",
-        borderRadius: 8,
+        borderRadius: 10,
         paddingLeft: 1,
         paddingRight: 1,
-        background: dropBefore || dropAfter ? "rgba(var(--pg-primary-rgb), 0.08)" : "transparent",
+        background: dropBefore || dropAfter ? "rgba(var(--pg-primary-rgb), 0.12)" : "transparent",
         flexShrink: 0,
     };
 }
@@ -7927,8 +7969,8 @@ function editorPanelStyle(height: number | string, minHeight = 220): React.CSSPr
         minHeight,
         borderRadius: 12,
         overflow: "hidden",
-        border: "1px solid var(--pg-border)",
-        boxShadow: "inset 0 0 0 1px var(--pg-surface-0), 0 14px 28px var(--pg-shadow-color)",
+        border: "1px solid var(--pg-border-soft)",
+        boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 10px 20px var(--pg-shadow-color)",
         background: "var(--pg-editor-deep)",
     };
 }

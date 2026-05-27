@@ -10,15 +10,28 @@
   --pg-surface-0: #0f172a;
   --pg-surface-1: #111827;
   --pg-surface-2: #1f2937;
+  --pg-surface-alt: #0d1b30;
   --pg-surface-gradient: linear-gradient(180deg, #1a2437 0%, #111a2d 100%);
   --pg-surface-soft: #162033;
   --pg-surface-overlay: rgba(15, 23, 42, 0.82);
   --pg-surface-overlay-disabled: rgba(15, 23, 42, 0.55);
+  --pg-toolbar-bg: rgba(15, 23, 42, 0.76);
+  --pg-toolbar-border: rgba(71, 85, 105, 0.42);
+  --pg-panel-border: rgba(71, 85, 105, 0.58);
   --pg-floating-bg: rgba(2, 6, 23, 0.96);
   --pg-popover-bg: rgba(15, 23, 42, 0.98);
   --pg-topbar-trigger-bg: linear-gradient(180deg, #1a2437 0%, #111a2d 100%);
   --pg-topbar-trigger-bg-hover: linear-gradient(180deg, #1d2940 0%, #131f34 100%);
   --pg-topbar-body-toggle-bg: rgba(15, 23, 42, 0.88);
+  --pg-control-bg: rgba(17, 24, 39, 0.86);
+  --pg-control-bg-hover: rgba(30, 41, 59, 0.94);
+  --pg-control-height: 30px;
+  --pg-control-radius: 8px;
+  --pg-control-padding-x: 10px;
+  --pg-tab-track-bg: rgba(15, 23, 42, 0.82);
+  --pg-tab-track-border: rgba(71, 85, 105, 0.45);
+  --pg-tab-active-bg: rgba(var(--pg-primary-rgb), 0.18);
+  --pg-tab-active-border: rgba(var(--pg-primary-rgb), 0.56);
   --pg-json-body-bg: linear-gradient(
     180deg,
     rgba(13, 28, 40, 0.98) 0%,
@@ -90,15 +103,25 @@
   --pg-surface-0: #ffffff;
   --pg-surface-1: #f7f9fc;
   --pg-surface-2: #e9eef5;
+  --pg-surface-alt: #f1f5fb;
   --pg-surface-gradient: linear-gradient(180deg, #ffffff 0%, #edf2f8 100%);
   --pg-surface-soft: #eef3f8;
   --pg-surface-overlay: rgba(248, 250, 252, 0.94);
   --pg-surface-overlay-disabled: rgba(241, 245, 249, 0.95);
+  --pg-toolbar-bg: rgba(255, 255, 255, 0.9);
+  --pg-toolbar-border: rgba(148, 163, 184, 0.4);
+  --pg-panel-border: rgba(148, 163, 184, 0.58);
   --pg-floating-bg: rgba(255, 255, 255, 0.98);
   --pg-popover-bg: rgba(255, 255, 255, 0.98);
   --pg-topbar-trigger-bg: linear-gradient(180deg, #ffffff 0%, #edf2f8 100%);
   --pg-topbar-trigger-bg-hover: linear-gradient(180deg, #ffffff 0%, #e5edf7 100%);
   --pg-topbar-body-toggle-bg: rgba(255, 255, 255, 0.92);
+  --pg-control-bg: rgba(255, 255, 255, 0.95);
+  --pg-control-bg-hover: #ffffff;
+  --pg-tab-track-bg: rgba(241, 245, 249, 0.92);
+  --pg-tab-track-border: rgba(148, 163, 184, 0.42);
+  --pg-tab-active-bg: rgba(var(--pg-primary-rgb), 0.12);
+  --pg-tab-active-border: rgba(var(--pg-primary-rgb), 0.52);
   --pg-json-body-bg: linear-gradient(
     180deg,
     rgba(248, 250, 252, 1) 0%,
@@ -204,21 +227,22 @@ input,
 select,
 button,
 textarea {
-  border-radius: 8px;
+  border-radius: var(--pg-control-radius);
   border: 1px solid var(--pg-border);
-  padding: 4px 9px;
-  font-size: 0.88em;
+  padding: 4px var(--pg-control-padding-x);
+  min-height: var(--pg-control-height);
+  font-size: 12px;
   font-weight: 500;
   font-family: inherit;
   color: var(--pg-text);
-  background: var(--pg-surface-gradient);
-  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
-  box-shadow: 0 2px 8px var(--pg-shadow-color);
+  background: var(--pg-control-bg);
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease, transform 120ms ease;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   outline: none;
 }
 
 select{
-  height: 28px;
+  height: var(--pg-control-height);
 }
 
 :root[data-theme="dark"] select {
@@ -286,8 +310,13 @@ textarea:hover {
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--pg-primary-soft);
-  box-shadow: 0 4px 12px rgba(var(--pg-primary-rgb), 0.22);
+  background: var(--pg-control-bg-hover);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 3px 8px var(--pg-shadow-color);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(0.5px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 button:disabled,
@@ -296,16 +325,17 @@ select:disabled,
 textarea:disabled {
   cursor: not-allowed;
   color: var(--pg-disabled);
+  background: var(--pg-surface-1);
   box-shadow: none;
-  opacity: 0.85;
+  opacity: 0.88;
 }
 
 input:focus,
 select:focus,
 textarea:focus,
 button:focus-visible {
-  border-color: var(--pg-primary);
-  box-shadow: 0 0 0 2px rgba(var(--pg-primary-rgb), 0.2), 0 4px 12px rgba(var(--pg-primary-rgb), 0.16);
+  border-color: rgba(var(--pg-primary-rgb), 0.92);
+  box-shadow: 0 0 0 2px rgba(var(--pg-primary-rgb), 0.18);
 }
 
 h2,
@@ -344,7 +374,7 @@ th {
 }
 
 .pg-topbar-selector-trigger {
-  height: 28px;
+  height: var(--pg-control-height);
   min-width: 170px;
   max-width: 260px;
   display: inline-flex;
@@ -505,21 +535,21 @@ button.pg-topbar-selector-trigger:hover:not(:disabled) {
 }
 
 .pg-app-select-trigger {
-  height: 28px;
+  height: var(--pg-control-height);
   min-width: 96px;
   max-width: 100%;
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border-radius: 8px;
+  border-radius: var(--pg-control-radius);
   border: 1px solid var(--pg-border);
-  background: var(--pg-surface-gradient);
+  background: var(--pg-control-bg);
   color: var(--pg-text);
-  padding: 0 10px;
+  padding: 0 var(--pg-control-padding-x);
   font-size: 12px;
   font-weight: 600;
-  box-shadow: 0 3px 10px var(--pg-shadow-color);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   cursor: pointer;
   transition: border-color 130ms ease, box-shadow 130ms ease, background 130ms ease;
   -webkit-user-select: none;
@@ -528,6 +558,7 @@ button.pg-topbar-selector-trigger:hover:not(:disabled) {
 
 button.pg-app-select-trigger:hover:not(:disabled) {
   border-color: var(--pg-border-muted);
+  background: var(--pg-control-bg-hover);
 }
 
 .pg-app-select-trigger:focus-visible,
@@ -598,12 +629,12 @@ button.pg-app-select-trigger:hover:not(:disabled) {
 }
 
 .pg-app-select-item[data-highlighted] {
-  background: rgba(var(--pg-primary-rgb), 0.17);
+  background: rgba(var(--pg-primary-rgb), 0.14);
   color: var(--pg-text);
 }
 
 .pg-app-select-item[data-state="checked"] {
-  background: rgba(var(--pg-primary-rgb), 0.24);
+  background: rgba(var(--pg-primary-rgb), 0.2);
   color: var(--pg-text);
 }
 
