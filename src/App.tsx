@@ -5459,27 +5459,31 @@ export default function App() {
                                 }}
                             >
                                 <button
+                                    type="button"
+                                    className="pg-sidebar-header-action"
                                     style={{
-                                        ...buttonStyle(false),
-                                        width: sidebarCollapsed ? 30 : 28,
-                                        minWidth: sidebarCollapsed ? 30 : 28,
-                                        padding: 0,
-                                        borderRadius: 6,
+                                        ...sidebarHeaderActionButtonStyle(false, sidebarCollapsed),
                                     }}
                                     onClick={toggleSidebarCollapsed}
                                     title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                                     aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                                 >
-                                    {sidebarCollapsed ? ">" : "<"}
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        aria-hidden="true"
+                                        style={sidebarHeaderChevronIconStyle(sidebarCollapsed)}
+                                    >
+                                        <path d="M15 18L9 12L15 6" />
+                                    </svg>
                                 </button>
                                 <button
+                                    type="button"
+                                    className="pg-sidebar-header-action"
                                     ref={rootAddButtonRef}
                                     style={{
-                                        ...buttonStyle(!current),
-                                        width: sidebarCollapsed ? 30 : 28,
-                                        minWidth: sidebarCollapsed ? 30 : 28,
-                                        padding: 0,
-                                        borderRadius: 6,
+                                        ...sidebarHeaderActionButtonStyle(!current, sidebarCollapsed),
                                     }}
                                     disabled={!current}
                                     onClick={() => {
@@ -5488,7 +5492,16 @@ export default function App() {
                                     }}
                                     title="Add request or folder"
                                 >
-                                    +
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        aria-hidden="true"
+                                        style={sidebarHeaderIconStyle()}
+                                    >
+                                        <path d="M12 5V19" />
+                                        <path d="M5 12H19" />
+                                    </svg>
                                 </button>
                             </div>
                         </div>
@@ -6882,20 +6895,22 @@ export default function App() {
                             position: "fixed",
                             top: rootAddMenu.y,
                             left: rootAddMenu.x,
-                            minWidth: 180,
-                            padding: 6,
-                            borderRadius: 10,
-                            border: "1px solid var(--pg-border)",
+                            minWidth: 190,
+                            padding: 5,
+                            borderRadius: 9,
+                            border: "1px solid var(--pg-border-soft)",
                             background: "var(--pg-surface-1)",
-                            boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+                            boxShadow: "0 12px 30px rgba(0,0,0,0.32)",
                             display: "flex",
                             flexDirection: "column",
-                            gap: 4,
+                            gap: 3,
                         }}
                         onClick={(event) => event.stopPropagation()}
                     >
                         <button
-                            style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                            type="button"
+                            className="pg-sidebar-add-menu-item"
+                            style={sidebarAddMenuItemStyle()}
                             onClick={() => {
                                 setRootAddMenu(null);
                                 onNewRequest(null);
@@ -6907,36 +6922,74 @@ export default function App() {
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "space-between",
-                                    gap: 12,
+                                    gap: 10,
                                     width: "100%",
                                 }}
                             >
-                                <span>Add request</span>
+                                <span style={sidebarAddMenuLabelWrapStyle()}>
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        aria-hidden="true"
+                                        style={sidebarAddMenuIconStyle()}
+                                    >
+                                        <path d="M12 5V19" />
+                                        <path d="M5 12H19" />
+                                    </svg>
+                                    <span>Add request</span>
+                                </span>
                                 <span
-                                    style={{
-                                        fontSize: 11,
-                                        color: "var(--pg-text-muted)",
-                                        fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
-                                    }}
+                                    style={sidebarAddMenuShortcutStyle()}
                                 >
                                     {SHORTCUT_LABELS.newRequest}
                                 </span>
                             </span>
                         </button>
                         <button
-                            style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                            type="button"
+                            className="pg-sidebar-add-menu-item"
+                            style={sidebarAddMenuItemStyle()}
                             onClick={() => {
                                 setRootAddMenu(null);
                                 openCreateFolder(null);
                             }}
                         >
-                            Add folder
+                            <span style={sidebarAddMenuLabelWrapStyle()}>
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    aria-hidden="true"
+                                    style={sidebarAddMenuIconStyle()}
+                                >
+                                    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                                    <path d="M12 10v6" />
+                                    <path d="M9 13h6" />
+                                </svg>
+                                <span>Add folder</span>
+                            </span>
                         </button>
                         <button
-                            style={{ ...buttonStyle(false), width: "100%", textAlign: "left" }}
+                            type="button"
+                            className="pg-sidebar-add-menu-item"
+                            style={sidebarAddMenuItemStyle()}
                             onClick={() => invoke("open_app_data_dir")}
                         >
-                            Open data folder
+                            <span style={sidebarAddMenuLabelWrapStyle()}>
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    aria-hidden="true"
+                                    style={sidebarAddMenuIconStyle()}
+                                >
+                                    <path d="M15 3h6v6" />
+                                    <path d="M10 14L21 3" />
+                                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                                </svg>
+                                <span>Open data folder</span>
+                            </span>
                         </button>
                     </div>
                 </div>
@@ -8150,6 +8203,94 @@ function responsePanelSummaryTextStyle(): React.CSSProperties {
         border: "1px solid rgba(var(--pg-primary-rgb), 0.36)",
         background: "rgba(var(--pg-primary-rgb), 0.12)",
         fontWeight: 600,
+    };
+}
+
+function sidebarHeaderActionButtonStyle(disabled: boolean, compact: boolean): React.CSSProperties {
+    const size = compact ? 30 : 28;
+    return {
+        ...buttonStyle(disabled),
+        width: size,
+        minWidth: size,
+        height: size,
+        minHeight: size,
+        padding: 0,
+        borderRadius: 6,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        lineHeight: 1,
+        color: disabled ? "var(--pg-disabled)" : "var(--pg-text-muted)",
+        boxShadow: disabled ? "none" : "inset 0 1px 0 rgba(255, 255, 255, 0.04)",
+    };
+}
+
+function sidebarHeaderIconStyle(): React.CSSProperties {
+    return {
+        width: 14,
+        height: 14,
+        display: "block",
+        stroke: "currentColor",
+        strokeWidth: 2,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        flexShrink: 0,
+    };
+}
+
+function sidebarHeaderChevronIconStyle(collapsed: boolean): React.CSSProperties {
+    return {
+        ...sidebarHeaderIconStyle(),
+        transform: collapsed ? "rotate(180deg)" : "rotate(0deg)",
+        transition: "transform 150ms cubic-bezier(0.2, 0, 0, 1)",
+    };
+}
+
+function sidebarAddMenuItemStyle(): React.CSSProperties {
+    return {
+        ...buttonStyle(false),
+        width: "100%",
+        height: 28,
+        minHeight: 28,
+        borderRadius: 6,
+        padding: "0 8px",
+        textAlign: "left",
+        boxShadow: "none",
+        display: "flex",
+        alignItems: "center",
+    };
+}
+
+function sidebarAddMenuLabelWrapStyle(): React.CSSProperties {
+    return {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        minWidth: 0,
+    };
+}
+
+function sidebarAddMenuIconStyle(): React.CSSProperties {
+    return {
+        width: 13,
+        height: 13,
+        display: "block",
+        stroke: "currentColor",
+        strokeWidth: 2,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        color: "var(--pg-text-muted)",
+        flexShrink: 0,
+    };
+}
+
+function sidebarAddMenuShortcutStyle(): React.CSSProperties {
+    return {
+        fontSize: 10,
+        lineHeight: 1,
+        color: "var(--pg-text-muted)",
+        fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
+        letterSpacing: 0.15,
     };
 }
 

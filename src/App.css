@@ -314,6 +314,27 @@ body.bifrost-sidebar-resizing * {
   border-color: rgba(var(--pg-primary-rgb), 0.28) !important;
 }
 
+.pg-sidebar-header-action:hover:not(:disabled) {
+  background: rgba(var(--pg-primary-rgb), 0.11) !important;
+  border-color: rgba(var(--pg-primary-rgb), 0.3) !important;
+  color: var(--pg-text) !important;
+  box-shadow: none !important;
+}
+
+.pg-sidebar-header-action:active:not(:disabled) {
+  background: rgba(var(--pg-primary-rgb), 0.16) !important;
+}
+
+.pg-sidebar-add-menu-item {
+  box-shadow: none !important;
+}
+
+.pg-sidebar-add-menu-item:hover:not(:disabled) {
+  background: rgba(var(--pg-primary-rgb), 0.1) !important;
+  border-color: rgba(var(--pg-primary-rgb), 0.26) !important;
+  box-shadow: none !important;
+}
+
 .pg-sidebar-row-button:hover:not(:disabled) {
   background: rgba(var(--pg-primary-rgb), 0.1) !important;
   border-color: rgba(var(--pg-primary-rgb), 0.24) !important;
