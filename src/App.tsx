@@ -306,9 +306,15 @@ const RESPONSES_STORAGE_KEY = "bifrost:last-responses:v1";
 const SAVED_REQUESTS_COLLAPSED_FOLDERS_STORAGE_KEY = "bifrost:saved-requests:collapsed-folders:v1";
 const GENERATED_HEADERS_VISIBLE_STORAGE_KEY = "bifrost:generated-headers:visible:v1";
 const REQUEST_RESPONSE_PANEL_STORAGE_PREFIX = "bifrost:request-response-panel:v2";
+const SIDEBAR_WIDTH_STORAGE_KEY = "bifrost:sidebar-width:v1";
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "bifrost:sidebar-collapsed:v1";
 const REQUEST_RESPONSE_DIVIDER_HEIGHT_PX = 6;
 const REQUEST_PANEL_MIN_HEIGHT_PX = 56;
 const RESPONSE_PANEL_MIN_HEIGHT_PX = 56;
+const SIDEBAR_DEFAULT_WIDTH_PX = 246;
+const SIDEBAR_MIN_WIDTH_PX = 188;
+const SIDEBAR_MAX_WIDTH_PX = 420;
+const SIDEBAR_COLLAPSED_WIDTH_PX = 56;
 const IS_MACOS =
     typeof navigator !== "undefined" &&
     /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
@@ -648,6 +654,33 @@ function writeBooleanPreference(storageKey: string, value: boolean) {
     }
 }
 
+function readNumberPreference(storageKey: string, defaultValue: number): number {
+    if (typeof window === "undefined") return defaultValue;
+
+    try {
+        const raw = window.localStorage.getItem(storageKey);
+        if (raw === null) return defaultValue;
+        const value = Number(raw);
+        return Number.isFinite(value) ? value : defaultValue;
+    } catch {
+        return defaultValue;
+    }
+}
+
+function writeNumberPreference(storageKey: string, value: number) {
+    if (typeof window === "undefined") return;
+
+    try {
+        window.localStorage.setItem(storageKey, String(value));
+    } catch {
+        // ignore storage write failures
+    }
+}
+
+function clampSidebarWidth(widthPx: number): number {
+    return Math.min(SIDEBAR_MAX_WIDTH_PX, Math.max(SIDEBAR_MIN_WIDTH_PX, widthPx));
+}
+
 function readPersistedTabsState(): PersistedTabsState {
     if (typeof window === "undefined") return {};
 
@@ -897,6 +930,13 @@ export default function App() {
     const [showGeneratedHeaders, setShowGeneratedHeaders] = useState<boolean>(() =>
         readBooleanPreference(GENERATED_HEADERS_VISIBLE_STORAGE_KEY, true)
     );
+    const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() =>
+        readBooleanPreference(SIDEBAR_COLLAPSED_STORAGE_KEY, false)
+    );
+    const [sidebarWidthPx, setSidebarWidthPx] = useState<number>(() =>
+        clampSidebarWidth(readNumberPreference(SIDEBAR_WIDTH_STORAGE_KEY, SIDEBAR_DEFAULT_WIDTH_PX))
+    );
+    const [isSidebarResizing, setIsSidebarResizing] = useState(false);
     const [requestResponseSplitElement, setRequestResponseSplitElement] =
         useState<HTMLDivElement | null>(null);
     const [contextMenu, setContextMenu] = useState<SidebarContextMenu | null>(null);
@@ -982,6 +1022,8 @@ export default function App() {
     const insomniaImportInputRef = useRef<HTMLInputElement | null>(null);
     const curlImportTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const rootAddButtonRef = useRef<HTMLButtonElement | null>(null);
+    const sidebarResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
+    const sidebarExpandedWidthRef = useRef(sidebarWidthPx);
     const rawJsonEditorRef = useRef<{ getValue: () => string; setValue: (value: string) => void } | null>(null);
     const requestResponseSplitRef = useRef<HTMLDivElement | null>(null);
     const expandedFoldersRef = useRef<Record<string, boolean>>({});
@@ -1021,6 +1063,75 @@ export default function App() {
         setRequestResponseSplitElement(node);
     }, []);
 
+    const resolveSidebarMaxWidthPx = useCallback(() => {
+        if (typeof window === "undefined") return SIDEBAR_MAX_WIDTH_PX;
+        return Math.max(
+            SIDEBAR_MIN_WIDTH_PX,
+            Math.min(SIDEBAR_MAX_WIDTH_PX, Math.floor(window.innerWidth - 360))
+        );
+    }, []);
+
+    const clampSidebarWidthToViewport = useCallback(
+        (widthPx: number) => {
+            const maxWidth = resolveSidebarMaxWidthPx();
+            return Math.min(maxWidth, Math.max(SIDEBAR_MIN_WIDTH_PX, widthPx));
+        },
+        [resolveSidebarMaxWidthPx]
+    );
+
+    const sidebarEffectiveWidthPx = sidebarCollapsed
+        ? SIDEBAR_COLLAPSED_WIDTH_PX
+        : clampSidebarWidthToViewport(sidebarWidthPx);
+
+    const onSidebarResizeStart = useCallback(
+        (event: React.MouseEvent<HTMLDivElement>) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            if (sidebarCollapsed) {
+                setSidebarCollapsed(false);
+            }
+            const startWidth = sidebarCollapsed
+                ? clampSidebarWidthToViewport(sidebarExpandedWidthRef.current)
+                : clampSidebarWidthToViewport(sidebarWidthPx);
+            sidebarResizeStateRef.current = {
+                startX: event.clientX,
+                startWidth,
+            };
+            setSidebarWidthPx(startWidth);
+            setIsSidebarResizing(true);
+        },
+        [clampSidebarWidthToViewport, sidebarCollapsed, sidebarWidthPx]
+    );
+
+    const onSidebarResizeHandleKeyDown = useCallback(
+        (event: React.KeyboardEvent<HTMLDivElement>) => {
+            const step = 16;
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            if (sidebarCollapsed && event.key === "ArrowRight") {
+                setSidebarCollapsed(false);
+                setSidebarWidthPx(clampSidebarWidthToViewport(sidebarExpandedWidthRef.current));
+                return;
+            }
+            if (sidebarCollapsed) return;
+            const delta = event.key === "ArrowRight" ? step : -step;
+            setSidebarWidthPx((previous) =>
+                clampSidebarWidthToViewport(previous + delta)
+            );
+        },
+        [clampSidebarWidthToViewport, sidebarCollapsed]
+    );
+
+    function toggleSidebarCollapsed() {
+        if (sidebarCollapsed) {
+            setSidebarCollapsed(false);
+            setSidebarWidthPx(clampSidebarWidthToViewport(sidebarExpandedWidthRef.current));
+            return;
+        }
+        sidebarExpandedWidthRef.current = clampSidebarWidthToViewport(sidebarWidthPx);
+        setSidebarCollapsed(true);
+    }
+
     useEffect(() => {
         if (executionRuntimeActive) return;
         if (Object.keys(executionRuntimeVariables).length === 0) return;
@@ -1033,6 +1144,66 @@ export default function App() {
             showGeneratedHeaders
         );
     }, [showGeneratedHeaders]);
+
+    useEffect(() => {
+        writeBooleanPreference(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed);
+    }, [sidebarCollapsed]);
+
+    useEffect(() => {
+        if (sidebarCollapsed) return;
+        writeNumberPreference(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidthPx);
+    }, [sidebarCollapsed, sidebarWidthPx]);
+
+    useEffect(() => {
+        if (sidebarCollapsed) return;
+        sidebarExpandedWidthRef.current = sidebarWidthPx;
+    }, [sidebarCollapsed, sidebarWidthPx]);
+
+    useEffect(() => {
+        if (sidebarCollapsed) return;
+        setSidebarWidthPx((previous) => clampSidebarWidthToViewport(previous));
+    }, [clampSidebarWidthToViewport, sidebarCollapsed]);
+
+    useEffect(() => {
+        if (sidebarCollapsed) return;
+        if (typeof window === "undefined") return;
+        function onResize() {
+            setSidebarWidthPx((previous) => clampSidebarWidthToViewport(previous));
+        }
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, [clampSidebarWidthToViewport, sidebarCollapsed]);
+
+    useEffect(() => {
+        if (!isSidebarResizing) return;
+        if (typeof window === "undefined") return;
+        function onMouseMove(event: MouseEvent) {
+            const state = sidebarResizeStateRef.current;
+            if (!state) return;
+            const deltaX = event.clientX - state.startX;
+            const nextWidth = clampSidebarWidthToViewport(state.startWidth + deltaX);
+            setSidebarWidthPx(nextWidth);
+        }
+
+        function onMouseUp() {
+            setIsSidebarResizing(false);
+            sidebarResizeStateRef.current = null;
+        }
+
+        const bodyStyle = document.body.style;
+        const previousBodyCursor = bodyStyle.cursor;
+        bodyStyle.cursor = "col-resize";
+        document.body.classList.add("bifrost-sidebar-resizing");
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp);
+
+        return () => {
+            window.removeEventListener("mousemove", onMouseMove);
+            window.removeEventListener("mouseup", onMouseUp);
+            bodyStyle.cursor = previousBodyCursor;
+            document.body.classList.remove("bifrost-sidebar-resizing");
+        };
+    }, [clampSidebarWidthToViewport, isSidebarResizing]);
 
     function resetCollapsedFoldersHydrationRefs() {
         hydratedCollapsedFoldersCollectionIdRef.current = null;
@@ -5164,10 +5335,10 @@ export default function App() {
             <div
                 style={{
                     height: "calc(100vh - var(--pg-topbar-height))",
-                    padding: "10px 24px",
+                    padding: "8px 12px 10px",
                     fontFamily: "system-ui",
                     display: "flex",
-                    gap: 24,
+                    gap: 0,
                     overflow: "hidden",
                     boxSizing: "border-box",
                 }}
@@ -5177,11 +5348,18 @@ export default function App() {
                     style={{
                         display: "flex",
                         flexDirection: "column",
-                        width: 280,
-                        minWidth: 280,
+                        width: sidebarEffectiveWidthPx,
+                        minWidth: sidebarEffectiveWidthPx,
+                        maxWidth: sidebarEffectiveWidthPx,
                         height: "100%",
                         minHeight: 0,
                         flexShrink: 0,
+                        border: "1px solid var(--pg-border-soft)",
+                        borderRadius: 10,
+                        background: "var(--pg-surface-alt)",
+                        boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.03)",
+                        transition: isSidebarResizing ? undefined : "width 130ms ease",
+                        overflow: "hidden",
                     }}
                 >
                     <div
@@ -5191,13 +5369,13 @@ export default function App() {
                             minHeight: 0,
                             flex: 1,
                             overflow: "hidden",
+                            padding: sidebarCollapsed ? "6px 5px" : "8px 9px",
                         }}
                     >
                         <div
                             className="no-select"
                             style={{
-                                marginTop: 16,
-                                marginBottom: 8,
+                                marginBottom: 6,
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "space-between",
@@ -5211,19 +5389,51 @@ export default function App() {
                                 setRootAddMenu({ x: event.clientX, y: event.clientY });
                             }}
                         >
-                            <h3 style={{ margin: 0 }}>Saved Requests</h3>
+                            {!sidebarCollapsed && (
+                                <h3
+                                    style={{
+                                        margin: 0,
+                                        fontSize: 12,
+                                        fontWeight: 700,
+                                        letterSpacing: 0.2,
+                                        color: "var(--pg-text-muted)",
+                                    }}
+                                >
+                                    Saved Requests
+                                </h3>
+                            )}
                             <div style={{ display: "flex", gap: 6 }}>
                                 <button
+                                    style={{
+                                        ...buttonStyle(false),
+                                        width: 28,
+                                        minWidth: 28,
+                                        padding: 0,
+                                        borderRadius: 6,
+                                    }}
+                                    onClick={toggleSidebarCollapsed}
+                                    title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                                    aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                                >
+                                    {sidebarCollapsed ? ">" : "<"}
+                                </button>
+                                <button
                                     ref={rootAddButtonRef}
-                                    style={{ ...buttonStyle(!current), width: 34, padding: 0 }}
+                                    style={{
+                                        ...buttonStyle(!current),
+                                        width: 28,
+                                        minWidth: 28,
+                                        padding: 0,
+                                        borderRadius: 6,
+                                    }}
                                     disabled={!current}
                                     onClick={() => {
                                         setContextMenu(null);
                                         openRootAddMenuFromButton();
                                     }}
-                                    title="Add..."
+                                    title="Add request or folder"
                                 >
-                                    ...
+                                    +
                                 </button>
                             </div>
                         </div>
@@ -5233,11 +5443,11 @@ export default function App() {
                             style={{
                                 display: "flex",
                                 flexDirection: "column",
-                                gap: 4,
+                                gap: 2,
                                 overflowY: "auto",
                                 minHeight: 0,
                                 flex: 1,
-                                paddingRight: 4,
+                                paddingRight: sidebarCollapsed ? 0 : 2,
                             }}
                         >
                             {current &&
@@ -5260,8 +5470,10 @@ export default function App() {
                                     const missingRequest =
                                         row.kind === "request" && row.request === null;
                                     const rowIndentPx =
-                                        row.depth * 10 +
-                                        (row.kind === "request" && row.parentFolderId ? 6 : 0);
+                                        sidebarCollapsed
+                                            ? Math.min(row.depth * 6, 16)
+                                            : row.depth * 10 +
+                                              (row.kind === "request" && row.parentFolderId ? 6 : 0);
 
                                     return (
                                         <div
@@ -5328,6 +5540,8 @@ export default function App() {
                                         >
                                             {showDropBefore && <div style={dropMarkerStyle("before")} />}
                                             <button
+                                                className="pg-sidebar-row-button"
+                                                data-sidebar-active={isSelected ? "true" : "false"}
                                                 onMouseDown={(e) => beginRequestDrag(e, row.nodeId)}
                                                 onClick={() => {
                                                     if (row.kind === "folder") {
@@ -5353,7 +5567,9 @@ export default function App() {
                                                 style={{
                                                     ...requestListItemStyle(
                                                         isSelected,
-                                                        hasLocalDraft
+                                                        hasLocalDraft,
+                                                        sidebarCollapsed,
+                                                        row.kind === "folder"
                                                     ),
                                                     width: "100%",
                                                     minWidth: 0,
@@ -5361,7 +5577,9 @@ export default function App() {
                                                     flexShrink: 0,
                                                     cursor: draggedRequestId === row.nodeId ? "grabbing" : "pointer",
                                                     userSelect: "none",
-                                                    paddingLeft: 10,
+                                                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                                                    paddingLeft: sidebarCollapsed ? 5 : 8,
+                                                    paddingRight: sidebarCollapsed ? 5 : 8,
                                                     opacity: missingRequest ? 0.75 : 1,
                                                 }}
                                             >
@@ -5370,7 +5588,7 @@ export default function App() {
                                                         style={{
                                                             display: "flex",
                                                             alignItems: "center",
-                                                            gap: 8,
+                                                            gap: sidebarCollapsed ? 3 : 7,
                                                             width: "100%",
                                                             minWidth: 0,
                                                         }}
@@ -5383,13 +5601,14 @@ export default function App() {
                                                                 justifyContent: "center",
                                                                 color: "var(--pg-text-muted)",
                                                                 flexShrink: 0,
+                                                                fontSize: 10,
                                                             }}
                                                         >
                                                             {expandedFolders[row.folderId] === false ? "▸" : "▾"}
                                                         </span>
                                                         <svg
-                                                            width="14"
-                                                            height="14"
+                                                            width={sidebarCollapsed ? "13" : "12"}
+                                                            height={sidebarCollapsed ? "13" : "12"}
                                                             viewBox="0 0 24 24"
                                                             fill="none"
                                                             xmlns="http://www.w3.org/2000/svg"
@@ -5398,37 +5617,63 @@ export default function App() {
                                                             <path
                                                                 d="M3 7.5C3 6.67157 3.67157 6 4.5 6H9.1C9.56335 6 9.99834 6.214 10.2789 6.57998L11.4211 8.07002C11.7017 8.436 12.1367 8.65 12.6 8.65H19.5C20.3284 8.65 21 9.32157 21 10.15V17.5C21 18.3284 20.3284 19 19.5 19H4.5C3.67157 19 3 18.3284 3 17.5V7.5Z"
                                                                 stroke="currentColor"
-                                                                strokeWidth="1.8"
+                                                                strokeWidth="1.7"
                                                                 strokeLinejoin="round"
                                                             />
                                                         </svg>
-                                                        <span
-                                                            style={{
-                                                                flex: 1,
-                                                                minWidth: 0,
-                                                                overflow: "hidden",
-                                                                textOverflow: "ellipsis",
-                                                                whiteSpace: "nowrap",
-                                                            }}
-                                                        >
-                                                            {row.name}
-                                                        </span>
+                                                        {!sidebarCollapsed && (
+                                                            <span
+                                                                style={{
+                                                                    flex: 1,
+                                                                    minWidth: 0,
+                                                                    overflow: "hidden",
+                                                                    textOverflow: "ellipsis",
+                                                                    whiteSpace: "nowrap",
+                                                                    fontWeight: 640,
+                                                                    fontSize: 12,
+                                                                    color: "var(--pg-text)",
+                                                                }}
+                                                            >
+                                                                {row.name}
+                                                            </span>
+                                                        )}
                                                     </span>
                                                 ) : row.request ? (
                                                     <span
                                                         style={{
-                                                            display: "block",
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            gap: 7,
                                                             width: "100%",
                                                             minWidth: 0,
-                                                            overflow: "hidden",
-                                                            textOverflow: "ellipsis",
-                                                            whiteSpace: "nowrap",
                                                         }}
                                                         title={`${row.request.method.toUpperCase()} ${row.request.name}`}
                                                     >
-                                                        {`${row.request.method.toUpperCase()} ${row.request.name}${
-                                                            hasLocalDraft ? " ●" : ""
-                                                        }`}
+                                                        <span
+                                                            style={requestMethodBadgeStyle(
+                                                                row.request.method,
+                                                                isSelected,
+                                                                sidebarCollapsed
+                                                            )}
+                                                        >
+                                                            {requestMethodLabel(row.request.method, sidebarCollapsed)}
+                                                        </span>
+                                                        {!sidebarCollapsed && (
+                                                            <span
+                                                                style={{
+                                                                    flex: 1,
+                                                                    minWidth: 0,
+                                                                    overflow: "hidden",
+                                                                    textOverflow: "ellipsis",
+                                                                    whiteSpace: "nowrap",
+                                                                    fontSize: 12,
+                                                                    color: "var(--pg-text-dim)",
+                                                                }}
+                                                            >
+                                                                {row.request.name}
+                                                                {hasLocalDraft ? " ●" : ""}
+                                                            </span>
+                                                        )}
                                                     </span>
                                                 ) : (
                                                     <span
@@ -5457,13 +5702,48 @@ export default function App() {
                                     );
                                 })}
                             {current && sidebarRows.length === 0 && (
-                                <div style={{ fontSize: 13, color: "var(--pg-text-muted)" }}>
-                                    Empty collection. Create a request or a folder.
+                                <div
+                                    style={{
+                                        fontSize: sidebarCollapsed ? 11 : 12,
+                                        color: "var(--pg-text-muted)",
+                                        textAlign: sidebarCollapsed ? "center" : "left",
+                                        padding: sidebarCollapsed ? "6px 2px" : "4px 2px",
+                                    }}
+                                >
+                                    {sidebarCollapsed ? "No items" : "Empty collection. Create a request or a folder."}
                                 </div>
                             )}
                         </div>
                     </div>
                 </div>
+
+                <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="Resize sidebar"
+                    aria-valuemin={SIDEBAR_MIN_WIDTH_PX}
+                    aria-valuemax={SIDEBAR_MAX_WIDTH_PX}
+                    aria-valuenow={sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH_PX : sidebarWidthPx}
+                    tabIndex={0}
+                    onMouseDown={onSidebarResizeStart}
+                    onKeyDown={onSidebarResizeHandleKeyDown}
+                    className="no-select pg-sidebar-divider"
+                    style={{
+                        width: 8,
+                        cursor: "col-resize",
+                        flexShrink: 0,
+                        marginInline: 4,
+                        borderRadius: 999,
+                        background: isSidebarResizing
+                            ? "rgba(var(--pg-primary-rgb), 0.36)"
+                            : "transparent",
+                        border: isSidebarResizing
+                            ? "1px solid rgba(var(--pg-primary-rgb), 0.5)"
+                            : "1px solid transparent",
+                        transition: "background-color 120ms ease, border-color 120ms ease",
+                    }}
+                    title="Drag to resize sidebar"
+                />
 
                 {/* Main */}
                 <div
@@ -5471,7 +5751,7 @@ export default function App() {
                         flex: 1,
                         display: "flex",
                         flexDirection: "column",
-                        gap :10,
+                        gap: 10,
                         minWidth: 0,
                         minHeight: 0,
                         overflow: "hidden",
@@ -7803,21 +8083,97 @@ function responsePanelSummaryTextStyle(): React.CSSProperties {
     };
 }
 
-function requestListItemStyle(active: boolean, hasLocalDraft: boolean): React.CSSProperties {
+function requestListItemStyle(
+    active: boolean,
+    hasLocalDraft: boolean,
+    compact: boolean,
+    folderRow: boolean
+): React.CSSProperties {
     return {
-        ...buttonStyle(false),
-        height: 28,
-        padding: "0 10px",
-        borderColor: active
-            ? "var(--pg-primary)"
-            : hasLocalDraft
-                ? "var(--pg-primary-soft)"
-                : "var(--pg-border)",
-        background: active ? "var(--pg-primary)" : "var(--pg-surface-gradient)",
-        boxShadow: active ? "0 8px 16px rgba(var(--pg-primary-rgb), 0.28)" : "none",
-        color: active ? "var(--pg-primary-ink)" : "var(--pg-text)",
-        fontWeight: active ? 700 : 500,
+        height: compact ? 22 : 24,
+        minHeight: compact ? 22 : 24,
+        borderRadius: 7,
+        border: `1px solid ${
+            active
+                ? "rgba(var(--pg-primary-rgb), 0.54)"
+                : hasLocalDraft
+                  ? "rgba(var(--pg-primary-rgb), 0.34)"
+                  : "transparent"
+        }`,
+        background: active
+            ? "rgba(var(--pg-primary-rgb), 0.16)"
+            : folderRow
+              ? "rgba(148, 163, 184, 0.06)"
+              : "transparent",
+        color: active ? "var(--pg-text)" : "var(--pg-text-dim)",
+        fontWeight: folderRow ? 640 : 500,
         fontSize: 12,
+        boxShadow: "none",
+        transition: "background-color 130ms ease, border-color 130ms ease, color 130ms ease",
+        outline: "none",
+        cursor: "pointer",
+    };
+}
+
+function requestMethodLabel(method: Request["method"], compact: boolean): string {
+    const upper = method.toUpperCase();
+    if (!compact) return upper;
+    return upper.slice(0, 1);
+}
+
+function requestMethodBadgeStyle(
+    method: Request["method"],
+    active: boolean,
+    compact: boolean
+): React.CSSProperties {
+    const tones: Record<Request["method"], { bg: string; border: string }> = {
+        get: {
+            bg: "rgba(34, 197, 94, 0.12)",
+            border: "rgba(34, 197, 94, 0.32)",
+        },
+        post: {
+            bg: "rgba(59, 130, 246, 0.12)",
+            border: "rgba(59, 130, 246, 0.32)",
+        },
+        put: {
+            bg: "rgba(234, 179, 8, 0.14)",
+            border: "rgba(234, 179, 8, 0.34)",
+        },
+        patch: {
+            bg: "rgba(168, 85, 247, 0.14)",
+            border: "rgba(168, 85, 247, 0.34)",
+        },
+        delete: {
+            bg: "rgba(248, 113, 113, 0.13)",
+            border: "rgba(248, 113, 113, 0.33)",
+        },
+        head: {
+            bg: "rgba(148, 163, 184, 0.16)",
+            border: "rgba(148, 163, 184, 0.32)",
+        },
+        options: {
+            bg: "rgba(20, 184, 166, 0.13)",
+            border: "rgba(20, 184, 166, 0.33)",
+        },
+    };
+    const tone = tones[method];
+    return {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minWidth: compact ? 16 : 38,
+        height: compact ? 16 : 17,
+        padding: compact ? "0 2px" : "0 5px",
+        borderRadius: 5,
+        fontSize: compact ? 9 : 10,
+        fontWeight: 700,
+        letterSpacing: 0.2,
+        border: `1px solid ${active ? "rgba(var(--pg-primary-rgb), 0.6)" : tone.border}`,
+        background: active ? "rgba(var(--pg-primary-rgb), 0.2)" : tone.bg,
+        color: active ? "var(--pg-text)" : "var(--pg-text-dim)",
+        boxSizing: "border-box",
+        flexShrink: 0,
+        lineHeight: 1,
     };
 }
 
@@ -7832,13 +8188,13 @@ function requestDropRowStyle(
         position: "relative",
         display: "flex",
         alignItems: "stretch",
-        borderRadius: 10,
-        paddingTop: 1,
-        paddingBottom: 1,
+        borderRadius: 8,
+        paddingTop: 0,
+        paddingBottom: 0,
         marginLeft: indentPx,
         background:
             dropBefore || dropAfter || (dropInside && !emphasizeInside)
-                ? "rgba(var(--pg-primary-rgb), 0.08)"
+                ? "rgba(var(--pg-primary-rgb), 0.09)"
                 : "transparent",
     };
 }
@@ -7850,12 +8206,12 @@ function dropMarkerStyle(position: "before" | "after" | "inside"): React.CSSProp
         right: position === "inside" ? "16%" : 0,
         top: position === "inside" ? "calc(50% - 2px)" : position === "before" ? 1 : undefined,
         bottom: position === "after" ? 1 : undefined,
-        height: 4,
+        height: 3,
         borderRadius: 999,
         background: "var(--pg-primary)",
         pointerEvents: "none",
         zIndex: 2,
-        boxShadow: "0 0 0 1px rgba(var(--pg-primary-rgb), 0.45), 0 0 10px rgba(var(--pg-primary-rgb), 0.5)",
+        boxShadow: "0 0 0 1px rgba(var(--pg-primary-rgb), 0.35), 0 0 8px rgba(var(--pg-primary-rgb), 0.35)",
     };
 }
 
@@ -7863,9 +8219,9 @@ function dropInsideOutlineStyle(): React.CSSProperties {
     return {
         position: "absolute",
         inset: 0,
-        borderRadius: 10,
-        border: "2px solid var(--pg-primary)",
-        boxShadow: "inset 0 0 0 1px rgba(var(--pg-primary-rgb), 0.45)",
+        borderRadius: 8,
+        border: "1px solid rgba(var(--pg-primary-rgb), 0.75)",
+        boxShadow: "inset 0 0 0 1px rgba(var(--pg-primary-rgb), 0.25)",
         pointerEvents: "none",
         zIndex: 2,
     };

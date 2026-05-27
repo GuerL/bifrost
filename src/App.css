@@ -302,6 +302,28 @@ body.bifrost-resizing .monaco-editor * {
   pointer-events: none !important;
 }
 
+body.bifrost-sidebar-resizing,
+body.bifrost-sidebar-resizing * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+.pg-sidebar-divider:hover {
+  background: rgba(var(--pg-primary-rgb), 0.14) !important;
+  border-color: rgba(var(--pg-primary-rgb), 0.28) !important;
+}
+
+.pg-sidebar-row-button:hover:not(:disabled) {
+  background: rgba(var(--pg-primary-rgb), 0.1) !important;
+  border-color: rgba(var(--pg-primary-rgb), 0.24) !important;
+  box-shadow: none !important;
+}
+
+.pg-sidebar-row-button[data-sidebar-active="true"]:hover:not(:disabled) {
+  background: rgba(var(--pg-primary-rgb), 0.2) !important;
+  border-color: rgba(var(--pg-primary-rgb), 0.56) !important;
+}
+
 button:hover:not(:disabled),
 select:hover,
 input:hover,
