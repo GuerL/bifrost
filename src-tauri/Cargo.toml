@@ -1,6 +1,6 @@
 [package]
 name = "Bifrost"
-version = "1.12.2"
+version = "1.12.3"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"

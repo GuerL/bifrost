@@ -2,55 +2,58 @@ import type { CSSProperties } from "react";
 
 export function buttonStyle(disabled: boolean): CSSProperties {
     return {
-        height: 28,
-        padding: "0 10px",
-        borderRadius: 7,
+        height: 30,
+        padding: "0 11px",
+        borderRadius: 8,
         border: "1px solid var(--pg-border)",
-        background: disabled ? "var(--pg-surface-1)" : "var(--pg-surface-gradient)",
+        background: disabled ? "var(--pg-surface-1)" : "var(--pg-control-bg)",
         color: disabled ? "var(--pg-disabled)" : "var(--pg-text)",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
         fontSize: 12,
-        boxShadow: disabled ? "none" : "0 2px 8px var(--pg-shadow-color)",
+        boxShadow: disabled ? "none" : "inset 0 1px 0 rgba(255, 255, 255, 0.04)",
+        transition: "border-color 130ms ease, background-color 130ms ease, box-shadow 130ms ease, transform 110ms ease",
     };
 }
 
 export function primaryButtonStyle(disabled: boolean): CSSProperties {
     return {
-        height: 28,
-        padding: "0 11px",
-        borderRadius: 7,
+        height: 30,
+        padding: "0 12px",
+        borderRadius: 8,
         border: "1px solid var(--pg-primary-strong)",
-        background: disabled ? "rgba(var(--pg-primary-rgb), 0.35)" : "var(--pg-primary)",
+        background: disabled ? "rgba(var(--pg-primary-rgb), 0.28)" : "var(--pg-primary)",
         color: "var(--pg-primary-ink)",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 700,
         fontSize: 12,
-        boxShadow: disabled ? "none" : "0 4px 12px rgba(var(--pg-primary-rgb), 0.24)",
+        boxShadow: disabled ? "none" : "0 4px 12px rgba(var(--pg-primary-rgb), 0.2)",
+        transition: "border-color 130ms ease, background-color 130ms ease, box-shadow 130ms ease, transform 110ms ease",
     };
 }
 
 export function dangerButtonStyle(disabled: boolean): CSSProperties {
     return {
-        height: 28,
-        padding: "0 11px",
-        borderRadius: 7,
+        height: 30,
+        padding: "0 12px",
+        borderRadius: 8,
         border: "1px solid var(--pg-danger)",
         background: disabled ? "var(--pg-danger-dark)" : "var(--pg-danger)",
         color: "var(--pg-text)",
         cursor: disabled ? "not-allowed" : "pointer",
         fontWeight: 600,
         fontSize: 12,
-        boxShadow: disabled ? "none" : "0 4px 12px rgba(220, 38, 38, 0.2)",
+        boxShadow: disabled ? "none" : "0 4px 10px rgba(220, 38, 38, 0.18)",
+        transition: "border-color 130ms ease, background-color 130ms ease, box-shadow 130ms ease, transform 110ms ease",
     };
 }
 
 export function selectStyle(): CSSProperties {
     return {
-        height: 28,
-        borderRadius: 7,
+        height: 30,
+        borderRadius: 8,
         border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-0)",
+        background: "var(--pg-control-bg)",
         color: "var(--pg-text)",
         padding: "0 10px",
         fontSize: 12,
@@ -59,11 +62,11 @@ export function selectStyle(): CSSProperties {
 
 export function topbarSelectStyle(): CSSProperties {
     return {
-        height: 28,
+        height: 30,
         minWidth: 170,
-        borderRadius: 7,
+        borderRadius: 8,
         border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-0)",
+        background: "var(--pg-control-bg)",
         color: "var(--pg-text)",
         padding: "0 9px",
         fontSize: 12,
@@ -76,7 +79,7 @@ export function modalInputStyle(): CSSProperties {
         height: 34,
         borderRadius: 8,
         border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-0)",
+        background: "var(--pg-control-bg)",
         color: "var(--pg-text)",
         padding: "0 12px",
         outline: "none",
@@ -89,16 +92,16 @@ export function windowButtonStyle(
 ): CSSProperties {
     return {
         width: 28,
-        height: 26,
+        height: 28,
         borderRadius: 6,
         border: `1px solid ${borderColor}`,
-        background: "var(--pg-surface-gradient)",
+        background: "var(--pg-control-bg)",
         color,
         cursor: "pointer",
         lineHeight: 1,
         padding: 0,
         fontSize: 12,
-        boxShadow: "0 2px 8px var(--pg-shadow-color)",
+        boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.04)",
     };
 }
 
