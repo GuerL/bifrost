@@ -330,13 +330,27 @@ export default function SettingsModal({
                     )}
 
                     {selectedTab === "themes" && (
-                        <div style={sectionCardStyle}>
+                        <div
+                            style={{
+                                ...sectionCardStyle,
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 10,
+                                alignSelf: "start",
+                            }}
+                        >
                             <div style={fieldCaptionStyle}>Theme</div>
+                            <div style={{ fontSize: 12, color: "var(--pg-text-muted)", lineHeight: 1.5 }}>
+                                Choose how Bifrost should appear.
+                            </div>
                             <div
                                 style={{
                                     display: "grid",
-                                    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                                    gap: 10,
+                                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                                    gap: 12,
+                                    width: "100%",
+                                    maxWidth: 720,
+                                    alignSelf: "start",
                                 }}
                             >
                                 {THEME_OPTIONS.map((option) => {
@@ -361,11 +375,16 @@ export default function SettingsModal({
                                                     ? "rgba(var(--pg-primary-rgb), 0.13)"
                                                     : "var(--pg-surface-1)",
                                                 color: "var(--pg-text)",
-                                                padding: 14,
+                                                padding: "12px 13px",
                                                 textAlign: "left",
                                                 cursor: "pointer",
                                                 display: "grid",
-                                                gap: 6,
+                                                gap: 5,
+                                                minHeight: 92,
+                                                alignContent: "start",
+                                                boxShadow: active
+                                                    ? "0 8px 18px rgba(var(--pg-primary-rgb), 0.14)"
+                                                    : "none",
                                             }}
                                         >
                                             <div
@@ -376,7 +395,7 @@ export default function SettingsModal({
                                                     alignItems: "center",
                                                 }}
                                             >
-                                                <span style={{ fontSize: 14, fontWeight: 700 }}>
+                                                <span style={{ fontSize: 13, fontWeight: 700 }}>
                                                     {option.label}
                                                 </span>
                                                 <span
@@ -385,12 +404,19 @@ export default function SettingsModal({
                                                         color: active
                                                             ? "var(--pg-primary)"
                                                             : "var(--pg-text-muted)",
+                                                        fontWeight: active ? 700 : 600,
                                                     }}
                                                 >
                                                     {active ? "Active" : ""}
                                                 </span>
                                             </div>
-                                            <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                            <span
+                                                style={{
+                                                    fontSize: 11.5,
+                                                    color: "var(--pg-text-muted)",
+                                                    lineHeight: 1.45,
+                                                }}
+                                            >
                                                 {description}
                                             </span>
                                         </button>
