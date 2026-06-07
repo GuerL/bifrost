@@ -36,6 +36,8 @@ type SettingsModalProps = {
     onClose: () => void;
 };
 
+type ProxySource = "direct" | "system" | "custom";
+
 const SETTINGS_TABS: Array<{ id: SettingsTabId; label: string }> = [
     { id: "general", label: "General" },
     { id: "themes", label: "Themes" },
@@ -107,6 +109,14 @@ const proxyFieldGridStyle = {
     gap: 10,
 };
 
+function selectedProxySourceFromSettings(proxySettings: ProxySettings): ProxySource {
+    if (proxySettings.use_custom_proxy) return "custom";
+    if (proxySettings.use_system_proxy || proxySettings.respect_environment_variables) {
+        return "system";
+    }
+    return "direct";
+}
+
 export default function SettingsModal({
     open,
     theme,
@@ -126,6 +136,17 @@ export default function SettingsModal({
     const shortcuts = useMemo(() => listShortcuts(), []);
     const proxySettings = appSettings.proxy;
     const activeThemeLabel = formatThemeLabel(theme, systemTheme);
+    const selectedProxySource = selectedProxySourceFromSettings(proxySettings);
+    const customProxyHost = proxySettings.custom.host.trim();
+    const customProxyPort = proxySettings.custom.port.trim();
+    const customProxyHostError =
+        selectedProxySource === "custom" && customProxyHost.length === 0
+            ? "Host is required."
+            : "";
+    const customProxyPortError =
+        selectedProxySource === "custom" && customProxyPort.length === 0
+            ? "Port is required."
+            : "";
 
     useEffect(() => {
         writeStoredSettingsTab(selectedTab);
@@ -165,6 +186,34 @@ export default function SettingsModal({
         });
     }
 
+    function updateProxySource(source: ProxySource) {
+        if (source === "direct") {
+            onProxySettingsChange({
+                ...proxySettings,
+                use_system_proxy: false,
+                respect_environment_variables: false,
+                use_custom_proxy: false,
+            });
+            return;
+        }
+
+        if (source === "system") {
+            onProxySettingsChange({
+                ...proxySettings,
+                use_system_proxy: true,
+                use_custom_proxy: false,
+            });
+            return;
+        }
+
+        onProxySettingsChange({
+            ...proxySettings,
+            use_system_proxy: false,
+            respect_environment_variables: false,
+            use_custom_proxy: true,
+        });
+    }
+
     function renderSaveState() {
         if (saveState === "saving") {
             return <span style={{ color: "var(--pg-text-muted)" }}>Saving settings...</span>;
@@ -201,41 +250,51 @@ export default function SettingsModal({
             );
         }
 
-        if (!proxyPreview) {
-            return (
-                <div style={proxySectionStyle}>
-                    <div style={fieldCaptionStyle}>Active transport</div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "var(--pg-text)" }}>
-                        Direct connection
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--pg-text-muted)", lineHeight: 1.45 }}>
-                        Proxy resolution updates when the request URL is valid.
-                    </div>
-                </div>
-            );
-        }
+        const transportTitle =
+            selectedProxySource === "custom"
+                ? "Custom proxy"
+                : selectedProxySource === "system"
+                  ? "System proxy"
+                  : "Direct connection";
+        const transportDetail =
+            selectedProxySource === "custom"
+                ? customProxyHost && customProxyPort
+                    ? `${customProxyHost}:${customProxyPort}`
+                    : "Host and port are required."
+                : selectedProxySource === "system"
+                  ? proxySettings.respect_environment_variables
+                        ? "Environment variables enabled."
+                        : "Uses operating system proxy configuration."
+                  : "No proxy used for requests.";
+        const transportHelper =
+            selectedProxySource === "custom"
+                ? proxyPreview?.detail ?? null
+                : selectedProxySource === "system" && proxySettings.respect_environment_variables
+                  ? "HTTP_PROXY, HTTPS_PROXY, and NO_PROXY are considered within the system source."
+                  : null;
 
         return (
             <div style={proxySectionStyle}>
                 <div style={fieldCaptionStyle}>Active transport</div>
                 <div style={{ display: "grid", gap: 3 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, color: "var(--pg-text)" }}>
-                        {proxyPreview.summary}
+                        {transportTitle}
                     </div>
-                    {proxyPreview.proxy_url && (
-                        <div
-                            style={{
-                                fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
-                                fontSize: 12,
-                                color: "var(--pg-text-dim)",
-                            }}
-                        >
-                            {proxyPreview.proxy_url}
-                        </div>
-                    )}
-                    {proxyPreview.detail && (
+                    <div
+                        style={{
+                            fontSize: 12,
+                            color: "var(--pg-text-dim)",
+                            fontFamily:
+                                selectedProxySource === "custom" && customProxyHost && customProxyPort
+                                    ? '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace'
+                                    : undefined,
+                        }}
+                    >
+                        {transportDetail}
+                    </div>
+                    {transportHelper && (
                         <div style={{ fontSize: 12, color: "var(--pg-text-muted)", lineHeight: 1.45 }}>
-                            {proxyPreview.detail}
+                            {transportHelper}
                         </div>
                     )}
                 </div>
@@ -510,74 +569,113 @@ export default function SettingsModal({
                         <div style={proxyTabStackStyle}>
                             {renderProxyPreview()}
                             <div style={proxySectionStyle}>
-                                <label style={proxySettingRowStyle}>
-                                    <input
-                                        type="checkbox"
-                                        checked={proxySettings.use_system_proxy}
-                                        onChange={(event) =>
-                                            updateProxySettings({
-                                                use_system_proxy: event.target.checked,
-                                            })
-                                        }
-                                    />
-                                    <span style={{ display: "grid", gap: 4 }}>
-                                        <span style={{ fontSize: 13, fontWeight: 700 }}>Use system proxy</span>
-                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
-                                            Uses operating system proxy configuration. On Linux this follows
-                                            platform defaults.
+                                <div style={{ display: "grid", gap: 6 }}>
+                                    <div style={fieldCaptionStyle}>Proxy source</div>
+                                    <label style={proxySettingRowStyle}>
+                                        <input
+                                            type="radio"
+                                            name="bifrost-proxy-source"
+                                            checked={selectedProxySource === "direct"}
+                                            onChange={() => updateProxySource("direct")}
+                                        />
+                                        <span style={{ display: "grid", gap: 3 }}>
+                                            <span style={{ fontSize: 13, fontWeight: 700 }}>Direct connection</span>
+                                            <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                                No proxy is used for requests.
+                                            </span>
                                         </span>
-                                    </span>
-                                </label>
+                                    </label>
+                                    <div
+                                        style={{
+                                            paddingTop: 8,
+                                            borderTop: "1px solid var(--pg-border-soft)",
+                                            display: "grid",
+                                            gap: 8,
+                                        }}
+                                    >
+                                        <label style={proxySettingRowStyle}>
+                                            <input
+                                                type="radio"
+                                                name="bifrost-proxy-source"
+                                                checked={selectedProxySource === "system"}
+                                                onChange={() => updateProxySource("system")}
+                                            />
+                                            <span style={{ display: "grid", gap: 3 }}>
+                                                <span style={{ fontSize: 13, fontWeight: 700 }}>System proxy</span>
+                                                <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                                    Uses operating system proxy configuration and optional
+                                                    environment-variable fallback.
+                                                </span>
+                                            </span>
+                                        </label>
 
-                                <label
-                                    style={{
-                                        ...proxySettingRowStyle,
-                                        paddingTop: 8,
-                                        borderTop: "1px solid var(--pg-border-soft)",
-                                    }}
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={proxySettings.respect_environment_variables}
-                                        onChange={(event) =>
-                                            updateProxySettings({
-                                                respect_environment_variables: event.target.checked,
-                                            })
-                                        }
-                                    />
-                                    <span style={{ display: "grid", gap: 4 }}>
-                                        <span style={{ fontSize: 13, fontWeight: 700 }}>
-                                            Respect environment variables
+                                        {selectedProxySource === "system" && (
+                                            <div
+                                                style={{
+                                                    marginLeft: 26,
+                                                    padding: "8px 10px",
+                                                    borderRadius: 10,
+                                                    border: "1px solid var(--pg-border-soft)",
+                                                    background: "var(--pg-surface-1)",
+                                                    display: "grid",
+                                                    gap: 6,
+                                                }}
+                                            >
+                                                <label style={{ ...proxySettingRowStyle, padding: 0 }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={proxySettings.respect_environment_variables}
+                                                        onChange={(event) =>
+                                                            updateProxySettings({
+                                                                respect_environment_variables:
+                                                                    event.target.checked,
+                                                                use_system_proxy: true,
+                                                                use_custom_proxy: false,
+                                                            })
+                                                        }
+                                                    />
+                                                    <span style={{ display: "grid", gap: 3 }}>
+                                                        <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+                                                            Respect HTTP_PROXY / HTTPS_PROXY / NO_PROXY
+                                                        </span>
+                                                        <span
+                                                            style={{
+                                                                fontSize: 12,
+                                                                color: "var(--pg-text-muted)",
+                                                            }}
+                                                        >
+                                                            Reads <code>HTTP_PROXY</code>,{" "}
+                                                            <code>HTTPS_PROXY</code>, and <code>NO_PROXY</code>.
+                                                        </span>
+                                                    </span>
+                                                </label>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <label
+                                        style={{
+                                            ...proxySettingRowStyle,
+                                            paddingTop: 8,
+                                            borderTop: "1px solid var(--pg-border-soft)",
+                                        }}
+                                    >
+                                        <input
+                                            type="radio"
+                                            name="bifrost-proxy-source"
+                                            checked={selectedProxySource === "custom"}
+                                            onChange={() => updateProxySource("custom")}
+                                        />
+                                        <span style={{ display: "grid", gap: 3 }}>
+                                            <span style={{ fontSize: 13, fontWeight: 700 }}>Custom proxy</span>
+                                            <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                                Manually configure proxy protocols, endpoint, credentials, and
+                                                bypass rules.
+                                            </span>
                                         </span>
-                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
-                                            Reads <code>HTTP_PROXY</code>, <code>HTTPS_PROXY</code>, and{" "}
-                                            <code>NO_PROXY</code>.
-                                        </span>
-                                    </span>
-                                </label>
-                            </div>
+                                    </label>
+                                </div>
 
-                            <div style={proxySectionStyle}>
-                                <label style={proxySettingRowStyle}>
-                                    <input
-                                        type="checkbox"
-                                        checked={proxySettings.use_custom_proxy}
-                                        onChange={(event) =>
-                                            updateProxySettings({
-                                                use_custom_proxy: event.target.checked,
-                                            })
-                                        }
-                                    />
-                                    <span style={{ display: "grid", gap: 4 }}>
-                                        <span style={{ fontSize: 13, fontWeight: 700 }}>Use custom proxy</span>
-                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
-                                            Highest priority. If the selected protocol applies, it overrides
-                                            system and environment proxy sources.
-                                        </span>
-                                    </span>
-                                </label>
-
-                                {proxySettings.use_custom_proxy && (
+                                {selectedProxySource === "custom" && (
                                     <div
                                         style={{
                                             display: "grid",
@@ -629,6 +727,11 @@ export default function SettingsModal({
                                                     placeholder="proxy.company.com"
                                                     style={modalInputStyle()}
                                                 />
+                                                {customProxyHostError && (
+                                                    <span style={{ fontSize: 12, color: "var(--pg-danger)" }}>
+                                                        {customProxyHostError}
+                                                    </span>
+                                                )}
                                             </label>
 
                                             <label style={fieldLabelStyle}>
@@ -643,6 +746,11 @@ export default function SettingsModal({
                                                     placeholder="8080"
                                                     style={modalInputStyle()}
                                                 />
+                                                {customProxyPortError && (
+                                                    <span style={{ fontSize: 12, color: "var(--pg-danger)" }}>
+                                                        {customProxyPortError}
+                                                    </span>
+                                                )}
                                             </label>
                                         </div>
 
