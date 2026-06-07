@@ -78,6 +78,35 @@ const fieldCaptionStyle = {
     fontWeight: 700,
 };
 
+const proxyTabStackStyle = {
+    display: "grid",
+    gap: 10,
+    alignContent: "start" as const,
+};
+
+const proxySectionStyle = {
+    ...sectionCardStyle,
+    padding: 12,
+    gap: 10,
+    display: "flex",
+    flexDirection: "column" as const,
+    alignSelf: "start" as const,
+};
+
+const proxySettingRowStyle = {
+    display: "flex",
+    alignItems: "flex-start" as const,
+    gap: 10,
+    cursor: "pointer",
+    padding: "2px 0",
+};
+
+const proxyFieldGridStyle = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+    gap: 10,
+};
+
 export default function SettingsModal({
     open,
     theme,
@@ -156,7 +185,12 @@ export default function SettingsModal({
     function renderProxyPreview() {
         if (proxyPreviewError) {
             return (
-                <div style={{ ...sectionCardStyle, borderColor: "rgba(220, 38, 38, 0.45)" }}>
+                <div
+                    style={{
+                        ...proxySectionStyle,
+                        borderColor: "rgba(220, 38, 38, 0.45)",
+                    }}
+                >
                     <div style={{ ...fieldCaptionStyle, color: "var(--pg-danger)" }}>
                         Proxy resolution unavailable
                     </div>
@@ -169,9 +203,12 @@ export default function SettingsModal({
 
         if (!proxyPreview) {
             return (
-                <div style={sectionCardStyle}>
+                <div style={proxySectionStyle}>
                     <div style={fieldCaptionStyle}>Active transport</div>
-                    <div style={{ fontSize: 13, color: "var(--pg-text-dim)" }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "var(--pg-text)" }}>
+                        Direct connection
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--pg-text-muted)", lineHeight: 1.45 }}>
                         Proxy resolution updates when the request URL is valid.
                     </div>
                 </div>
@@ -179,10 +216,10 @@ export default function SettingsModal({
         }
 
         return (
-            <div style={sectionCardStyle}>
+            <div style={proxySectionStyle}>
                 <div style={fieldCaptionStyle}>Active transport</div>
-                <div style={{ display: "grid", gap: 4 }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: "var(--pg-text)" }}>
+                <div style={{ display: "grid", gap: 3 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "var(--pg-text)" }}>
                         {proxyPreview.summary}
                     </div>
                     {proxyPreview.proxy_url && (
@@ -197,7 +234,7 @@ export default function SettingsModal({
                         </div>
                     )}
                     {proxyPreview.detail && (
-                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)", lineHeight: 1.45 }}>
                             {proxyPreview.detail}
                         </div>
                     )}
@@ -470,17 +507,10 @@ export default function SettingsModal({
                     )}
 
                     {selectedTab === "proxy" && (
-                        <>
+                        <div style={proxyTabStackStyle}>
                             {renderProxyPreview()}
-                            <div style={sectionCardStyle}>
-                                <label
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "flex-start",
-                                        gap: 10,
-                                        cursor: "pointer",
-                                    }}
-                                >
+                            <div style={proxySectionStyle}>
+                                <label style={proxySettingRowStyle}>
                                     <input
                                         type="checkbox"
                                         checked={proxySettings.use_system_proxy}
@@ -501,10 +531,9 @@ export default function SettingsModal({
 
                                 <label
                                     style={{
-                                        display: "flex",
-                                        alignItems: "flex-start",
-                                        gap: 10,
-                                        cursor: "pointer",
+                                        ...proxySettingRowStyle,
+                                        paddingTop: 8,
+                                        borderTop: "1px solid var(--pg-border-soft)",
                                     }}
                                 >
                                     <input
@@ -528,15 +557,8 @@ export default function SettingsModal({
                                 </label>
                             </div>
 
-                            <div style={sectionCardStyle}>
-                                <label
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "flex-start",
-                                        gap: 10,
-                                        cursor: "pointer",
-                                    }}
-                                >
+                            <div style={proxySectionStyle}>
+                                <label style={proxySettingRowStyle}>
                                     <input
                                         type="checkbox"
                                         checked={proxySettings.use_custom_proxy}
@@ -556,41 +578,45 @@ export default function SettingsModal({
                                 </label>
 
                                 {proxySettings.use_custom_proxy && (
-                                    <div style={{ display: "grid", gap: 12 }}>
-                                        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                                            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={proxySettings.custom.http_enabled}
-                                                    onChange={(event) =>
-                                                        updateCustomProxySettings({
-                                                            http_enabled: event.target.checked,
-                                                        })
-                                                    }
-                                                />
-                                                <span>HTTP</span>
-                                            </label>
-                                            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={proxySettings.custom.https_enabled}
-                                                    onChange={(event) =>
-                                                        updateCustomProxySettings({
-                                                            https_enabled: event.target.checked,
-                                                        })
-                                                    }
-                                                />
-                                                <span>HTTPS</span>
-                                            </label>
+                                    <div
+                                        style={{
+                                            display: "grid",
+                                            gap: 10,
+                                            paddingTop: 10,
+                                            borderTop: "1px solid var(--pg-border-soft)",
+                                        }}
+                                    >
+                                        <div style={{ display: "grid", gap: 6 }}>
+                                            <div style={fieldCaptionStyle}>Proxy type</div>
+                                            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                                                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={proxySettings.custom.http_enabled}
+                                                        onChange={(event) =>
+                                                            updateCustomProxySettings({
+                                                                http_enabled: event.target.checked,
+                                                            })
+                                                        }
+                                                    />
+                                                    <span style={{ fontSize: 12.5, fontWeight: 600 }}>HTTP</span>
+                                                </label>
+                                                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={proxySettings.custom.https_enabled}
+                                                        onChange={(event) =>
+                                                            updateCustomProxySettings({
+                                                                https_enabled: event.target.checked,
+                                                            })
+                                                        }
+                                                    />
+                                                    <span style={{ fontSize: 12.5, fontWeight: 600 }}>HTTPS</span>
+                                                </label>
+                                            </div>
                                         </div>
 
-                                        <div
-                                            style={{
-                                                display: "grid",
-                                                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                                                gap: 12,
-                                            }}
-                                        >
+                                        <div style={proxyFieldGridStyle}>
                                             <label style={fieldLabelStyle}>
                                                 <span style={fieldCaptionStyle}>Proxy host</span>
                                                 <input
@@ -620,14 +646,7 @@ export default function SettingsModal({
                                             </label>
                                         </div>
 
-                                        <label
-                                            style={{
-                                                display: "flex",
-                                                alignItems: "flex-start",
-                                                gap: 10,
-                                                cursor: "pointer",
-                                            }}
-                                        >
+                                        <label style={proxySettingRowStyle}>
                                             <input
                                                 type="checkbox"
                                                 checked={proxySettings.custom.requires_authentication}
@@ -637,7 +656,7 @@ export default function SettingsModal({
                                                     })
                                                 }
                                             />
-                                            <span style={{ display: "grid", gap: 4 }}>
+                                            <span style={{ display: "grid", gap: 3 }}>
                                                 <span style={{ fontSize: 13, fontWeight: 700 }}>
                                                     Proxy requires authentication
                                                 </span>
@@ -648,13 +667,7 @@ export default function SettingsModal({
                                         </label>
 
                                         {proxySettings.custom.requires_authentication && (
-                                            <div
-                                                style={{
-                                                    display: "grid",
-                                                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                                                    gap: 12,
-                                                }}
-                                            >
+                                            <div style={proxyFieldGridStyle}>
                                                 <label style={fieldLabelStyle}>
                                                     <span style={fieldCaptionStyle}>Username</span>
                                                     <input
@@ -705,7 +718,7 @@ export default function SettingsModal({
                                     </div>
                                 )}
                             </div>
-                        </>
+                        </div>
                     )}
 
                     {selectedTab === "about" && (
