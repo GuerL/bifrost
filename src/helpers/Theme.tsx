@@ -13,6 +13,23 @@ const SYSTEM_COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 
 export type Theme = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
+export const THEME_OPTIONS = [
+    {
+        value: "light" as Theme,
+        label: "Light",
+        description: "Always use the light interface.",
+    },
+    {
+        value: "dark" as Theme,
+        label: "Dark",
+        description: "Always use the dark interface.",
+    },
+    {
+        value: "system" as Theme,
+        label: "System",
+        description: "Follow the operating system appearance.",
+    },
+] as const;
 
 type ThemeContextValue = {
     theme: Theme;
@@ -53,6 +70,13 @@ function resolveTheme(theme: Theme, systemPrefersDark: boolean): ResolvedTheme {
         return systemPrefersDark ? "dark" : "light";
     }
     return theme;
+}
+
+export function formatThemeLabel(theme: Theme, systemTheme: ResolvedTheme): string {
+    if (theme === "system") {
+        return `System (${systemTheme})`;
+    }
+    return theme === "dark" ? "Dark" : "Light";
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {

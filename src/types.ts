@@ -110,6 +110,39 @@ export type Environment = {
     variables: EnvironmentVariable[];
 };
 
+export type SettingsTabId = "general" | "themes" | "shortcuts" | "proxy" | "about";
+
+export type CustomProxySettings = {
+    http_enabled: boolean;
+    https_enabled: boolean;
+    host: string;
+    port: string;
+    requires_authentication: boolean;
+    username: string;
+    password: string;
+    bypass_list: string;
+};
+
+export type ProxySettings = {
+    use_system_proxy: boolean;
+    respect_environment_variables: boolean;
+    use_custom_proxy: boolean;
+    custom: CustomProxySettings;
+};
+
+export type AppSettings = {
+    proxy: ProxySettings;
+};
+
+export type ProxyResolutionMode = "custom" | "system" | "environment" | "direct";
+
+export type ProxyResolutionInfo = {
+    mode: ProxyResolutionMode;
+    summary: string;
+    proxy_url: string | null;
+    detail: string | null;
+};
+
 export type ImportPostmanResult = {
     collection_id: string;
     collection_name: string;

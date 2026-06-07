@@ -7,6 +7,10 @@ pub fn app_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
+pub fn app_settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_dir(app)?.join("settings.json"))
+}
+
 pub fn collections_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_dir(app)?.join("collections"))
 }

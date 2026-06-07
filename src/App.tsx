@@ -33,6 +33,7 @@ import CollectionsModal from "./components/CollectionsModal.tsx";
 import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
 import ConfirmationModal from "./components/ConfirmationModal.tsx";
 import NoCollectionsModal from "./components/NoCollectionsModal.tsx";
+import SettingsModal from "./components/SettingsModal.tsx";
 import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.tsx";
 import CollectionRunnerModal from "./components/CollectionRunnerModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
@@ -116,6 +117,7 @@ import type {
     RunnerRun,
 } from "./runner/types.ts";
 import type {
+    AppSettings,
     CollectionLoaded,
     CollectionMeta,
     Environment,
@@ -124,6 +126,7 @@ import type {
     ImportPostmanResult,
     ImportPortableResult,
     KeyValue,
+    ProxyResolutionInfo,
     RequestAuth,
     Request,
     RequestScripts,
@@ -141,6 +144,16 @@ import {
     notifySuccess,
 } from "./helpers/Toast.tsx";
 import { useTheme } from "./helpers/Theme.tsx";
+import {
+    DEFAULT_APP_SETTINGS,
+    loadAppSettings,
+    resolveProxyTransport,
+    saveAppSettings,
+} from "./helpers/AppSettings.ts";
+import {
+    matchesShortcut,
+    shortcutLabel,
+} from "./helpers/ShortcutRegistry.ts";
 import OpenApiImportDialog from "./features/openapi-import/OpenApiImportDialog.tsx";
 import { parseOpenApiSpec } from "./features/openapi-import/openApiParser.ts";
 import { mapOpenApiToBifrost } from "./features/openapi-import/openApiToBifrost.ts";
@@ -317,20 +330,6 @@ const SIDEBAR_MAX_WIDTH_PX = 420;
 const SIDEBAR_COLLAPSED_WIDTH_PX = 56;
 const SIDEBAR_COLLAPSE_TRIGGER_WIDTH_PX = SIDEBAR_MIN_WIDTH_PX - 8;
 const SIDEBAR_EXPAND_TRIGGER_WIDTH_PX = SIDEBAR_MIN_WIDTH_PX + 2;
-const IS_MACOS =
-    typeof navigator !== "undefined" &&
-    /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
-const PRIMARY_SHORTCUT_MODIFIER = IS_MACOS ? "CMD" : "CTRL";
-const SHORTCUT_LABELS = {
-    saveDraft: `${PRIMARY_SHORTCUT_MODIFIER} + S`,
-    newRequest: `${PRIMARY_SHORTCUT_MODIFIER} + T`,
-    duplicateRequest: `${PRIMARY_SHORTCUT_MODIFIER} + D`,
-    copyRequest: `${PRIMARY_SHORTCUT_MODIFIER} + C`,
-    copyAsCurl: `${PRIMARY_SHORTCUT_MODIFIER} + SHIFT + C`,
-    closeTab: `${PRIMARY_SHORTCUT_MODIFIER} + W`,
-    renameRequest: `${PRIMARY_SHORTCUT_MODIFIER} + E`,
-    deleteRequest: IS_MACOS ? "CMD + Backspace" : "CTRL + Delete",
-} as const;
 const DYNAMIC_VARIABLE_NAMES = [
     "$timestamp",
     "$timestampSeconds",
@@ -902,7 +901,7 @@ function resolveSingleDialogPath(value: unknown): string | null {
 }
 
 export default function App() {
-    const { resolvedTheme } = useTheme();
+    const { resolvedTheme, theme, systemTheme, setTheme } = useTheme();
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
     const [activeEnvironmentId, setActiveEnvironmentId] = useState<string | null>(null);
@@ -985,6 +984,15 @@ export default function App() {
     const [collectionBusy, setCollectionBusy] = useState(false);
     const [collectionError, setCollectionError] = useState("");
     const [noCollectionsModalOpen, setNoCollectionsModalOpen] = useState(false);
+    const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+    const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
+    const [appSettingsLoaded, setAppSettingsLoaded] = useState(false);
+    const [appSettingsSaveState, setAppSettingsSaveState] = useState<"idle" | "saving" | "saved" | "error">(
+        "idle"
+    );
+    const [appSettingsSaveError, setAppSettingsSaveError] = useState("");
+    const [proxyResolutionInfo, setProxyResolutionInfo] = useState<ProxyResolutionInfo | null>(null);
+    const [proxyResolutionError, setProxyResolutionError] = useState("");
     const [runnerModalOpen, setRunnerModalOpen] = useState(false);
     const [runnerSelectedRequestIds, setRunnerSelectedRequestIds] = useState<string[]>([]);
     const [updateDownloadModal, setUpdateDownloadModal] = useState<UpdateDownloadModal | null>(null);
@@ -1017,6 +1025,8 @@ export default function App() {
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
+    const appSettingsSavePendingRef = useRef<AppSettings | null>(null);
+    const appSettingsSavePromiseRef = useRef<Promise<void> | null>(null);
     const postmanImportInputRef = useRef<HTMLInputElement | null>(null);
     const portableImportInputRef = useRef<HTMLInputElement | null>(null);
     const openApiImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -1066,6 +1076,70 @@ export default function App() {
         requestResponseSplitRef.current = node;
         setRequestResponseSplitElement(node);
     }, []);
+
+    const flushAppSettingsSave = useCallback(async () => {
+        const pendingSave = appSettingsSavePromiseRef.current;
+        if (pendingSave) {
+            await pendingSave;
+        }
+    }, []);
+
+    const queueAppSettingsSave = useCallback((nextSettings: AppSettings) => {
+        appSettingsSavePendingRef.current = nextSettings;
+
+        if (appSettingsSavePromiseRef.current) {
+            setAppSettingsSaveState("saving");
+            setAppSettingsSaveError("");
+            return appSettingsSavePromiseRef.current;
+        }
+
+        setAppSettingsSaveState("saving");
+        setAppSettingsSaveError("");
+
+        const saveLoop = (async () => {
+            while (appSettingsSavePendingRef.current) {
+                const settingsToSave = appSettingsSavePendingRef.current;
+                appSettingsSavePendingRef.current = null;
+                await saveAppSettings(settingsToSave);
+            }
+        })();
+
+        appSettingsSavePromiseRef.current = saveLoop
+            .then(() => {
+                setAppSettingsSaveState("saved");
+                setAppSettingsSaveError("");
+            })
+            .catch((error) => {
+                const message = errorMessage(error);
+                setAppSettingsSaveState("error");
+                setAppSettingsSaveError(message);
+                throw error;
+            })
+            .finally(() => {
+                appSettingsSavePromiseRef.current = null;
+                if (appSettingsSavePendingRef.current) {
+                    void queueAppSettingsSave(appSettingsSavePendingRef.current);
+                }
+            });
+
+        return appSettingsSavePromiseRef.current;
+    }, []);
+
+    const updateProxySettings = useCallback(
+        (nextProxySettings: AppSettings["proxy"]) => {
+            setAppSettings((previous) => {
+                const nextSettings = {
+                    ...previous,
+                    proxy: nextProxySettings,
+                };
+                if (appSettingsLoaded) {
+                    void queueAppSettingsSave(nextSettings);
+                }
+                return nextSettings;
+            });
+        },
+        [appSettingsLoaded, queueAppSettingsSave]
+    );
 
     const resolveSidebarMaxWidthPx = useCallback(() => {
         if (typeof window === "undefined") return SIDEBAR_MAX_WIDTH_PX;
@@ -1819,18 +1893,100 @@ export default function App() {
         });
     }, [draft, runtimeVariableValues]);
 
+    useEffect(() => {
+        let cancelled = false;
+
+        (async () => {
+            try {
+                const loadedSettings = await loadAppSettings();
+                if (cancelled) return;
+                setAppSettings(loadedSettings);
+                setAppSettingsLoaded(true);
+                setAppSettingsSaveState("idle");
+                setAppSettingsSaveError("");
+            } catch (error) {
+                if (cancelled) return;
+                const message = errorMessage(error);
+                setAppSettingsLoaded(true);
+                setAppSettingsSaveState("error");
+                setAppSettingsSaveError(message);
+                notifyError(`Failed to load settings: ${message}`);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
     const requestDebugInfo = useMemo(() => {
         if (!draft) return null;
         return buildRequestDebugInfo({
             request: draft,
             variableValues: runtimeVariableValues,
+            proxyTransport: proxyResolutionInfo,
         });
-    }, [draft, runtimeVariableValues]);
+    }, [draft, runtimeVariableValues, proxyResolutionInfo]);
 
     const requestDebugText = useMemo(() => {
         if (!requestDebugInfo) return "";
         return buildRequestDebugText(requestDebugInfo);
     }, [requestDebugInfo]);
+
+    useEffect(() => {
+        if (!draft) {
+            setProxyResolutionInfo(null);
+            setProxyResolutionError("");
+            return;
+        }
+
+        const preview = buildRequestDebugInfo({
+            request: draft,
+            variableValues: runtimeVariableValues,
+        });
+
+        if (preview.unresolvedVariables.length > 0) {
+            setProxyResolutionInfo(null);
+            setProxyResolutionError("");
+            return;
+        }
+
+        try {
+            new URL(preview.resolvedUrl);
+        } catch {
+            setProxyResolutionInfo(null);
+            setProxyResolutionError("");
+            return;
+        }
+
+        let cancelled = false;
+
+        (async () => {
+            try {
+                const resolvedProxy = await resolveProxyTransport(
+                    preview.resolvedUrl,
+                    appSettings.proxy
+                );
+                if (cancelled) return;
+                setProxyResolutionInfo(resolvedProxy);
+                setProxyResolutionError("");
+            } catch (error) {
+                if (cancelled) return;
+                const message = errorMessage(error);
+                setProxyResolutionInfo({
+                    mode: "direct",
+                    summary: "Direct connection",
+                    proxy_url: null,
+                    detail: message,
+                });
+                setProxyResolutionError(message);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [draft, runtimeVariableValues, appSettings.proxy]);
 
     const {
         beforeMountMonaco,
@@ -2506,6 +2662,7 @@ export default function App() {
                 setCollectionError("");
                 setDeleteCollectionModal(null);
             }
+            setSettingsModalOpen(false);
             setRunnerModalOpen(false);
             if (!closeDraftBusy) {
                 setCloseDraftModal(null);
@@ -2725,6 +2882,24 @@ export default function App() {
         closeRequestTab(requestId);
     }
 
+    const cycleOpenTabs = useCallback(
+        (direction: "next" | "previous") => {
+            if (!selectedRequestId || openRequestIds.length < 2) return;
+
+            const currentIndex = openRequestIds.indexOf(selectedRequestId);
+            if (currentIndex === -1) return;
+
+            const delta = direction === "next" ? 1 : -1;
+            const nextIndex =
+                (currentIndex + delta + openRequestIds.length) % openRequestIds.length;
+            const nextRequestId = openRequestIds[nextIndex] ?? null;
+            if (nextRequestId) {
+                setSelectedRequestId(nextRequestId);
+            }
+        },
+        [openRequestIds, selectedRequestId]
+    );
+
     async function confirmCloseWithSave() {
         if (!closeDraftModal || closeDraftBusy) return;
         setCloseDraftBusy(true);
@@ -2753,12 +2928,9 @@ export default function App() {
 
     useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
-            const isCommand = e.ctrlKey || e.metaKey;
-            if (!isCommand || e.altKey) return;
+            if (settingsModalOpen) return;
 
-            const key = e.key.toLowerCase();
-
-            if (key === "s") {
+            if (matchesShortcut(e, "saveDraft")) {
                 e.preventDefault();
                 if (isDirty) {
                     void saveDraft();
@@ -2766,14 +2938,14 @@ export default function App() {
                 return;
             }
 
-            if (key === "enter") {
+            if (matchesShortcut(e, "sendRequest")) {
                 if (!selectedRequestId || collectionRunPending) return;
                 e.preventDefault();
                 triggerSendFromUi();
                 return;
             }
 
-            if (key === "t") {
+            if (matchesShortcut(e, "newRequest")) {
                 if (collectionRunPending) return;
                 e.preventDefault();
                 setContextMenu(null);
@@ -2782,7 +2954,7 @@ export default function App() {
                 return;
             }
 
-            if (key === "d") {
+            if (matchesShortcut(e, "duplicateRequest")) {
                 if (!current || !selectedRequestId) return;
                 if (!openRequestIds.includes(selectedRequestId)) return;
                 e.preventDefault();
@@ -2792,22 +2964,29 @@ export default function App() {
                 return;
             }
 
-            if (key === "c") {
+            if (matchesShortcut(e, "copyRequest")) {
                 if (!selectedRequestId || collectionRunPending) return;
                 if (isEditableKeyboardTarget(e.target)) return;
                 if (window.getSelection()?.toString().trim()) return;
                 e.preventDefault();
                 setContextMenu(null);
                 setRootAddMenu(null);
-                if (e.shiftKey) {
-                    void onCopyAsCurl(selectedRequestId);
-                    return;
-                }
                 void onCopyRequest(selectedRequestId);
                 return;
             }
 
-            if (key === "w") {
+            if (matchesShortcut(e, "copyAsCurl")) {
+                if (!selectedRequestId || collectionRunPending) return;
+                if (isEditableKeyboardTarget(e.target)) return;
+                if (window.getSelection()?.toString().trim()) return;
+                e.preventDefault();
+                setContextMenu(null);
+                setRootAddMenu(null);
+                void onCopyAsCurl(selectedRequestId);
+                return;
+            }
+
+            if (matchesShortcut(e, "closeTab")) {
                 if (!selectedRequestId) return;
                 if (!openRequestIds.includes(selectedRequestId)) return;
                 e.preventDefault();
@@ -2817,7 +2996,21 @@ export default function App() {
                 return;
             }
 
-            if (key === "e") {
+            if (matchesShortcut(e, "nextTab")) {
+                if (!selectedRequestId) return;
+                e.preventDefault();
+                cycleOpenTabs("next");
+                return;
+            }
+
+            if (matchesShortcut(e, "previousTab")) {
+                if (!selectedRequestId) return;
+                e.preventDefault();
+                cycleOpenTabs("previous");
+                return;
+            }
+
+            if (matchesShortcut(e, "renameRequest")) {
                 if (!current || !selectedRequestId) return;
                 e.preventDefault();
                 const row = sidebarRows.find(
@@ -2839,7 +3032,7 @@ export default function App() {
                 return;
             }
 
-            if (key === "backspace" || key === "delete") {
+            if (matchesShortcut(e, "deleteRequest")) {
                 if (!selectedRequestId || collectionRunPending) return;
                 if (isEditableKeyboardTarget(e.target)) return;
                 e.preventDefault();
@@ -2859,7 +3052,8 @@ export default function App() {
         openRequestIds,
         collectionRunPending,
         sidebarRows,
-        sendSelected,
+        settingsModalOpen,
+        cycleOpenTabs,
         onCopyRequest,
         onCopyAsCurl,
     ]);
@@ -2969,6 +3163,13 @@ export default function App() {
         const req = resolveRequestForExecution(selectedRequestId);
 
         if (!req) return;
+
+        try {
+            await flushAppSettingsSave();
+        } catch (error) {
+            notifyError(`Failed to persist settings before sending: ${errorMessage(error)}`);
+            return;
+        }
 
         setResp(null);
         setPending(true);
@@ -3227,6 +3428,13 @@ export default function App() {
 
     async function runCollection(requestIdsToRun?: string[]) {
         if (!current || collectionRunPending) return;
+
+        try {
+            await flushAppSettingsSave();
+        } catch (error) {
+            notifyError(`Failed to persist settings before running: ${errorMessage(error)}`);
+            return;
+        }
 
         const ordered = requestsInTreeOrder(current);
         if (ordered.length === 0) {
@@ -5329,6 +5537,7 @@ export default function App() {
                 onSaveDraft={saveDraft}
                 onOpenRawJson={() => setTab("json")}
                 onOpenCollectionRunner={() => setRunnerModalOpen(true)}
+                onOpenSettings={() => setSettingsModalOpen(true)}
                 onOpenImport={openImportCollectionModal}
                 onExportPortable={() => void onExportPortableCollection()}
                 canSaveDraft={!!current && !!draft && isDirty}
@@ -5336,6 +5545,19 @@ export default function App() {
                 canOpenCollectionRunner={!!current}
                 canExportCollection={!!current}
                 isCollectionRunning={collectionRunPending}
+            />
+            <SettingsModal
+                open={settingsModalOpen}
+                theme={theme}
+                systemTheme={systemTheme}
+                appSettings={appSettings}
+                saveState={appSettingsSaveState}
+                saveError={appSettingsSaveError}
+                proxyPreview={proxyResolutionInfo}
+                proxyPreviewError={proxyResolutionError}
+                onThemeChange={setTheme}
+                onProxySettingsChange={updateProxySettings}
+                onClose={() => setSettingsModalOpen(false)}
             />
             <ImportCollectionModal
                 open={importCollectionModalOpen}
@@ -5917,7 +6139,7 @@ export default function App() {
                                                 requestCloseTab(openTab.requestId)
                                             }
                                             style={draftTabCloseButtonStyle()}
-                                            title={`Close tab (${SHORTCUT_LABELS.closeTab})`}
+                                            title={`Close tab (${shortcutLabel("closeTab")})`}
                                         >
                                             ×
                                         </button>
@@ -6701,12 +6923,19 @@ export default function App() {
                                             }}
                                         >
                                             {[
+                                                `Proxy: ${requestDebugInfo.transport.proxySummary}`,
+                                                `Proxy target: ${requestDebugInfo.transport.proxyTarget}`,
+                                                requestDebugInfo.transport.proxyDetail
+                                                    ? `Proxy detail: ${requestDebugInfo.transport.proxyDetail}`
+                                                    : null,
                                                 `TLS validation: ${requestDebugInfo.transport.tlsValidation}`,
                                                 `Custom CA certificate: ${requestDebugInfo.transport.customCaCertificate}`,
                                                 `Client certificate: ${requestDebugInfo.transport.clientCertificate}`,
                                                 `Redirects: ${requestDebugInfo.transport.redirects}`,
                                                 `Timeout: ${requestDebugInfo.transport.timeoutMs}ms`,
-                                            ].join("\n")}
+                                            ]
+                                                .filter((entry): entry is string => !!entry)
+                                                .join("\n")}
                                         </pre>
                                     </div>
                                     </div>
@@ -6915,7 +7144,7 @@ export default function App() {
                                 setRootAddMenu(null);
                                 onNewRequest(null);
                             }}
-                            title={`Add request (${SHORTCUT_LABELS.newRequest})`}
+                            title={`Add request (${shortcutLabel("newRequest")})`}
                         >
                             <span
                                 style={{
@@ -6942,7 +7171,7 @@ export default function App() {
                                 <span
                                     style={sidebarAddMenuShortcutStyle()}
                                 >
-                                    {SHORTCUT_LABELS.newRequest}
+                                    {shortcutLabel("newRequest")}
                                 </span>
                             </span>
                         </button>
@@ -7026,7 +7255,7 @@ export default function App() {
                             onClick={() => openRenameModal(contextMenu.row)}
                             title={
                                 contextMenu.row.kind === "request"
-                                    ? `Rename (${SHORTCUT_LABELS.renameRequest})`
+                                    ? `Rename (${shortcutLabel("renameRequest")})`
                                     : "Rename"
                             }
                         >
@@ -7048,7 +7277,7 @@ export default function App() {
                                             fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
                                         }}
                                     >
-                                        {SHORTCUT_LABELS.renameRequest}
+                                        {shortcutLabel("renameRequest")}
                                     </span>
                                 )}
                             </span>
@@ -7062,7 +7291,7 @@ export default function App() {
                                     setContextMenu(null);
                                     void onDuplicateRequest(row.requestId, row.parentFolderId);
                                 }}
-                                title={`Duplicate (${SHORTCUT_LABELS.duplicateRequest})`}
+                                title={`Duplicate (${shortcutLabel("duplicateRequest")})`}
                             >
                                 <span
                                     style={{
@@ -7081,7 +7310,7 @@ export default function App() {
                                             fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
                                         }}
                                     >
-                                        {SHORTCUT_LABELS.duplicateRequest}
+                                        {shortcutLabel("duplicateRequest")}
                                     </span>
                                 </span>
                             </button>
@@ -7095,7 +7324,7 @@ export default function App() {
                                     setContextMenu(null);
                                     void onCopyRequest(row.requestId);
                                 }}
-                                title={`Copy request (${SHORTCUT_LABELS.copyRequest})`}
+                                title={`Copy request (${shortcutLabel("copyRequest")})`}
                             >
                                 <span
                                     style={{
@@ -7114,7 +7343,7 @@ export default function App() {
                                             fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
                                         }}
                                     >
-                                        {SHORTCUT_LABELS.copyRequest}
+                                        {shortcutLabel("copyRequest")}
                                     </span>
                                 </span>
                             </button>
@@ -7128,7 +7357,7 @@ export default function App() {
                                     setContextMenu(null);
                                     void onCopyAsCurl(row.requestId);
                                 }}
-                                title={`Copy as cURL (${SHORTCUT_LABELS.copyAsCurl})`}
+                                title={`Copy as cURL (${shortcutLabel("copyAsCurl")})`}
                             >
                                 <span
                                     style={{
@@ -7147,7 +7376,7 @@ export default function App() {
                                             fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
                                         }}
                                     >
-                                        {SHORTCUT_LABELS.copyAsCurl}
+                                        {shortcutLabel("copyAsCurl")}
                                     </span>
                                 </span>
                             </button>
@@ -7207,7 +7436,7 @@ export default function App() {
                             }}
                             title={
                                 contextMenu.row.kind === "request"
-                                    ? `Delete (${SHORTCUT_LABELS.deleteRequest})`
+                                    ? `Delete (${shortcutLabel("deleteRequest")})`
                                     : "Delete"
                             }
                         >
@@ -7229,7 +7458,7 @@ export default function App() {
                                             fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
                                         }}
                                     >
-                                        {SHORTCUT_LABELS.deleteRequest}
+                                        {shortcutLabel("deleteRequest")}
                                     </span>
                                 )}
                             </span>

@@ -1,4 +1,5 @@
 use crate::commands::environment::load_environment_values;
+use crate::commands::settings::{build_reqwest_proxy, resolve_effective_proxy_transport};
 use crate::commands::state::{RequestRegistry, RunningRequest};
 use crate::model::collection::{
     Auth, AuthLocation, Body, HttpMethod, KeyValue, MultipartField, Request, RequestTls,
@@ -768,18 +769,35 @@ fn build_multipart_form(
     Ok(form)
 }
 
-pub async fn do_send_request(mut req: Request) -> Result<HttpResponseDto, HttpErrorDto> {
+pub async fn do_send_request(
+    app: &AppHandle,
+    mut req: Request,
+) -> Result<HttpResponseDto, HttpErrorDto> {
     apply_auth_to_request(&mut req);
     const REQUEST_TIMEOUT_SECONDS: u64 = 60;
 
     // 1) validate URL early
     let url = reqwest::Url::parse(&req.url)
         .map_err(|e| err("invalid_url", "Invalid URL", Some(e.to_string()), None))?;
+    let resolved_proxy = resolve_effective_proxy_transport(app, &url, None).map_err(|error| {
+        err(
+            "proxy",
+            "Failed to resolve proxy settings",
+            Some(error),
+            None,
+        )
+    })?;
 
     // 2) client with explicit timeout budget + TLS options
-    let client_builder = reqwest::Client::builder()
+    let mut client_builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
-        .connect_timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECONDS));
+        .connect_timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
+        .no_proxy();
+    if let Some(proxy) = build_reqwest_proxy(&resolved_proxy)
+        .map_err(|error| err("proxy", "Failed to apply proxy settings", Some(error), None))?
+    {
+        client_builder = client_builder.proxy(proxy);
+    }
     let client_builder = apply_tls_settings(client_builder, &req.tls)?;
     let client = client_builder.build().map_err(|e| {
         err(
@@ -974,7 +992,7 @@ pub async fn send_request(
 
     let result = tokio::select! {
       _ = token.cancelled() => Err(cancelled(Some(start.elapsed().as_millis()))),
-      res = do_send_request(req) => res,
+      res = do_send_request(&app, req) => res,
     };
 
     // cleanup only if still the same run_id
