@@ -37,3 +37,7 @@ proxy_cfg = { version = "0.4.2", default-features = false, features = ["sysconfi
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-updater = "2.10.0"
 tauri-plugin-process = "2.3.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+system-configuration-sys = "0.6"

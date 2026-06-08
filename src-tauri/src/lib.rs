@@ -12,6 +12,7 @@ pub fn run() {
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
+            commands::settings::log_startup_proxy_diagnostics(&app.handle());
             Ok(())
         })
         .manage(RequestRegistry::default())
@@ -44,6 +45,7 @@ pub fn run() {
             commands::settings::save_app_settings,
             commands::settings::get_about_runtime_info,
             commands::settings::resolve_proxy_transport,
+            commands::settings::get_proxy_diagnostics,
             commands::http::send_request,
             commands::http::is_pending,
             commands::http::cancel_request,

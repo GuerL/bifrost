@@ -126,6 +126,7 @@ import type {
     ImportPostmanResult,
     ImportPortableResult,
     KeyValue,
+    ProxyDiagnosticsInfo,
     ProxyResolutionInfo,
     RequestAuth,
     Request,
@@ -146,6 +147,7 @@ import {
 import { useTheme } from "./helpers/Theme.tsx";
 import {
     DEFAULT_APP_SETTINGS,
+    getProxyDiagnostics,
     loadAppSettings,
     resolveProxyTransport,
     saveAppSettings,
@@ -509,6 +511,72 @@ function httpErrorKindLabel(kind: string): string {
 
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+function formatDiagnosticsScalarValue(
+    value: string | number | null | undefined,
+    fallback: string
+): string {
+    if (value === null || value === undefined) return fallback;
+    return typeof value === "number" ? String(value) : value;
+}
+
+function formatProxyDiagnosticsText(info: ProxyDiagnosticsInfo): string {
+    const lines: string[] = [];
+    const envLabelWidth = info.environment_variables.reduce(
+        (max, entry) => Math.max(max, entry.key.length),
+        0
+    );
+    const envWidth = Math.max(envLabelWidth, "HTTPS_PROXY".length);
+
+    lines.push("Environment Variables");
+    lines.push("");
+    for (const entry of info.environment_variables) {
+        lines.push(
+            `${entry.key.padEnd(envWidth)}: ${formatDiagnosticsScalarValue(entry.value, "<not set>")}`
+        );
+    }
+
+    const macos = info.macos_system_configuration;
+    lines.push("");
+    lines.push("macOS System Configuration");
+    lines.push("");
+    if (!macos.supported) {
+        lines.push("Unavailable on this platform");
+    } else {
+        const rows: Array<[string, string]> = [
+            ["HTTP Enabled", macos.http_enabled ? "true" : "false"],
+            ["HTTP Proxy", formatDiagnosticsScalarValue(macos.http_proxy, "<none>")],
+            ["HTTP Port", formatDiagnosticsScalarValue(macos.http_port, "<none>")],
+            ["HTTPS Enabled", macos.https_enabled ? "true" : "false"],
+            ["HTTPS Proxy", formatDiagnosticsScalarValue(macos.https_proxy, "<none>")],
+            ["HTTPS Port", formatDiagnosticsScalarValue(macos.https_port, "<none>")],
+            ["SOCKS Enabled", macos.socks_enabled ? "true" : "false"],
+            ["SOCKS Proxy", formatDiagnosticsScalarValue(macos.socks_proxy, "<none>")],
+            ["SOCKS Port", formatDiagnosticsScalarValue(macos.socks_port, "<none>")],
+            ["PAC Enabled", macos.pac_enabled ? "true" : "false"],
+            ["PAC URL", formatDiagnosticsScalarValue(macos.pac_url, "<none>")],
+        ];
+        const macWidth = rows.reduce((max, [label]) => Math.max(max, label.length), 0);
+        for (const [label, value] of rows) {
+            lines.push(`${label.padEnd(macWidth)}: ${value}`);
+        }
+    }
+
+    lines.push("");
+    lines.push("Bifrost Resolution");
+    lines.push("");
+    lines.push(`Configured mode: ${info.resolution.configured_mode}`);
+    lines.push(`Detected source: ${info.resolution.detected_source}`);
+    lines.push(
+        `Effective proxy: ${formatDiagnosticsScalarValue(info.resolution.effective_proxy, "none")}`
+    );
+    if (info.resolution.detail) {
+        lines.push(`Detail: ${info.resolution.detail}`);
+    }
+    lines.push(`Target URL: ${info.target_url}`);
+
+    return lines.join("\n");
 }
 
 function explainNoSupportedOpenApiOperations(plan: OpenApiImportPlan): string {
@@ -993,6 +1061,8 @@ export default function App() {
     const [appSettingsSaveError, setAppSettingsSaveError] = useState("");
     const [proxyResolutionInfo, setProxyResolutionInfo] = useState<ProxyResolutionInfo | null>(null);
     const [proxyResolutionError, setProxyResolutionError] = useState("");
+    const [proxyDiagnosticsInfo, setProxyDiagnosticsInfo] = useState<ProxyDiagnosticsInfo | null>(null);
+    const [proxyDiagnosticsError, setProxyDiagnosticsError] = useState("");
     const [runnerModalOpen, setRunnerModalOpen] = useState(false);
     const [runnerSelectedRequestIds, setRunnerSelectedRequestIds] = useState<string[]>([]);
     const [updateDownloadModal, setUpdateDownloadModal] = useState<UpdateDownloadModal | null>(null);
@@ -1956,10 +2026,22 @@ export default function App() {
         return buildRequestDebugText(requestDebugInfo);
     }, [requestDebugInfo]);
 
+    const proxyDiagnosticsText = useMemo(() => {
+        if (proxyDiagnosticsInfo) {
+            return formatProxyDiagnosticsText(proxyDiagnosticsInfo);
+        }
+        if (proxyDiagnosticsError) {
+            return `Proxy diagnostics unavailable\n\n${proxyDiagnosticsError}`;
+        }
+        return "Proxy diagnostics require a valid resolved URL.";
+    }, [proxyDiagnosticsError, proxyDiagnosticsInfo]);
+
     useEffect(() => {
         if (!draft) {
             setProxyResolutionInfo(null);
             setProxyResolutionError("");
+            setProxyDiagnosticsInfo(null);
+            setProxyDiagnosticsError("");
             return;
         }
 
@@ -1972,6 +2054,8 @@ export default function App() {
         if (preview.unresolvedVariables.length > 0) {
             setProxyResolutionInfo(null);
             setProxyResolutionError("");
+            setProxyDiagnosticsInfo(null);
+            setProxyDiagnosticsError("");
             return;
         }
 
@@ -1980,23 +2064,26 @@ export default function App() {
         } catch {
             setProxyResolutionInfo(null);
             setProxyResolutionError("");
+            setProxyDiagnosticsInfo(null);
+            setProxyDiagnosticsError("");
             return;
         }
 
         let cancelled = false;
 
         (async () => {
-            try {
-                const resolvedProxy = await resolveProxyTransport(
-                    preview.resolvedUrl,
-                    appSettings.proxy
-                );
-                if (cancelled) return;
-                setProxyResolutionInfo(resolvedProxy);
+            const [resolvedProxyResult, proxyDiagnosticsResult] = await Promise.allSettled([
+                resolveProxyTransport(preview.resolvedUrl, appSettings.proxy),
+                getProxyDiagnostics(preview.resolvedUrl, appSettings.proxy),
+            ]);
+
+            if (cancelled) return;
+
+            if (resolvedProxyResult.status === "fulfilled") {
+                setProxyResolutionInfo(resolvedProxyResult.value);
                 setProxyResolutionError("");
-            } catch (error) {
-                if (cancelled) return;
-                const message = errorMessage(error);
+            } else {
+                const message = errorMessage(resolvedProxyResult.reason);
                 setProxyResolutionInfo({
                     mode: "direct",
                     summary: "Direct connection",
@@ -2005,6 +2092,14 @@ export default function App() {
                     diagnostics: [],
                 });
                 setProxyResolutionError(message);
+            }
+
+            if (proxyDiagnosticsResult.status === "fulfilled") {
+                setProxyDiagnosticsInfo(proxyDiagnosticsResult.value);
+                setProxyDiagnosticsError("");
+            } else {
+                setProxyDiagnosticsInfo(null);
+                setProxyDiagnosticsError(errorMessage(proxyDiagnosticsResult.reason));
             }
         })();
 
@@ -6992,6 +7087,44 @@ export default function App() {
                                                 .join("\n")}
                                         </pre>
                                     </div>
+                                    <details
+                                        open
+                                        style={{
+                                            border: "1px solid var(--pg-border-soft)",
+                                            borderRadius: 8,
+                                            background: "var(--pg-surface-alt)",
+                                            padding: 8,
+                                        }}
+                                    >
+                                        <summary
+                                            style={{
+                                                cursor: "pointer",
+                                                fontSize: 12,
+                                                fontWeight: 600,
+                                                color: "var(--pg-text)",
+                                                userSelect: "none",
+                                            }}
+                                        >
+                                            === Proxy Diagnostics ===
+                                        </summary>
+                                        <pre
+                                            style={{
+                                                margin: "8px 0 0",
+                                                padding: 8,
+                                                border: "1px solid var(--pg-border-soft)",
+                                                borderRadius: 6,
+                                                background: "var(--pg-surface)",
+                                                color: "var(--pg-text)",
+                                                fontSize: 12,
+                                                whiteSpace: "pre-wrap",
+                                                overflowX: "auto",
+                                                maxWidth: "100%",
+                                                overflowWrap: "anywhere",
+                                            }}
+                                        >
+                                            {proxyDiagnosticsText}
+                                        </pre>
+                                    </details>
                                     </div>
                                 </div>
                             )}

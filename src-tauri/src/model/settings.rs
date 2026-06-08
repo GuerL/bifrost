@@ -159,3 +159,48 @@ pub struct ProxyResolutionInfo {
     #[serde(default)]
     pub diagnostics: Vec<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyEnvironmentVariableSnapshot {
+    pub key: String,
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MacOsSystemProxyDiagnostics {
+    #[serde(default)]
+    pub supported: bool,
+    #[serde(default)]
+    pub http_enabled: bool,
+    pub http_proxy: Option<String>,
+    pub http_port: Option<i32>,
+    #[serde(default)]
+    pub https_enabled: bool,
+    pub https_proxy: Option<String>,
+    pub https_port: Option<i32>,
+    #[serde(default)]
+    pub socks_enabled: bool,
+    pub socks_proxy: Option<String>,
+    pub socks_port: Option<i32>,
+    #[serde(default)]
+    pub pac_enabled: bool,
+    pub pac_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyDiagnosticsResolution {
+    pub configured_mode: String,
+    pub detected_source: String,
+    pub effective_proxy: Option<String>,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyDiagnosticsInfo {
+    pub target_url: String,
+    #[serde(default)]
+    pub environment_variables: Vec<ProxyEnvironmentVariableSnapshot>,
+    #[serde(default)]
+    pub macos_system_configuration: MacOsSystemProxyDiagnostics,
+    pub resolution: ProxyDiagnosticsResolution,
+}

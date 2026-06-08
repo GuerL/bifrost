@@ -170,6 +170,40 @@ export type ProxyResolutionInfo = {
     diagnostics: string[];
 };
 
+export type ProxyEnvironmentVariableSnapshot = {
+    key: string;
+    value: string | null;
+};
+
+export type MacOsSystemProxyDiagnostics = {
+    supported: boolean;
+    http_enabled: boolean;
+    http_proxy: string | null;
+    http_port: number | null;
+    https_enabled: boolean;
+    https_proxy: string | null;
+    https_port: number | null;
+    socks_enabled: boolean;
+    socks_proxy: string | null;
+    socks_port: number | null;
+    pac_enabled: boolean;
+    pac_url: string | null;
+};
+
+export type ProxyDiagnosticsResolution = {
+    configured_mode: string;
+    detected_source: string;
+    effective_proxy: string | null;
+    detail: string | null;
+};
+
+export type ProxyDiagnosticsInfo = {
+    target_url: string;
+    environment_variables: ProxyEnvironmentVariableSnapshot[];
+    macos_system_configuration: MacOsSystemProxyDiagnostics;
+    resolution: ProxyDiagnosticsResolution;
+};
+
 export type ImportPostmanResult = {
     collection_id: string;
     collection_name: string;

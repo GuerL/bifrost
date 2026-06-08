@@ -1,15 +1,42 @@
 use std::collections::HashSet;
 use std::env;
+#[cfg(target_os = "macos")]
+use std::ptr;
 
 use proxy_cfg::ProxyConfig;
 use reqwest::{Proxy, Url};
 use serde::Serialize;
 use tauri::AppHandle;
 
+#[cfg(target_os = "macos")]
+use core_foundation::base::{CFType, TCFType};
+#[cfg(target_os = "macos")]
+use core_foundation::dictionary::CFDictionary;
+#[cfg(target_os = "macos")]
+use core_foundation::number::CFNumber;
+#[cfg(target_os = "macos")]
+use core_foundation::string::CFString;
+#[cfg(target_os = "macos")]
+use system_configuration_sys::dynamic_store_copy_specific;
+
 use crate::model::settings::{
-    AppSettings, CustomProxySettings, ProxyResolutionInfo, ProxyResolutionMode, ProxySettings,
+    AppSettings, CustomProxySettings, MacOsSystemProxyDiagnostics, ProxyDiagnosticsInfo,
+    ProxyDiagnosticsResolution, ProxyEnvironmentVariableSnapshot, ProxyResolutionInfo,
+    ProxyResolutionMode, ProxySettings,
 };
 use crate::storage::paths::{app_settings_path, read_json, write_json};
+
+const ENV_PROXY_VARIABLE_NAMES: [&str; 8] = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+];
+const STARTUP_PROXY_DIAGNOSTIC_SAMPLE_URL: &str = "https://example.com/";
 
 #[derive(Clone)]
 struct ProxyCandidate {
@@ -101,6 +128,16 @@ pub fn resolve_proxy_transport(
     Ok(resolve_effective_proxy_transport(&app, &parsed_url, proxy_settings_override)?.info)
 }
 
+#[tauri::command]
+pub fn get_proxy_diagnostics(
+    app: AppHandle,
+    url: String,
+    proxy_settings_override: Option<ProxySettings>,
+) -> Result<ProxyDiagnosticsInfo, String> {
+    let parsed_url = Url::parse(&url).map_err(|error| format!("Invalid URL: {error}"))?;
+    build_proxy_diagnostics_report(&app, &parsed_url, proxy_settings_override)
+}
+
 pub(crate) fn load_app_settings_value(app: &AppHandle) -> Result<AppSettings, String> {
     let path = app_settings_path(app)?;
     if !path.exists() {
@@ -115,6 +152,27 @@ pub(crate) fn save_app_settings_value(
 ) -> Result<(), String> {
     let path = app_settings_path(app)?;
     write_json(&path, settings)
+}
+
+pub(crate) fn log_startup_proxy_diagnostics(app: &AppHandle) {
+    let sample_url = match Url::parse(STARTUP_PROXY_DIAGNOSTIC_SAMPLE_URL) {
+        Ok(url) => url,
+        Err(error) => {
+            eprintln!("[proxy-debug] failed_to_parse_sample_url={error}");
+            return;
+        }
+    };
+
+    match build_proxy_diagnostics_report(app, &sample_url, None) {
+        Ok(report) => {
+            for line in format_proxy_diagnostics_log_lines(&report) {
+                eprintln!("[proxy-debug] {line}");
+            }
+        }
+        Err(error) => {
+            eprintln!("[proxy-debug] failed_to_collect={error}");
+        }
+    }
 }
 
 pub(crate) fn build_reqwest_proxy(
@@ -257,6 +315,15 @@ fn configured_proxy_source_label(source: ConfiguredProxySource) -> &'static str 
     }
 }
 
+fn configured_proxy_source_display_label(source: ConfiguredProxySource) -> &'static str {
+    match source {
+        ConfiguredProxySource::Direct => "Direct Connection",
+        ConfiguredProxySource::System => "System Proxy",
+        ConfiguredProxySource::Environment => "Environment Variables",
+        ConfiguredProxySource::Custom => "Custom Proxy",
+    }
+}
+
 fn builder_mode_label(mode: ProxyBuilderMode) -> &'static str {
     match mode {
         ProxyBuilderMode::Direct => "direct via reqwest no_proxy()",
@@ -321,6 +388,238 @@ fn environment_variable_process_note() -> &'static str {
     }
     #[allow(unreachable_code)]
     "Environment proxy variables depend on the current process environment.";
+}
+
+fn build_proxy_diagnostics_report(
+    app: &AppHandle,
+    url: &Url,
+    proxy_settings_override: Option<ProxySettings>,
+) -> Result<ProxyDiagnosticsInfo, String> {
+    let proxy_settings = proxy_settings_override.unwrap_or(load_app_settings_value(app)?.proxy);
+    let configured_source = configured_proxy_source_from_settings(&proxy_settings);
+    let resolved = resolve_effective_proxy_transport(app, url, Some(proxy_settings.clone()))?;
+    let macos_system_configuration = load_macos_system_proxy_diagnostics()?;
+
+    Ok(ProxyDiagnosticsInfo {
+        target_url: url.as_str().to_string(),
+        environment_variables: capture_proxy_environment_variable_snapshots_from_process(),
+        macos_system_configuration: macos_system_configuration.clone(),
+        resolution: ProxyDiagnosticsResolution {
+            configured_mode: configured_proxy_source_display_label(configured_source).to_string(),
+            detected_source: diagnostics_detected_source_label(
+                configured_source,
+                &resolved.info.mode,
+                &macos_system_configuration,
+            )
+            .to_string(),
+            effective_proxy: diagnostics_effective_proxy_display(url, &resolved),
+            detail: resolved.info.detail.clone(),
+        },
+    })
+}
+
+fn diagnostics_detected_source_label(
+    configured_source: ConfiguredProxySource,
+    resolved_mode: &ProxyResolutionMode,
+    macos_system_configuration: &MacOsSystemProxyDiagnostics,
+) -> &'static str {
+    match resolved_mode {
+        ProxyResolutionMode::Custom => "Custom Proxy",
+        ProxyResolutionMode::System => "System Proxy",
+        ProxyResolutionMode::Environment => "Environment Variables",
+        ProxyResolutionMode::Direct => match configured_source {
+            ConfiguredProxySource::System if macos_system_configuration.pac_enabled => "PAC",
+            ConfiguredProxySource::System if macos_system_configuration.socks_enabled => "SOCKS",
+            ConfiguredProxySource::System => "None Detected",
+            ConfiguredProxySource::Environment => "None Detected",
+            ConfiguredProxySource::Custom => "Custom Proxy",
+            ConfiguredProxySource::Direct => "Direct Connection",
+        },
+    }
+}
+
+fn capture_proxy_environment_variable_snapshots_from_process(
+) -> Vec<ProxyEnvironmentVariableSnapshot> {
+    capture_proxy_environment_variable_snapshots_with(|key| {
+        env::var_os(key).map(|value| value.to_string_lossy().into_owned())
+    })
+}
+
+fn capture_proxy_environment_variable_snapshots_with<F>(
+    mut lookup: F,
+) -> Vec<ProxyEnvironmentVariableSnapshot>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    ENV_PROXY_VARIABLE_NAMES
+        .iter()
+        .map(|key| ProxyEnvironmentVariableSnapshot {
+            key: (*key).to_string(),
+            value: lookup(key),
+        })
+        .collect()
+}
+
+fn diagnostics_effective_proxy_display(
+    url: &Url,
+    resolved: &ResolvedProxyTransport,
+) -> Option<String> {
+    let raw_proxy = resolved
+        .proxy_config
+        .as_ref()
+        .and_then(|config| proxy_url_for_target(config, url));
+    let Some(raw_proxy) = raw_proxy else {
+        return resolved.info.proxy_url.clone();
+    };
+
+    let normalized = normalize_proxy_endpoint(&raw_proxy).ok()?;
+    let Ok(mut parsed) = Url::parse(&normalized.url) else {
+        return Some(normalized.url);
+    };
+
+    if !parsed.username().is_empty() {
+        let _ = parsed.set_username("****");
+    }
+    if parsed.password().is_some() {
+        let _ = parsed.set_password(Some("****"));
+    }
+
+    Some(parsed.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn get_macos_string_value(
+    dictionary: &CFDictionary<CFString, CFType>,
+    key: &'static str,
+) -> Option<String> {
+    let key = CFString::from_static_string(key);
+    dictionary
+        .find(key)
+        .and_then(|value| value.downcast::<CFString>())
+        .map(|value| value.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn get_macos_i32_value(
+    dictionary: &CFDictionary<CFString, CFType>,
+    key: &'static str,
+) -> Option<i32> {
+    let key = CFString::from_static_string(key);
+    dictionary
+        .find(key)
+        .and_then(|value| value.downcast::<CFNumber>())
+        .and_then(|value| value.to_i32())
+}
+
+#[cfg(target_os = "macos")]
+fn load_macos_system_proxy_diagnostics() -> Result<MacOsSystemProxyDiagnostics, String> {
+    let proxies_ref =
+        unsafe { dynamic_store_copy_specific::SCDynamicStoreCopyProxies(ptr::null()) };
+    if proxies_ref.is_null() {
+        return Ok(MacOsSystemProxyDiagnostics {
+            supported: true,
+            ..MacOsSystemProxyDiagnostics::default()
+        });
+    }
+
+    let proxies: CFDictionary<CFString, CFType> =
+        unsafe { CFDictionary::wrap_under_create_rule(proxies_ref) };
+
+    Ok(MacOsSystemProxyDiagnostics {
+        supported: true,
+        http_enabled: get_macos_i32_value(&proxies, "HTTPEnable").unwrap_or(0) == 1,
+        http_proxy: get_macos_string_value(&proxies, "HTTPProxy"),
+        http_port: get_macos_i32_value(&proxies, "HTTPPort"),
+        https_enabled: get_macos_i32_value(&proxies, "HTTPSEnable").unwrap_or(0) == 1,
+        https_proxy: get_macos_string_value(&proxies, "HTTPSProxy"),
+        https_port: get_macos_i32_value(&proxies, "HTTPSPort"),
+        socks_enabled: get_macos_i32_value(&proxies, "SOCKSEnable").unwrap_or(0) == 1,
+        socks_proxy: get_macos_string_value(&proxies, "SOCKSProxy"),
+        socks_port: get_macos_i32_value(&proxies, "SOCKSPort"),
+        pac_enabled: get_macos_i32_value(&proxies, "ProxyAutoConfigEnable").unwrap_or(0) == 1,
+        pac_url: get_macos_string_value(&proxies, "ProxyAutoConfigURLString"),
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn load_macos_system_proxy_diagnostics() -> Result<MacOsSystemProxyDiagnostics, String> {
+    Ok(MacOsSystemProxyDiagnostics::default())
+}
+
+fn format_proxy_diagnostics_log_lines(report: &ProxyDiagnosticsInfo) -> Vec<String> {
+    let mut lines = Vec::new();
+    for entry in &report.environment_variables {
+        lines.push(format!(
+            "{}={}",
+            entry.key,
+            entry.value.as_deref().unwrap_or("<not set>")
+        ));
+    }
+
+    let macos = &report.macos_system_configuration;
+    lines.push(format!("system_proxy_supported={}", macos.supported));
+    lines.push(format!("system_http_enabled={}", macos.http_enabled));
+    lines.push(format!(
+        "system_http_proxy={}",
+        macos.http_proxy.as_deref().unwrap_or("<none>")
+    ));
+    lines.push(format!(
+        "system_http_port={}",
+        macos
+            .http_port
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "<none>".to_string())
+    ));
+    lines.push(format!("system_https_enabled={}", macos.https_enabled));
+    lines.push(format!(
+        "system_https_proxy={}",
+        macos.https_proxy.as_deref().unwrap_or("<none>")
+    ));
+    lines.push(format!(
+        "system_https_port={}",
+        macos
+            .https_port
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "<none>".to_string())
+    ));
+    lines.push(format!("system_socks_enabled={}", macos.socks_enabled));
+    lines.push(format!(
+        "system_socks_proxy={}",
+        macos.socks_proxy.as_deref().unwrap_or("<none>")
+    ));
+    lines.push(format!(
+        "system_socks_port={}",
+        macos
+            .socks_port
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "<none>".to_string())
+    ));
+    lines.push(format!("system_pac_enabled={}", macos.pac_enabled));
+    lines.push(format!(
+        "system_pac_url={}",
+        macos.pac_url.as_deref().unwrap_or("<none>")
+    ));
+    lines.push(format!("target_url={}", report.target_url));
+    lines.push(format!(
+        "configured_mode={}",
+        report.resolution.configured_mode
+    ));
+    lines.push(format!(
+        "detected_source={}",
+        report.resolution.detected_source
+    ));
+    lines.push(format!(
+        "effective_proxy={}",
+        report
+            .resolution
+            .effective_proxy
+            .as_deref()
+            .unwrap_or("none")
+    ));
+    if let Some(detail) = &report.resolution.detail {
+        lines.push(format!("detail={detail}"));
+    }
+    lines
 }
 
 fn build_proxy_diagnostics(
@@ -741,6 +1040,59 @@ mod tests {
             Some("http://shared.proxy.local:8080")
         );
         assert_eq!(source.detected_variable_names, vec!["ALL_PROXY"]);
+    }
+
+    #[test]
+    fn proxy_environment_variable_snapshots_preserve_requested_names() {
+        let snapshots = capture_proxy_environment_variable_snapshots_with(|key| match key {
+            "HTTP_PROXY" => Some("http://upper.proxy.local:8080".to_string()),
+            "http_proxy" => Some("http://lower.proxy.local:8080".to_string()),
+            "NO_PROXY" => Some("localhost,127.0.0.1".to_string()),
+            _ => None,
+        });
+
+        let values: Vec<(String, Option<String>)> = snapshots
+            .into_iter()
+            .map(|entry| (entry.key, entry.value))
+            .collect();
+
+        assert_eq!(
+            values,
+            vec![
+                (
+                    "HTTP_PROXY".to_string(),
+                    Some("http://upper.proxy.local:8080".to_string())
+                ),
+                ("HTTPS_PROXY".to_string(), None),
+                ("ALL_PROXY".to_string(), None),
+                (
+                    "NO_PROXY".to_string(),
+                    Some("localhost,127.0.0.1".to_string())
+                ),
+                (
+                    "http_proxy".to_string(),
+                    Some("http://lower.proxy.local:8080".to_string())
+                ),
+                ("https_proxy".to_string(), None),
+                ("all_proxy".to_string(), None),
+                ("no_proxy".to_string(), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn diagnostics_detects_pac_when_system_proxy_falls_back_to_direct() {
+        let detected_source = diagnostics_detected_source_label(
+            ConfiguredProxySource::System,
+            &ProxyResolutionMode::Direct,
+            &MacOsSystemProxyDiagnostics {
+                supported: true,
+                pac_enabled: true,
+                ..MacOsSystemProxyDiagnostics::default()
+            },
+        );
+
+        assert_eq!(detected_source, "PAC");
     }
 
     #[test]

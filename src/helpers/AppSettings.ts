@@ -4,6 +4,10 @@ import type {
     AppSettings,
     CustomProxySettings,
     GeneralSettings,
+    ProxyDiagnosticsInfo,
+    ProxyDiagnosticsResolution,
+    ProxyEnvironmentVariableSnapshot,
+    MacOsSystemProxyDiagnostics,
     ProxyResolutionInfo,
     ProxySettings,
     RequestBehaviorSettings,
@@ -88,6 +92,13 @@ function sanitizeNonNegativeInteger(value: unknown, defaultValue: number): numbe
     }
 
     return defaultValue;
+}
+
+function sanitizeNullableNumber(value: unknown): number | null {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+    }
+    return null;
 }
 
 export function sanitizeCustomProxySettings(value: unknown): CustomProxySettings {
@@ -275,6 +286,97 @@ export function sanitizeProxyResolutionInfo(value: unknown): ProxyResolutionInfo
     };
 }
 
+function sanitizeProxyEnvironmentVariableSnapshot(
+    value: unknown
+): ProxyEnvironmentVariableSnapshot {
+    if (!value || typeof value !== "object") {
+        return { key: "", value: null };
+    }
+
+    const source = value as Record<string, unknown>;
+    return {
+        key: sanitizeString(source.key),
+        value: typeof source.value === "string" ? source.value : null,
+    };
+}
+
+function sanitizeMacOsSystemProxyDiagnostics(value: unknown): MacOsSystemProxyDiagnostics {
+    if (!value || typeof value !== "object") {
+        return {
+            supported: false,
+            http_enabled: false,
+            http_proxy: null,
+            http_port: null,
+            https_enabled: false,
+            https_proxy: null,
+            https_port: null,
+            socks_enabled: false,
+            socks_proxy: null,
+            socks_port: null,
+            pac_enabled: false,
+            pac_url: null,
+        };
+    }
+
+    const source = value as Record<string, unknown>;
+    return {
+        supported: sanitizeBoolean(source.supported, false),
+        http_enabled: sanitizeBoolean(source.http_enabled, false),
+        http_proxy: typeof source.http_proxy === "string" ? source.http_proxy : null,
+        http_port: sanitizeNullableNumber(source.http_port),
+        https_enabled: sanitizeBoolean(source.https_enabled, false),
+        https_proxy: typeof source.https_proxy === "string" ? source.https_proxy : null,
+        https_port: sanitizeNullableNumber(source.https_port),
+        socks_enabled: sanitizeBoolean(source.socks_enabled, false),
+        socks_proxy: typeof source.socks_proxy === "string" ? source.socks_proxy : null,
+        socks_port: sanitizeNullableNumber(source.socks_port),
+        pac_enabled: sanitizeBoolean(source.pac_enabled, false),
+        pac_url: typeof source.pac_url === "string" ? source.pac_url : null,
+    };
+}
+
+function sanitizeProxyDiagnosticsResolution(value: unknown): ProxyDiagnosticsResolution {
+    if (!value || typeof value !== "object") {
+        return {
+            configured_mode: "Direct Connection",
+            detected_source: "Direct Connection",
+            effective_proxy: null,
+            detail: null,
+        };
+    }
+
+    const source = value as Record<string, unknown>;
+    return {
+        configured_mode: sanitizeString(source.configured_mode) || "Direct Connection",
+        detected_source: sanitizeString(source.detected_source) || "Direct Connection",
+        effective_proxy: typeof source.effective_proxy === "string" ? source.effective_proxy : null,
+        detail: typeof source.detail === "string" ? source.detail : null,
+    };
+}
+
+export function sanitizeProxyDiagnosticsInfo(value: unknown): ProxyDiagnosticsInfo {
+    if (!value || typeof value !== "object") {
+        return {
+            target_url: "",
+            environment_variables: [],
+            macos_system_configuration: sanitizeMacOsSystemProxyDiagnostics(null),
+            resolution: sanitizeProxyDiagnosticsResolution(null),
+        };
+    }
+
+    const source = value as Record<string, unknown>;
+    return {
+        target_url: sanitizeString(source.target_url),
+        environment_variables: Array.isArray(source.environment_variables)
+            ? source.environment_variables.map(sanitizeProxyEnvironmentVariableSnapshot)
+            : [],
+        macos_system_configuration: sanitizeMacOsSystemProxyDiagnostics(
+            source.macos_system_configuration
+        ),
+        resolution: sanitizeProxyDiagnosticsResolution(source.resolution),
+    };
+}
+
 export async function loadAppSettings(): Promise<AppSettings> {
     const result = await invoke("load_app_settings");
     return sanitizeAppSettings(result);
@@ -295,6 +397,19 @@ export async function resolveProxyTransport(
             : undefined,
     });
     return sanitizeProxyResolutionInfo(result);
+}
+
+export async function getProxyDiagnostics(
+    url: string,
+    proxySettingsOverride?: ProxySettings
+): Promise<ProxyDiagnosticsInfo> {
+    const result = await invoke("get_proxy_diagnostics", {
+        url,
+        proxySettingsOverride: proxySettingsOverride
+            ? sanitizeProxySettings(proxySettingsOverride)
+            : undefined,
+    });
+    return sanitizeProxyDiagnosticsInfo(result);
 }
 
 export function readStoredSettingsTab(): SettingsTabId {
