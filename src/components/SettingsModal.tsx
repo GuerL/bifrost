@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useMemo, useState } from "react";
 import bifrostLogo from "../assets/bifrost_logo.svg";
 import {
+    getProxyDiagnostics,
     readStoredSettingsTab,
     writeStoredSettingsTab,
 } from "../helpers/AppSettings.ts";
@@ -18,6 +19,7 @@ import {
 } from "../helpers/UiStyles.ts";
 import type {
     AppSettings,
+    ProxyDiagnosticsInfo,
     ProxyResolutionInfo,
     ProxySettings,
     SettingsTabId,
@@ -117,6 +119,7 @@ const proxyFieldGridStyle = {
     gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
     gap: 10,
 };
+const PROXY_DIAGNOSTICS_SAMPLE_URL = "https://example.com/";
 
 function sanitizeAboutRuntimeInfo(value: unknown): AboutRuntimeInfo {
     if (!value || typeof value !== "object") {
@@ -176,6 +179,8 @@ export default function SettingsModal({
     );
     const [aboutInfo, setAboutInfo] = useState<AboutRuntimeInfo | null>(null);
     const [aboutInfoError, setAboutInfoError] = useState("");
+    const [proxyDiagnostics, setProxyDiagnostics] = useState<ProxyDiagnosticsInfo | null>(null);
+    const [proxyDiagnosticsError, setProxyDiagnosticsError] = useState("");
     const shortcuts = useMemo(() => listShortcuts(), []);
     const generalSettings = appSettings.general;
     const proxySettings = appSettings.proxy;
@@ -190,6 +195,22 @@ export default function SettingsModal({
         selectedProxySource === "custom" && customProxyPort.length === 0
             ? "Port is required."
             : "";
+    const loginShellEnvironmentByKey = useMemo(() => {
+        const values = new Map<string, string>();
+        for (const entry of proxyDiagnostics?.login_shell_environment_variables ?? []) {
+            if (entry.value === null) continue;
+            values.set(entry.key, entry.value);
+        }
+        return values;
+    }, [proxyDiagnostics]);
+    const canImportLoginShellProxyValues = useMemo(() => {
+        return (
+            loginShellEnvironmentByKey.has("HTTP_PROXY") ||
+            loginShellEnvironmentByKey.has("HTTPS_PROXY") ||
+            loginShellEnvironmentByKey.has("ALL_PROXY") ||
+            loginShellEnvironmentByKey.has("NO_PROXY")
+        );
+    }, [loginShellEnvironmentByKey]);
 
     useEffect(() => {
         writeStoredSettingsTab(selectedTab);
@@ -229,6 +250,30 @@ export default function SettingsModal({
                 });
                 setAboutInfoError(
                     error instanceof Error ? error.message : "Unable to load application information."
+                );
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [open, selectedTab]);
+
+    useEffect(() => {
+        if (!open || selectedTab !== "proxy") return;
+
+        let cancelled = false;
+
+        getProxyDiagnostics(PROXY_DIAGNOSTICS_SAMPLE_URL)
+            .then((result) => {
+                if (cancelled) return;
+                setProxyDiagnostics(result);
+                setProxyDiagnosticsError("");
+            })
+            .catch((error) => {
+                if (cancelled) return;
+                setProxyDiagnostics(null);
+                setProxyDiagnosticsError(
+                    error instanceof Error ? error.message : "Unable to inspect proxy environment."
                 );
             });
 
@@ -304,6 +349,18 @@ export default function SettingsModal({
             ...proxySettings,
             custom: {
                 ...proxySettings.custom,
+                ...patch,
+            },
+        });
+    }
+
+    function updateManualEnvironmentProxySettings(
+        patch: Partial<ProxySettings["manual_environment"]>
+    ) {
+        onProxySettingsChange({
+            ...proxySettings,
+            manual_environment: {
+                ...proxySettings.manual_environment,
                 ...patch,
             },
         });
@@ -393,7 +450,7 @@ export default function SettingsModal({
             selectedProxySource === "custom"
                 ? proxyPreview?.detail ?? null
                 : selectedProxySource === "system" && proxySettings.respect_environment_variables
-                  ? "HTTP_PROXY, HTTPS_PROXY, and NO_PROXY are considered within the system source."
+                  ? "HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, and NO_PROXY are considered within the system source. Manual imported values are used if the app launch cannot see them."
                   : null;
 
         return (
@@ -898,7 +955,7 @@ export default function SettingsModal({
                                                     />
                                                     <span style={{ display: "grid", gap: 3 }}>
                                                         <span style={{ fontSize: 12.5, fontWeight: 600 }}>
-                                                            Respect HTTP_PROXY / HTTPS_PROXY / NO_PROXY
+                                                            Respect HTTP_PROXY / HTTPS_PROXY / ALL_PROXY / NO_PROXY
                                                         </span>
                                                         <span
                                                             style={{
@@ -906,11 +963,209 @@ export default function SettingsModal({
                                                                 color: "var(--pg-text-muted)",
                                                             }}
                                                         >
-                                                            Reads <code>HTTP_PROXY</code>,{" "}
-                                                            <code>HTTPS_PROXY</code>, and <code>NO_PROXY</code>.
+                                                            Reads lowercase and uppercase proxy variables visible
+                                                            to the running app process.
                                                         </span>
                                                     </span>
                                                 </label>
+
+                                                {proxySettings.respect_environment_variables && (
+                                                    <div
+                                                        style={{
+                                                            display: "grid",
+                                                            gap: 8,
+                                                            paddingTop: 8,
+                                                            borderTop: "1px solid var(--pg-border-soft)",
+                                                        }}
+                                                    >
+                                                        <div style={fieldCaptionStyle}>
+                                                            Manual environment proxy values
+                                                        </div>
+                                                        <div
+                                                            style={{
+                                                                fontSize: 12,
+                                                                color: "var(--pg-text-muted)",
+                                                                lineHeight: 1.5,
+                                                            }}
+                                                        >
+                                                            Use these values when Bifrost is launched as a macOS
+                                                            app and cannot see your shell proxy variables.
+                                                        </div>
+
+                                                        {proxyDiagnostics?.visibility_warning && (
+                                                            <div
+                                                                style={{
+                                                                    border: "1px solid rgba(245, 158, 11, 0.45)",
+                                                                    borderRadius: 10,
+                                                                    background:
+                                                                        "rgba(245, 158, 11, 0.08)",
+                                                                    padding: "9px 10px",
+                                                                    fontSize: 12,
+                                                                    color: "var(--pg-text)",
+                                                                    lineHeight: 1.5,
+                                                                }}
+                                                            >
+                                                                {proxyDiagnostics.visibility_warning}
+                                                            </div>
+                                                        )}
+
+                                                        <div style={proxyFieldGridStyle}>
+                                                            <label style={fieldLabelStyle}>
+                                                                <span style={fieldCaptionStyle}>
+                                                                    HTTP proxy
+                                                                </span>
+                                                                <input
+                                                                    value={
+                                                                        proxySettings.manual_environment.http_proxy
+                                                                    }
+                                                                    onChange={(event) =>
+                                                                        updateManualEnvironmentProxySettings({
+                                                                            http_proxy:
+                                                                                event.target.value,
+                                                                        })
+                                                                    }
+                                                                    placeholder="http://127.0.0.1:3128"
+                                                                    style={modalInputStyle()}
+                                                                />
+                                                            </label>
+
+                                                            <label style={fieldLabelStyle}>
+                                                                <span style={fieldCaptionStyle}>
+                                                                    HTTPS proxy
+                                                                </span>
+                                                                <input
+                                                                    value={
+                                                                        proxySettings.manual_environment.https_proxy
+                                                                    }
+                                                                    onChange={(event) =>
+                                                                        updateManualEnvironmentProxySettings({
+                                                                            https_proxy:
+                                                                                event.target.value,
+                                                                        })
+                                                                    }
+                                                                    placeholder="http://127.0.0.1:3128"
+                                                                    style={modalInputStyle()}
+                                                                />
+                                                            </label>
+
+                                                            <label style={fieldLabelStyle}>
+                                                                <span style={fieldCaptionStyle}>
+                                                                    ALL proxy
+                                                                </span>
+                                                                <input
+                                                                    value={
+                                                                        proxySettings.manual_environment.all_proxy
+                                                                    }
+                                                                    onChange={(event) =>
+                                                                        updateManualEnvironmentProxySettings({
+                                                                            all_proxy:
+                                                                                event.target.value,
+                                                                        })
+                                                                    }
+                                                                    placeholder="http://127.0.0.1:3128"
+                                                                    style={modalInputStyle()}
+                                                                />
+                                                            </label>
+
+                                                            <label style={fieldLabelStyle}>
+                                                                <span style={fieldCaptionStyle}>
+                                                                    NO_PROXY
+                                                                </span>
+                                                                <input
+                                                                    value={
+                                                                        proxySettings.manual_environment.no_proxy
+                                                                    }
+                                                                    onChange={(event) =>
+                                                                        updateManualEnvironmentProxySettings({
+                                                                            no_proxy:
+                                                                                event.target.value,
+                                                                        })
+                                                                    }
+                                                                    placeholder="localhost,127.0.0.1"
+                                                                    style={modalInputStyle()}
+                                                                />
+                                                            </label>
+                                                        </div>
+
+                                                        <div
+                                                            style={{
+                                                                display: "flex",
+                                                                gap: 8,
+                                                                flexWrap: "wrap",
+                                                                alignItems: "center",
+                                                            }}
+                                                        >
+                                                            <button
+                                                                type="button"
+                                                                style={buttonStyle(false)}
+                                                                disabled={!canImportLoginShellProxyValues}
+                                                                onClick={() =>
+                                                                    updateManualEnvironmentProxySettings({
+                                                                        http_proxy:
+                                                                            loginShellEnvironmentByKey.get(
+                                                                                "HTTP_PROXY"
+                                                                            ) ??
+                                                                            loginShellEnvironmentByKey.get(
+                                                                                "http_proxy"
+                                                                            ) ??
+                                                                            "",
+                                                                        https_proxy:
+                                                                            loginShellEnvironmentByKey.get(
+                                                                                "HTTPS_PROXY"
+                                                                            ) ??
+                                                                            loginShellEnvironmentByKey.get(
+                                                                                "https_proxy"
+                                                                            ) ??
+                                                                            "",
+                                                                        all_proxy:
+                                                                            loginShellEnvironmentByKey.get(
+                                                                                "ALL_PROXY"
+                                                                            ) ??
+                                                                            loginShellEnvironmentByKey.get(
+                                                                                "all_proxy"
+                                                                            ) ??
+                                                                            "",
+                                                                        no_proxy:
+                                                                            loginShellEnvironmentByKey.get(
+                                                                                "NO_PROXY"
+                                                                            ) ??
+                                                                            loginShellEnvironmentByKey.get(
+                                                                                "no_proxy"
+                                                                            ) ??
+                                                                            "",
+                                                                    })
+                                                                }
+                                                            >
+                                                                Import from login shell
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                style={buttonStyle(false)}
+                                                                onClick={() =>
+                                                                    updateManualEnvironmentProxySettings({
+                                                                        http_proxy: "",
+                                                                        https_proxy: "",
+                                                                        all_proxy: "",
+                                                                        no_proxy: "",
+                                                                    })
+                                                                }
+                                                            >
+                                                                Clear manual values
+                                                            </button>
+                                                        </div>
+
+                                                        {proxyDiagnosticsError && (
+                                                            <div
+                                                                style={{
+                                                                    fontSize: 12,
+                                                                    color: "var(--pg-danger)",
+                                                                }}
+                                                            >
+                                                                {proxyDiagnosticsError}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>

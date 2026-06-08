@@ -123,11 +123,19 @@ export type CustomProxySettings = {
     bypass_list: string;
 };
 
+export type ManualEnvironmentProxySettings = {
+    http_proxy: string;
+    https_proxy: string;
+    all_proxy: string;
+    no_proxy: string;
+};
+
 export type ProxySettings = {
     use_system_proxy: boolean;
     respect_environment_variables: boolean;
     use_custom_proxy: boolean;
     custom: CustomProxySettings;
+    manual_environment: ManualEnvironmentProxySettings;
 };
 
 export type RequestBehaviorSettings = {
@@ -199,8 +207,12 @@ export type ProxyDiagnosticsResolution = {
 
 export type ProxyDiagnosticsInfo = {
     target_url: string;
-    environment_variables: ProxyEnvironmentVariableSnapshot[];
+    process_environment_variables: ProxyEnvironmentVariableSnapshot[];
+    launchctl_environment_variables: ProxyEnvironmentVariableSnapshot[];
+    login_shell_environment_variables: ProxyEnvironmentVariableSnapshot[];
     macos_system_configuration: MacOsSystemProxyDiagnostics;
+    effective_environment_source: string | null;
+    visibility_warning: string | null;
     resolution: ProxyDiagnosticsResolution;
 };
 

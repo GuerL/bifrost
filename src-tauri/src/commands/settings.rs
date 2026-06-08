@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::env;
 #[cfg(target_os = "macos")]
+use std::process::Command;
+#[cfg(target_os = "macos")]
 use std::ptr;
 
 use proxy_cfg::ProxyConfig;
@@ -20,9 +22,9 @@ use core_foundation::string::CFString;
 use system_configuration_sys::dynamic_store_copy_specific;
 
 use crate::model::settings::{
-    AppSettings, CustomProxySettings, MacOsSystemProxyDiagnostics, ProxyDiagnosticsInfo,
-    ProxyDiagnosticsResolution, ProxyEnvironmentVariableSnapshot, ProxyResolutionInfo,
-    ProxyResolutionMode, ProxySettings,
+    AppSettings, CustomProxySettings, MacOsSystemProxyDiagnostics, ManualEnvironmentProxySettings,
+    ProxyDiagnosticsInfo, ProxyDiagnosticsResolution, ProxyEnvironmentVariableSnapshot,
+    ProxyResolutionInfo, ProxyResolutionMode, ProxySettings,
 };
 use crate::storage::paths::{app_settings_path, read_json, write_json};
 
@@ -58,6 +60,12 @@ enum ConfiguredProxySource {
     Custom,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EnvironmentProxyOrigin {
+    Process,
+    Manual,
+}
+
 #[derive(Clone)]
 pub(crate) struct ResolvedProxyTransport {
     pub info: ProxyResolutionInfo,
@@ -65,11 +73,13 @@ pub(crate) struct ResolvedProxyTransport {
     auth: Option<(String, String)>,
     builder_mode: ProxyBuilderMode,
     credentials_configured: bool,
+    environment_origin: Option<EnvironmentProxyOrigin>,
 }
 
 struct EnvironmentProxySource {
     config: Option<ProxyConfig>,
     detected_variable_names: Vec<&'static str>,
+    origin: Option<EnvironmentProxyOrigin>,
 }
 
 #[derive(Serialize)]
@@ -94,6 +104,7 @@ impl ResolvedProxyTransport {
             auth: None,
             builder_mode: ProxyBuilderMode::Direct,
             credentials_configured: false,
+            environment_origin: None,
         }
     }
 }
@@ -218,11 +229,12 @@ pub(crate) fn resolve_effective_proxy_transport(
         None
     };
     let environment_proxy_source = if proxy_settings.respect_environment_variables {
-        load_environment_proxy_source_from_process()
+        load_environment_proxy_source(&proxy_settings)
     } else {
         EnvironmentProxySource {
             config: None,
             detected_variable_names: vec![],
+            origin: None,
         }
     };
 
@@ -232,6 +244,9 @@ pub(crate) fn resolve_effective_proxy_transport(
         system_proxy.as_ref(),
         environment_proxy_source.config.as_ref(),
     )?;
+    if matches!(resolved.info.mode, ProxyResolutionMode::Environment) {
+        resolved.environment_origin = environment_proxy_source.origin;
+    }
     resolved.info.diagnostics = build_proxy_diagnostics(
         configured_source,
         &resolved,
@@ -324,6 +339,20 @@ fn configured_proxy_source_display_label(source: ConfiguredProxySource) -> &'sta
     }
 }
 
+fn environment_origin_label(origin: EnvironmentProxyOrigin) -> &'static str {
+    match origin {
+        EnvironmentProxyOrigin::Process => "process environment variables",
+        EnvironmentProxyOrigin::Manual => "manual environment proxy values",
+    }
+}
+
+fn environment_origin_display_label(origin: EnvironmentProxyOrigin) -> &'static str {
+    match origin {
+        EnvironmentProxyOrigin::Process => "Environment Variables",
+        EnvironmentProxyOrigin::Manual => "Manual Environment Values",
+    }
+}
+
 fn builder_mode_label(mode: ProxyBuilderMode) -> &'static str {
     match mode {
         ProxyBuilderMode::Direct => "direct via reqwest no_proxy()",
@@ -399,16 +428,33 @@ fn build_proxy_diagnostics_report(
     let configured_source = configured_proxy_source_from_settings(&proxy_settings);
     let resolved = resolve_effective_proxy_transport(app, url, Some(proxy_settings.clone()))?;
     let macos_system_configuration = load_macos_system_proxy_diagnostics()?;
+    let process_environment_variables = capture_proxy_environment_variable_snapshots_from_process();
+    let launchctl_environment_variables =
+        capture_proxy_environment_variable_snapshots_from_launchctl();
+    let login_shell_environment_variables =
+        capture_proxy_environment_variable_snapshots_from_login_shell();
+    let visibility_warning = build_proxy_environment_visibility_warning(
+        &process_environment_variables,
+        &launchctl_environment_variables,
+        &login_shell_environment_variables,
+    );
 
     Ok(ProxyDiagnosticsInfo {
         target_url: url.as_str().to_string(),
-        environment_variables: capture_proxy_environment_variable_snapshots_from_process(),
+        process_environment_variables,
+        launchctl_environment_variables,
+        login_shell_environment_variables,
         macos_system_configuration: macos_system_configuration.clone(),
+        effective_environment_source: resolved
+            .environment_origin
+            .map(environment_origin_display_label)
+            .map(str::to_string),
+        visibility_warning,
         resolution: ProxyDiagnosticsResolution {
             configured_mode: configured_proxy_source_display_label(configured_source).to_string(),
             detected_source: diagnostics_detected_source_label(
                 configured_source,
-                &resolved.info.mode,
+                &resolved,
                 &macos_system_configuration,
             )
             .to_string(),
@@ -420,13 +466,16 @@ fn build_proxy_diagnostics_report(
 
 fn diagnostics_detected_source_label(
     configured_source: ConfiguredProxySource,
-    resolved_mode: &ProxyResolutionMode,
+    resolved: &ResolvedProxyTransport,
     macos_system_configuration: &MacOsSystemProxyDiagnostics,
 ) -> &'static str {
-    match resolved_mode {
+    match &resolved.info.mode {
         ProxyResolutionMode::Custom => "Custom Proxy",
         ProxyResolutionMode::System => "System Proxy",
-        ProxyResolutionMode::Environment => "Environment Variables",
+        ProxyResolutionMode::Environment => resolved
+            .environment_origin
+            .map(environment_origin_display_label)
+            .unwrap_or("Environment Variables"),
         ProxyResolutionMode::Direct => match configured_source {
             ConfiguredProxySource::System if macos_system_configuration.pac_enabled => "PAC",
             ConfiguredProxySource::System if macos_system_configuration.socks_enabled => "SOCKS",
@@ -443,6 +492,96 @@ fn capture_proxy_environment_variable_snapshots_from_process(
     capture_proxy_environment_variable_snapshots_with(|key| {
         env::var_os(key).map(|value| value.to_string_lossy().into_owned())
     })
+}
+
+#[cfg(target_os = "macos")]
+fn capture_proxy_environment_variable_snapshots_from_launchctl(
+) -> Vec<ProxyEnvironmentVariableSnapshot> {
+    capture_proxy_environment_variable_snapshots_with(|key| {
+        let output = Command::new("/bin/launchctl")
+            .args(["getenv", key])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let value = String::from_utf8_lossy(&output.stdout)
+            .trim_end()
+            .to_string();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value)
+        }
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn capture_proxy_environment_variable_snapshots_from_launchctl(
+) -> Vec<ProxyEnvironmentVariableSnapshot> {
+    capture_proxy_environment_variable_snapshots_with(|_| None)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_proxy_environment_variable_snapshots_from_login_shell(
+) -> Vec<ProxyEnvironmentVariableSnapshot> {
+    let script = r#"for key in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy; do
+  printf '%s=' "$key"
+  printenv "$key" 2>/dev/null || true
+  printf '\n'
+done"#;
+    let output = Command::new("/bin/zsh")
+        .args(["-ilc", script])
+        .output()
+        .ok();
+    let Some(output) = output else {
+        return capture_proxy_environment_variable_snapshots_with(|_| None);
+    };
+    if !output.status.success() {
+        return capture_proxy_environment_variable_snapshots_with(|_| None);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut values = std::collections::HashMap::new();
+    for line in stdout.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if ENV_PROXY_VARIABLE_NAMES.contains(&key) {
+            let normalized = value.trim_end_matches('\r').to_string();
+            if !normalized.is_empty() {
+                values.insert(key.to_string(), normalized);
+            }
+        }
+    }
+
+    capture_proxy_environment_variable_snapshots_with(|key| values.get(key).cloned())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn capture_proxy_environment_variable_snapshots_from_login_shell(
+) -> Vec<ProxyEnvironmentVariableSnapshot> {
+    capture_proxy_environment_variable_snapshots_with(|_| None)
+}
+
+fn build_proxy_environment_visibility_warning(
+    process_snapshots: &[ProxyEnvironmentVariableSnapshot],
+    launchctl_snapshots: &[ProxyEnvironmentVariableSnapshot],
+    login_shell_snapshots: &[ProxyEnvironmentVariableSnapshot],
+) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        if snapshots_have_proxy_endpoint_values(login_shell_snapshots)
+            && !snapshots_have_proxy_endpoint_values(process_snapshots)
+            && !snapshots_have_proxy_endpoint_values(launchctl_snapshots)
+        {
+            return Some(
+                "Proxy environment variables were found in shell but are not visible to Bifrost when launched as a macOS app.".to_string(),
+            );
+        }
+    }
+
+    None
 }
 
 fn capture_proxy_environment_variable_snapshots_with<F>(
@@ -548,9 +687,23 @@ fn load_macos_system_proxy_diagnostics() -> Result<MacOsSystemProxyDiagnostics, 
 
 fn format_proxy_diagnostics_log_lines(report: &ProxyDiagnosticsInfo) -> Vec<String> {
     let mut lines = Vec::new();
-    for entry in &report.environment_variables {
+    for entry in &report.process_environment_variables {
         lines.push(format!(
-            "{}={}",
+            "process_{}={}",
+            entry.key,
+            entry.value.as_deref().unwrap_or("<not set>")
+        ));
+    }
+    for entry in &report.launchctl_environment_variables {
+        lines.push(format!(
+            "launchctl_{}={}",
+            entry.key,
+            entry.value.as_deref().unwrap_or("<not set>")
+        ));
+    }
+    for entry in &report.login_shell_environment_variables {
+        lines.push(format!(
+            "shell_{}={}",
             entry.key,
             entry.value.as_deref().unwrap_or("<not set>")
         ));
@@ -609,6 +762,13 @@ fn format_proxy_diagnostics_log_lines(report: &ProxyDiagnosticsInfo) -> Vec<Stri
         report.resolution.detected_source
     ));
     lines.push(format!(
+        "effective_environment_source={}",
+        report
+            .effective_environment_source
+            .as_deref()
+            .unwrap_or("none")
+    ));
+    lines.push(format!(
         "effective_proxy={}",
         report
             .resolution
@@ -616,6 +776,9 @@ fn format_proxy_diagnostics_log_lines(report: &ProxyDiagnosticsInfo) -> Vec<Stri
             .as_deref()
             .unwrap_or("none")
     ));
+    if let Some(warning) = &report.visibility_warning {
+        lines.push(format!("visibility_warning={warning}"));
+    }
     if let Some(detail) = &report.resolution.detail {
         lines.push(format!("detail={detail}"));
     }
@@ -671,6 +834,12 @@ fn build_proxy_diagnostics(
                 "Environment variables detected: {}",
                 environment_proxy_source.detected_variable_names.join(", ")
             ));
+            if let Some(origin) = environment_proxy_source.origin {
+                diagnostics.push(format!(
+                    "Environment source: {}",
+                    environment_origin_label(origin)
+                ));
+            }
         }
     }
 
@@ -740,6 +909,7 @@ fn resolve_candidate(
         auth: candidate.auth,
         builder_mode: ProxyBuilderMode::Explicit,
         credentials_configured,
+        environment_origin: None,
     }))
 }
 
@@ -801,14 +971,39 @@ fn build_custom_proxy_candidate(
 
 #[cfg(target_os = "linux")]
 fn load_environment_proxy_config_from_process() -> Option<ProxyConfig> {
-    build_environment_proxy_config(env::vars()).config
+    build_environment_proxy_source_from_pairs(
+        snapshots_to_pairs(&capture_proxy_environment_variable_snapshots_from_process()),
+        None,
+    )
+    .config
 }
 
-fn load_environment_proxy_source_from_process() -> EnvironmentProxySource {
-    build_environment_proxy_config(env::vars())
+fn load_environment_proxy_source(proxy_settings: &ProxySettings) -> EnvironmentProxySource {
+    let process_snapshots = capture_proxy_environment_variable_snapshots_from_process();
+    let manual_snapshots = capture_proxy_environment_variable_snapshots_from_manual_settings(
+        &proxy_settings.manual_environment,
+    );
+    let process_has_proxy = snapshots_have_proxy_endpoint_values(&process_snapshots);
+    let manual_has_proxy = snapshots_have_proxy_endpoint_values(&manual_snapshots);
+
+    let mut merged_pairs = snapshots_to_pairs(&manual_snapshots);
+    merged_pairs.extend(snapshots_to_pairs(&process_snapshots));
+
+    let origin = if process_has_proxy {
+        Some(EnvironmentProxyOrigin::Process)
+    } else if manual_has_proxy {
+        Some(EnvironmentProxyOrigin::Manual)
+    } else {
+        None
+    };
+
+    build_environment_proxy_source_from_pairs(merged_pairs, origin)
 }
 
-fn build_environment_proxy_config<I>(pairs: I) -> EnvironmentProxySource
+fn build_environment_proxy_source_from_pairs<I>(
+    pairs: I,
+    origin: Option<EnvironmentProxyOrigin>,
+) -> EnvironmentProxySource
 where
     I: IntoIterator<Item = (String, String)>,
 {
@@ -859,13 +1054,52 @@ where
         return EnvironmentProxySource {
             config: None,
             detected_variable_names,
+            origin: None,
         };
     }
 
     EnvironmentProxySource {
         config: Some(config),
         detected_variable_names,
+        origin,
     }
+}
+
+fn snapshots_to_pairs(snapshots: &[ProxyEnvironmentVariableSnapshot]) -> Vec<(String, String)> {
+    snapshots
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .value
+                .as_ref()
+                .map(|value| (entry.key.clone(), value.clone()))
+        })
+        .collect()
+}
+
+fn snapshots_have_proxy_endpoint_values(snapshots: &[ProxyEnvironmentVariableSnapshot]) -> bool {
+    snapshots.iter().any(|entry| {
+        matches!(
+            entry.key.as_str(),
+            "HTTP_PROXY" | "HTTPS_PROXY" | "ALL_PROXY" | "http_proxy" | "https_proxy" | "all_proxy"
+        ) && entry
+            .value
+            .as_ref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+    })
+}
+
+fn capture_proxy_environment_variable_snapshots_from_manual_settings(
+    settings: &ManualEnvironmentProxySettings,
+) -> Vec<ProxyEnvironmentVariableSnapshot> {
+    capture_proxy_environment_variable_snapshots_with(|key| match key {
+        "HTTP_PROXY" => Some(settings.http_proxy.clone()),
+        "HTTPS_PROXY" => Some(settings.https_proxy.clone()),
+        "ALL_PROXY" => Some(settings.all_proxy.clone()),
+        "NO_PROXY" => Some(settings.no_proxy.clone()),
+        _ => None,
+    })
 }
 
 fn load_system_proxy_config() -> Result<Option<ProxyConfig>, String> {
@@ -1003,16 +1237,19 @@ mod tests {
 
     #[test]
     fn environment_proxy_config_reads_expected_variables() {
-        let source = build_environment_proxy_config([
-            (
-                "HTTP_PROXY".to_string(),
-                "http://proxy.local:8080".to_string(),
-            ),
-            (
-                "NO_PROXY".to_string(),
-                "localhost, *.company.local".to_string(),
-            ),
-        ]);
+        let source = build_environment_proxy_source_from_pairs(
+            [
+                (
+                    "HTTP_PROXY".to_string(),
+                    "http://proxy.local:8080".to_string(),
+                ),
+                (
+                    "NO_PROXY".to_string(),
+                    "localhost, *.company.local".to_string(),
+                ),
+            ],
+            Some(EnvironmentProxyOrigin::Process),
+        );
         let config = source.config.expect("environment proxy should exist");
 
         assert_eq!(
@@ -1029,10 +1266,13 @@ mod tests {
 
     #[test]
     fn environment_proxy_config_reads_all_proxy() {
-        let source = build_environment_proxy_config([(
-            "ALL_PROXY".to_string(),
-            "http://shared.proxy.local:8080".to_string(),
-        )]);
+        let source = build_environment_proxy_source_from_pairs(
+            [(
+                "ALL_PROXY".to_string(),
+                "http://shared.proxy.local:8080".to_string(),
+            )],
+            Some(EnvironmentProxyOrigin::Process),
+        );
         let config = source.config.expect("environment proxy should exist");
 
         assert_eq!(
@@ -1084,7 +1324,7 @@ mod tests {
     fn diagnostics_detects_pac_when_system_proxy_falls_back_to_direct() {
         let detected_source = diagnostics_detected_source_label(
             ConfiguredProxySource::System,
-            &ProxyResolutionMode::Direct,
+            &ResolvedProxyTransport::direct(None),
             &MacOsSystemProxyDiagnostics {
                 supported: true,
                 pac_enabled: true,
@@ -1107,6 +1347,7 @@ mod tests {
                 port: "8080".to_string(),
                 ..CustomProxySettings::default()
             },
+            ..ProxySettings::default()
         };
         let system_proxy = config_with_proxy("system.proxy.local:9000");
         let environment_proxy = config_with_proxy("http://env.proxy.local:7000");
@@ -1135,6 +1376,7 @@ mod tests {
             respect_environment_variables: true,
             use_custom_proxy: false,
             custom: CustomProxySettings::default(),
+            ..ProxySettings::default()
         };
         let mut environment_proxy = config_with_proxy("http://env.proxy.local:7000");
         environment_proxy.whitelist.insert("localhost".to_string());
@@ -1156,6 +1398,7 @@ mod tests {
             respect_environment_variables: false,
             use_custom_proxy: false,
             custom: CustomProxySettings::default(),
+            ..ProxySettings::default()
         };
 
         let resolved = resolve_proxy_from_sources(&url, &proxy_settings, None, None)
@@ -1168,6 +1411,7 @@ mod tests {
             &EnvironmentProxySource {
                 config: None,
                 detected_variable_names: vec![],
+                origin: None,
             },
         );
 
@@ -1192,6 +1436,7 @@ mod tests {
                 password: "SeCrEt".to_string(),
                 ..CustomProxySettings::default()
             },
+            ..ProxySettings::default()
         };
 
         let resolved = resolve_proxy_from_sources(&url, &proxy_settings, None, None)
@@ -1204,6 +1449,7 @@ mod tests {
             &EnvironmentProxySource {
                 config: None,
                 detected_variable_names: vec![],
+                origin: None,
             },
         );
 
@@ -1227,14 +1473,18 @@ mod tests {
             respect_environment_variables: true,
             use_custom_proxy: false,
             custom: CustomProxySettings::default(),
+            ..ProxySettings::default()
         };
-        let environment_source = build_environment_proxy_config([
-            (
-                "HTTPS_PROXY".to_string(),
-                "http://env.proxy.local:9000".to_string(),
-            ),
-            ("NO_PROXY".to_string(), "localhost".to_string()),
-        ]);
+        let environment_source = build_environment_proxy_source_from_pairs(
+            [
+                (
+                    "HTTPS_PROXY".to_string(),
+                    "http://env.proxy.local:9000".to_string(),
+                ),
+                ("NO_PROXY".to_string(), "localhost".to_string()),
+            ],
+            Some(EnvironmentProxyOrigin::Process),
+        );
         let resolved = resolve_proxy_from_sources(
             &url,
             &proxy_settings,
@@ -1242,6 +1492,8 @@ mod tests {
             environment_source.config.as_ref(),
         )
         .expect("proxy resolution should succeed");
+        let mut resolved = resolved;
+        resolved.environment_origin = environment_source.origin;
         let diagnostics = build_proxy_diagnostics(
             ConfiguredProxySource::Environment,
             &resolved,
@@ -1258,6 +1510,84 @@ mod tests {
         assert!(diagnostics
             .iter()
             .any(|line| line.contains("Environment variables detected: HTTPS_PROXY, NO_PROXY")));
+        assert!(diagnostics
+            .iter()
+            .any(|line| line.contains("Environment source: process environment variables")));
+    }
+
+    #[test]
+    fn manual_environment_proxy_values_are_used_when_process_env_is_missing() {
+        let source = load_environment_proxy_source(&ProxySettings {
+            respect_environment_variables: true,
+            manual_environment: ManualEnvironmentProxySettings {
+                all_proxy: "http://manual.proxy.local:8118".to_string(),
+                no_proxy: "localhost".to_string(),
+                ..ManualEnvironmentProxySettings::default()
+            },
+            ..ProxySettings::default()
+        });
+
+        let config = source
+            .config
+            .expect("manual environment proxy should exist");
+        assert_eq!(
+            config.proxies.get("*").map(String::as_str),
+            Some("http://manual.proxy.local:8118")
+        );
+        assert_eq!(source.origin, Some(EnvironmentProxyOrigin::Manual));
+    }
+
+    #[test]
+    fn process_environment_proxy_values_override_manual_environment_values() {
+        let process_snapshots =
+            capture_proxy_environment_variable_snapshots_with(|key| match key {
+                "HTTPS_PROXY" => Some("http://process.proxy.local:8443".to_string()),
+                _ => None,
+            });
+        let manual_snapshots = capture_proxy_environment_variable_snapshots_from_manual_settings(
+            &ManualEnvironmentProxySettings {
+                https_proxy: "http://manual.proxy.local:9000".to_string(),
+                ..ManualEnvironmentProxySettings::default()
+            },
+        );
+        let mut merged_pairs = snapshots_to_pairs(&manual_snapshots);
+        merged_pairs.extend(snapshots_to_pairs(&process_snapshots));
+        let source = build_environment_proxy_source_from_pairs(
+            merged_pairs,
+            Some(EnvironmentProxyOrigin::Process),
+        );
+
+        let config = source
+            .config
+            .expect("merged environment proxy should exist");
+        assert_eq!(
+            config.proxies.get("https").map(String::as_str),
+            Some("http://process.proxy.local:8443")
+        );
+        assert_eq!(source.origin, Some(EnvironmentProxyOrigin::Process));
+    }
+
+    #[test]
+    fn shell_visibility_warning_is_reported_when_shell_has_proxy_and_process_does_not() {
+        let warning = build_proxy_environment_visibility_warning(
+            &capture_proxy_environment_variable_snapshots_with(|_| None),
+            &capture_proxy_environment_variable_snapshots_with(|_| None),
+            &capture_proxy_environment_variable_snapshots_with(|key| match key {
+                "http_proxy" => Some("http://shell.proxy.local:3128".to_string()),
+                _ => None,
+            }),
+        );
+
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            warning.as_deref(),
+            Some(
+                "Proxy environment variables were found in shell but are not visible to Bifrost when launched as a macOS app."
+            )
+        );
+
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(warning, None);
     }
 
     #[test]

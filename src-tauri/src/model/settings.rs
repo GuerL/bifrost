@@ -104,6 +104,8 @@ pub struct ProxySettings {
     pub use_custom_proxy: bool,
     #[serde(default)]
     pub custom: CustomProxySettings,
+    #[serde(default)]
+    pub manual_environment: ManualEnvironmentProxySettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +141,18 @@ impl Default for CustomProxySettings {
             bypass_list: String::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ManualEnvironmentProxySettings {
+    #[serde(default)]
+    pub http_proxy: String,
+    #[serde(default)]
+    pub https_proxy: String,
+    #[serde(default)]
+    pub all_proxy: String,
+    #[serde(default)]
+    pub no_proxy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,8 +213,14 @@ pub struct ProxyDiagnosticsResolution {
 pub struct ProxyDiagnosticsInfo {
     pub target_url: String,
     #[serde(default)]
-    pub environment_variables: Vec<ProxyEnvironmentVariableSnapshot>,
+    pub process_environment_variables: Vec<ProxyEnvironmentVariableSnapshot>,
+    #[serde(default)]
+    pub launchctl_environment_variables: Vec<ProxyEnvironmentVariableSnapshot>,
+    #[serde(default)]
+    pub login_shell_environment_variables: Vec<ProxyEnvironmentVariableSnapshot>,
     #[serde(default)]
     pub macos_system_configuration: MacOsSystemProxyDiagnostics,
+    pub effective_environment_source: Option<String>,
+    pub visibility_warning: Option<String>,
     pub resolution: ProxyDiagnosticsResolution,
 }

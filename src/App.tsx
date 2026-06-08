@@ -521,21 +521,48 @@ function formatDiagnosticsScalarValue(
     return typeof value === "number" ? String(value) : value;
 }
 
-function formatProxyDiagnosticsText(info: ProxyDiagnosticsInfo): string {
-    const lines: string[] = [];
-    const envLabelWidth = info.environment_variables.reduce(
+function formatProxyEnvironmentSnapshotSection(
+    title: string,
+    entries: ProxyDiagnosticsInfo["process_environment_variables"]
+): string[] {
+    const lines: string[] = [title, ""];
+    const envLabelWidth = entries.reduce(
         (max, entry) => Math.max(max, entry.key.length),
         0
     );
     const envWidth = Math.max(envLabelWidth, "HTTPS_PROXY".length);
 
-    lines.push("Environment Variables");
-    lines.push("");
-    for (const entry of info.environment_variables) {
+    for (const entry of entries) {
         lines.push(
             `${entry.key.padEnd(envWidth)}: ${formatDiagnosticsScalarValue(entry.value, "<not set>")}`
         );
     }
+
+    return lines;
+}
+
+function formatProxyDiagnosticsText(info: ProxyDiagnosticsInfo): string {
+    const lines: string[] = [];
+    lines.push(
+        ...formatProxyEnvironmentSnapshotSection(
+            "Environment Variables",
+            info.process_environment_variables
+        )
+    );
+    lines.push("");
+    lines.push(
+        ...formatProxyEnvironmentSnapshotSection(
+            "launchctl Environment",
+            info.launchctl_environment_variables
+        )
+    );
+    lines.push("");
+    lines.push(
+        ...formatProxyEnvironmentSnapshotSection(
+            "Login Shell Environment",
+            info.login_shell_environment_variables
+        )
+    );
 
     const macos = info.macos_system_configuration;
     lines.push("");
@@ -568,11 +595,17 @@ function formatProxyDiagnosticsText(info: ProxyDiagnosticsInfo): string {
     lines.push("");
     lines.push(`Configured mode: ${info.resolution.configured_mode}`);
     lines.push(`Detected source: ${info.resolution.detected_source}`);
+    if (info.effective_environment_source) {
+        lines.push(`Environment source: ${info.effective_environment_source}`);
+    }
     lines.push(
         `Effective proxy: ${formatDiagnosticsScalarValue(info.resolution.effective_proxy, "none")}`
     );
     if (info.resolution.detail) {
         lines.push(`Detail: ${info.resolution.detail}`);
+    }
+    if (info.visibility_warning) {
+        lines.push(`Warning: ${info.visibility_warning}`);
     }
     lines.push(`Target URL: ${info.target_url}`);
 
@@ -2040,8 +2073,6 @@ export default function App() {
         if (!draft) {
             setProxyResolutionInfo(null);
             setProxyResolutionError("");
-            setProxyDiagnosticsInfo(null);
-            setProxyDiagnosticsError("");
             return;
         }
 
@@ -2054,8 +2085,6 @@ export default function App() {
         if (preview.unresolvedVariables.length > 0) {
             setProxyResolutionInfo(null);
             setProxyResolutionError("");
-            setProxyDiagnosticsInfo(null);
-            setProxyDiagnosticsError("");
             return;
         }
 
@@ -2064,26 +2093,23 @@ export default function App() {
         } catch {
             setProxyResolutionInfo(null);
             setProxyResolutionError("");
-            setProxyDiagnosticsInfo(null);
-            setProxyDiagnosticsError("");
             return;
         }
 
         let cancelled = false;
 
         (async () => {
-            const [resolvedProxyResult, proxyDiagnosticsResult] = await Promise.allSettled([
-                resolveProxyTransport(preview.resolvedUrl, appSettings.proxy),
-                getProxyDiagnostics(preview.resolvedUrl, appSettings.proxy),
-            ]);
-
-            if (cancelled) return;
-
-            if (resolvedProxyResult.status === "fulfilled") {
-                setProxyResolutionInfo(resolvedProxyResult.value);
+            try {
+                const resolvedProxy = await resolveProxyTransport(
+                    preview.resolvedUrl,
+                    appSettings.proxy
+                );
+                if (cancelled) return;
+                setProxyResolutionInfo(resolvedProxy);
                 setProxyResolutionError("");
-            } else {
-                const message = errorMessage(resolvedProxyResult.reason);
+            } catch (error) {
+                if (cancelled) return;
+                const message = errorMessage(error);
                 setProxyResolutionInfo({
                     mode: "direct",
                     summary: "Direct connection",
@@ -2093,20 +2119,62 @@ export default function App() {
                 });
                 setProxyResolutionError(message);
             }
-
-            if (proxyDiagnosticsResult.status === "fulfilled") {
-                setProxyDiagnosticsInfo(proxyDiagnosticsResult.value);
-                setProxyDiagnosticsError("");
-            } else {
-                setProxyDiagnosticsInfo(null);
-                setProxyDiagnosticsError(errorMessage(proxyDiagnosticsResult.reason));
-            }
         })();
 
         return () => {
             cancelled = true;
         };
     }, [draft, runtimeVariableValues, appSettings.general, appSettings.proxy]);
+
+    useEffect(() => {
+        if (tab !== "debug" || !draft) {
+            setProxyDiagnosticsInfo(null);
+            setProxyDiagnosticsError("");
+            return;
+        }
+
+        const preview = buildRequestDebugInfo({
+            request: draft,
+            variableValues: runtimeVariableValues,
+            generalSettings: appSettings.general,
+        });
+
+        if (preview.unresolvedVariables.length > 0) {
+            setProxyDiagnosticsInfo(null);
+            setProxyDiagnosticsError("");
+            return;
+        }
+
+        try {
+            new URL(preview.resolvedUrl);
+        } catch {
+            setProxyDiagnosticsInfo(null);
+            setProxyDiagnosticsError("");
+            return;
+        }
+
+        let cancelled = false;
+
+        (async () => {
+            try {
+                const diagnostics = await getProxyDiagnostics(
+                    preview.resolvedUrl,
+                    appSettings.proxy
+                );
+                if (cancelled) return;
+                setProxyDiagnosticsInfo(diagnostics);
+                setProxyDiagnosticsError("");
+            } catch (error) {
+                if (cancelled) return;
+                setProxyDiagnosticsInfo(null);
+                setProxyDiagnosticsError(errorMessage(error));
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [tab, draft, runtimeVariableValues, appSettings.general, appSettings.proxy]);
 
     const {
         beforeMountMonaco,

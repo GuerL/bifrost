@@ -4,6 +4,7 @@ import type {
     AppSettings,
     CustomProxySettings,
     GeneralSettings,
+    ManualEnvironmentProxySettings,
     ProxyDiagnosticsInfo,
     ProxyDiagnosticsResolution,
     ProxyEnvironmentVariableSnapshot,
@@ -30,11 +31,19 @@ export const DEFAULT_CUSTOM_PROXY_SETTINGS: CustomProxySettings = {
     bypass_list: "",
 };
 
+export const DEFAULT_MANUAL_ENVIRONMENT_PROXY_SETTINGS: ManualEnvironmentProxySettings = {
+    http_proxy: "",
+    https_proxy: "",
+    all_proxy: "",
+    no_proxy: "",
+};
+
 export const DEFAULT_PROXY_SETTINGS: ProxySettings = {
     use_system_proxy: false,
     respect_environment_variables: false,
     use_custom_proxy: false,
     custom: DEFAULT_CUSTOM_PROXY_SETTINGS,
+    manual_environment: DEFAULT_MANUAL_ENVIRONMENT_PROXY_SETTINGS,
 };
 
 export const DEFAULT_REQUEST_BEHAVIOR_SETTINGS: RequestBehaviorSettings = {
@@ -117,6 +126,22 @@ export function sanitizeCustomProxySettings(value: unknown): CustomProxySettings
         username: sanitizeString(source.username),
         password: sanitizeString(source.password),
         bypass_list: sanitizeString(source.bypass_list),
+    };
+}
+
+export function sanitizeManualEnvironmentProxySettings(
+    value: unknown
+): ManualEnvironmentProxySettings {
+    if (!value || typeof value !== "object") {
+        return { ...DEFAULT_MANUAL_ENVIRONMENT_PROXY_SETTINGS };
+    }
+
+    const source = value as Record<string, unknown>;
+    return {
+        http_proxy: sanitizeString(source.http_proxy),
+        https_proxy: sanitizeString(source.https_proxy),
+        all_proxy: sanitizeString(source.all_proxy),
+        no_proxy: sanitizeString(source.no_proxy),
     };
 }
 
@@ -215,6 +240,7 @@ export function sanitizeProxySettings(value: unknown): ProxySettings {
         return {
             ...DEFAULT_PROXY_SETTINGS,
             custom: { ...DEFAULT_CUSTOM_PROXY_SETTINGS },
+            manual_environment: { ...DEFAULT_MANUAL_ENVIRONMENT_PROXY_SETTINGS },
         };
     }
 
@@ -228,6 +254,7 @@ export function sanitizeProxySettings(value: unknown): ProxySettings {
         ),
         use_custom_proxy: sanitizeBoolean(source.use_custom_proxy, false),
         custom: sanitizeCustomProxySettings(source.custom),
+        manual_environment: sanitizeManualEnvironmentProxySettings(source.manual_environment),
     };
 }
 
@@ -243,6 +270,7 @@ export function sanitizeAppSettings(value: unknown): AppSettings {
             proxy: {
                 ...DEFAULT_PROXY_SETTINGS,
                 custom: { ...DEFAULT_CUSTOM_PROXY_SETTINGS },
+                manual_environment: { ...DEFAULT_MANUAL_ENVIRONMENT_PROXY_SETTINGS },
             },
         };
     }
@@ -358,8 +386,12 @@ export function sanitizeProxyDiagnosticsInfo(value: unknown): ProxyDiagnosticsIn
     if (!value || typeof value !== "object") {
         return {
             target_url: "",
-            environment_variables: [],
+            process_environment_variables: [],
+            launchctl_environment_variables: [],
+            login_shell_environment_variables: [],
             macos_system_configuration: sanitizeMacOsSystemProxyDiagnostics(null),
+            effective_environment_source: null,
+            visibility_warning: null,
             resolution: sanitizeProxyDiagnosticsResolution(null),
         };
     }
@@ -367,12 +399,24 @@ export function sanitizeProxyDiagnosticsInfo(value: unknown): ProxyDiagnosticsIn
     const source = value as Record<string, unknown>;
     return {
         target_url: sanitizeString(source.target_url),
-        environment_variables: Array.isArray(source.environment_variables)
-            ? source.environment_variables.map(sanitizeProxyEnvironmentVariableSnapshot)
+        process_environment_variables: Array.isArray(source.process_environment_variables)
+            ? source.process_environment_variables.map(sanitizeProxyEnvironmentVariableSnapshot)
+            : [],
+        launchctl_environment_variables: Array.isArray(source.launchctl_environment_variables)
+            ? source.launchctl_environment_variables.map(sanitizeProxyEnvironmentVariableSnapshot)
+            : [],
+        login_shell_environment_variables: Array.isArray(source.login_shell_environment_variables)
+            ? source.login_shell_environment_variables.map(sanitizeProxyEnvironmentVariableSnapshot)
             : [],
         macos_system_configuration: sanitizeMacOsSystemProxyDiagnostics(
             source.macos_system_configuration
         ),
+        effective_environment_source:
+            typeof source.effective_environment_source === "string"
+                ? source.effective_environment_source
+                : null,
+        visibility_warning:
+            typeof source.visibility_warning === "string" ? source.visibility_warning : null,
         resolution: sanitizeProxyDiagnosticsResolution(source.resolution),
     };
 }
