@@ -1,5 +1,7 @@
 use crate::commands::environment::load_environment_values;
-use crate::commands::settings::{build_reqwest_proxy, resolve_effective_proxy_transport};
+use crate::commands::settings::{
+    build_reqwest_proxy, load_app_settings_value, resolve_effective_proxy_transport,
+};
 use crate::commands::state::{RequestRegistry, RunningRequest};
 use crate::model::collection::{
     Auth, AuthLocation, Body, HttpMethod, KeyValue, MultipartField, Request, RequestTls,
@@ -640,8 +642,9 @@ fn load_client_identity(path: &str) -> Result<reqwest::Identity, HttpErrorDto> {
 fn apply_tls_settings(
     mut builder: reqwest::ClientBuilder,
     tls: &RequestTls,
+    verify_tls_certificates: bool,
 ) -> Result<reqwest::ClientBuilder, HttpErrorDto> {
-    if tls.allow_invalid_certificates {
+    if !verify_tls_certificates || tls.allow_invalid_certificates {
         builder = builder.danger_accept_invalid_certs(true);
     }
 
@@ -774,31 +777,44 @@ pub async fn do_send_request(
     mut req: Request,
 ) -> Result<HttpResponseDto, HttpErrorDto> {
     apply_auth_to_request(&mut req);
-    const REQUEST_TIMEOUT_SECONDS: u64 = 60;
 
     // 1) validate URL early
     let url = reqwest::Url::parse(&req.url)
         .map_err(|e| err("invalid_url", "Invalid URL", Some(e.to_string()), None))?;
-    let resolved_proxy = resolve_effective_proxy_transport(app, &url, None).map_err(|error| {
+    let app_settings = load_app_settings_value(app).map_err(|error| {
         err(
-            "proxy",
-            "Failed to resolve proxy settings",
+            "settings",
+            "Failed to load application settings",
             Some(error),
             None,
         )
     })?;
+    let resolved_proxy =
+        resolve_effective_proxy_transport(app, &url, Some(app_settings.proxy.clone())).map_err(
+            |error| {
+                err(
+                    "proxy",
+                    "Failed to resolve proxy settings",
+                    Some(error),
+                    None,
+                )
+            },
+        )?;
+    let request_timeout_ms = app_settings.general.requests.request_timeout_ms;
+    let verify_tls_certificates = app_settings.general.security.verify_tls_certificates;
 
     // 2) client with explicit timeout budget + TLS options
-    let mut client_builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
-        .connect_timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
-        .no_proxy();
+    let mut client_builder = reqwest::Client::builder().no_proxy();
+    if request_timeout_ms > 0 {
+        let timeout = std::time::Duration::from_millis(request_timeout_ms);
+        client_builder = client_builder.timeout(timeout).connect_timeout(timeout);
+    }
     if let Some(proxy) = build_reqwest_proxy(&resolved_proxy)
         .map_err(|error| err("proxy", "Failed to apply proxy settings", Some(error), None))?
     {
         client_builder = client_builder.proxy(proxy);
     }
-    let client_builder = apply_tls_settings(client_builder, &req.tls)?;
+    let client_builder = apply_tls_settings(client_builder, &req.tls, verify_tls_certificates)?;
     let client = client_builder.build().map_err(|e| {
         err(
             "unknown",

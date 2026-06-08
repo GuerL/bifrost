@@ -4,10 +4,94 @@ fn default_true() -> bool {
     true
 }
 
+fn default_request_timeout_ms() -> u64 {
+    60_000
+}
+
+fn default_autosave_interval_ms() -> u64 {
+    300
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppSettings {
     #[serde(default)]
+    pub general: GeneralSettings,
+    #[serde(default)]
     pub proxy: ProxySettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GeneralSettings {
+    #[serde(default)]
+    pub requests: RequestBehaviorSettings,
+    #[serde(default)]
+    pub security: SecuritySettings,
+    #[serde(default)]
+    pub storage: StorageSettings,
+    #[serde(default)]
+    pub application: ApplicationBehaviorSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestBehaviorSettings {
+    #[serde(default = "default_request_timeout_ms")]
+    pub request_timeout_ms: u64,
+}
+
+impl Default for RequestBehaviorSettings {
+    fn default() -> Self {
+        Self {
+            request_timeout_ms: default_request_timeout_ms(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecuritySettings {
+    #[serde(default = "default_true")]
+    pub verify_tls_certificates: bool,
+}
+
+impl Default for SecuritySettings {
+    fn default() -> Self {
+        Self {
+            verify_tls_certificates: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageSettings {
+    #[serde(default = "default_true")]
+    pub enable_autosave: bool,
+    #[serde(default = "default_autosave_interval_ms")]
+    pub autosave_interval_ms: u64,
+}
+
+impl Default for StorageSettings {
+    fn default() -> Self {
+        Self {
+            enable_autosave: true,
+            autosave_interval_ms: default_autosave_interval_ms(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplicationBehaviorSettings {
+    #[serde(default = "default_true")]
+    pub restore_opened_requests_on_startup: bool,
+    #[serde(default = "default_true")]
+    pub restore_last_workspace_on_startup: bool,
+}
+
+impl Default for ApplicationBehaviorSettings {
+    fn default() -> Self {
+        Self {
+            restore_opened_requests_on_startup: true,
+            restore_last_workspace_on_startup: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

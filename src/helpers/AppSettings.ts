@@ -1,10 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+    ApplicationBehaviorSettings,
     AppSettings,
     CustomProxySettings,
+    GeneralSettings,
     ProxyResolutionInfo,
     ProxySettings,
+    RequestBehaviorSettings,
+    SecuritySettings,
     SettingsTabId,
+    StorageSettings,
 } from "../types.ts";
 
 const SETTINGS_LAST_TAB_STORAGE_KEY = "bifrost:settings:last-tab:v1";
@@ -28,7 +33,33 @@ export const DEFAULT_PROXY_SETTINGS: ProxySettings = {
     custom: DEFAULT_CUSTOM_PROXY_SETTINGS,
 };
 
+export const DEFAULT_REQUEST_BEHAVIOR_SETTINGS: RequestBehaviorSettings = {
+    request_timeout_ms: 60_000,
+};
+
+export const DEFAULT_SECURITY_SETTINGS: SecuritySettings = {
+    verify_tls_certificates: true,
+};
+
+export const DEFAULT_STORAGE_SETTINGS: StorageSettings = {
+    enable_autosave: true,
+    autosave_interval_ms: 300,
+};
+
+export const DEFAULT_APPLICATION_BEHAVIOR_SETTINGS: ApplicationBehaviorSettings = {
+    restore_opened_requests_on_startup: true,
+    restore_last_workspace_on_startup: true,
+};
+
+export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
+    requests: DEFAULT_REQUEST_BEHAVIOR_SETTINGS,
+    security: DEFAULT_SECURITY_SETTINGS,
+    storage: DEFAULT_STORAGE_SETTINGS,
+    application: DEFAULT_APPLICATION_BEHAVIOR_SETTINGS,
+};
+
 export const DEFAULT_APP_SETTINGS: AppSettings = {
+    general: DEFAULT_GENERAL_SETTINGS,
     proxy: DEFAULT_PROXY_SETTINGS,
 };
 
@@ -42,6 +73,21 @@ function sanitizeString(value: unknown): string {
 
 function sanitizeBoolean(value: unknown, defaultValue = false): boolean {
     return typeof value === "boolean" ? value : defaultValue;
+}
+
+function sanitizeNonNegativeInteger(value: unknown, defaultValue: number): number {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return Math.max(0, Math.floor(value));
+    }
+
+    if (typeof value === "string") {
+        const parsed = Number.parseInt(value, 10);
+        if (Number.isFinite(parsed)) {
+            return Math.max(0, parsed);
+        }
+    }
+
+    return defaultValue;
 }
 
 export function sanitizeCustomProxySettings(value: unknown): CustomProxySettings {
@@ -60,6 +106,96 @@ export function sanitizeCustomProxySettings(value: unknown): CustomProxySettings
         username: sanitizeString(source.username),
         password: sanitizeString(source.password),
         bypass_list: sanitizeString(source.bypass_list),
+    };
+}
+
+export function sanitizeRequestBehaviorSettings(value: unknown): RequestBehaviorSettings {
+    if (!value || typeof value !== "object") {
+        return { ...DEFAULT_REQUEST_BEHAVIOR_SETTINGS };
+    }
+
+    const source = value as Record<string, unknown>;
+
+    return {
+        request_timeout_ms: sanitizeNonNegativeInteger(
+            source.request_timeout_ms,
+            DEFAULT_REQUEST_BEHAVIOR_SETTINGS.request_timeout_ms
+        ),
+    };
+}
+
+export function sanitizeSecuritySettings(value: unknown): SecuritySettings {
+    if (!value || typeof value !== "object") {
+        return { ...DEFAULT_SECURITY_SETTINGS };
+    }
+
+    const source = value as Record<string, unknown>;
+
+    return {
+        verify_tls_certificates: sanitizeBoolean(
+            source.verify_tls_certificates,
+            DEFAULT_SECURITY_SETTINGS.verify_tls_certificates
+        ),
+    };
+}
+
+export function sanitizeStorageSettings(value: unknown): StorageSettings {
+    if (!value || typeof value !== "object") {
+        return { ...DEFAULT_STORAGE_SETTINGS };
+    }
+
+    const source = value as Record<string, unknown>;
+
+    return {
+        enable_autosave: sanitizeBoolean(
+            source.enable_autosave,
+            DEFAULT_STORAGE_SETTINGS.enable_autosave
+        ),
+        autosave_interval_ms: sanitizeNonNegativeInteger(
+            source.autosave_interval_ms,
+            DEFAULT_STORAGE_SETTINGS.autosave_interval_ms
+        ),
+    };
+}
+
+export function sanitizeApplicationBehaviorSettings(
+    value: unknown
+): ApplicationBehaviorSettings {
+    if (!value || typeof value !== "object") {
+        return { ...DEFAULT_APPLICATION_BEHAVIOR_SETTINGS };
+    }
+
+    const source = value as Record<string, unknown>;
+
+    return {
+        restore_opened_requests_on_startup: sanitizeBoolean(
+            source.restore_opened_requests_on_startup,
+            DEFAULT_APPLICATION_BEHAVIOR_SETTINGS.restore_opened_requests_on_startup
+        ),
+        restore_last_workspace_on_startup: sanitizeBoolean(
+            source.restore_last_workspace_on_startup,
+            DEFAULT_APPLICATION_BEHAVIOR_SETTINGS.restore_last_workspace_on_startup
+        ),
+    };
+}
+
+export function sanitizeGeneralSettings(value: unknown): GeneralSettings {
+    if (!value || typeof value !== "object") {
+        return {
+            requests: { ...DEFAULT_REQUEST_BEHAVIOR_SETTINGS },
+            security: { ...DEFAULT_SECURITY_SETTINGS },
+            storage: { ...DEFAULT_STORAGE_SETTINGS },
+            application: { ...DEFAULT_APPLICATION_BEHAVIOR_SETTINGS },
+        };
+    }
+
+    const source = value as Record<string, unknown>;
+
+    return {
+        requests: sanitizeRequestBehaviorSettings(source.requests),
+        security: sanitizeSecuritySettings(source.security),
+        storage: sanitizeStorageSettings(source.storage),
+        application: sanitizeApplicationBehaviorSettings(source.application),
     };
 }
 
@@ -87,6 +223,12 @@ export function sanitizeProxySettings(value: unknown): ProxySettings {
 export function sanitizeAppSettings(value: unknown): AppSettings {
     if (!value || typeof value !== "object") {
         return {
+            general: {
+                requests: { ...DEFAULT_REQUEST_BEHAVIOR_SETTINGS },
+                security: { ...DEFAULT_SECURITY_SETTINGS },
+                storage: { ...DEFAULT_STORAGE_SETTINGS },
+                application: { ...DEFAULT_APPLICATION_BEHAVIOR_SETTINGS },
+            },
             proxy: {
                 ...DEFAULT_PROXY_SETTINGS,
                 custom: { ...DEFAULT_CUSTOM_PROXY_SETTINGS },
@@ -97,6 +239,7 @@ export function sanitizeAppSettings(value: unknown): AppSettings {
     const source = value as Record<string, unknown>;
 
     return {
+        general: sanitizeGeneralSettings(source.general),
         proxy: sanitizeProxySettings(source.proxy),
     };
 }

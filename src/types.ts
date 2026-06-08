@@ -130,7 +130,33 @@ export type ProxySettings = {
     custom: CustomProxySettings;
 };
 
+export type RequestBehaviorSettings = {
+    request_timeout_ms: number;
+};
+
+export type SecuritySettings = {
+    verify_tls_certificates: boolean;
+};
+
+export type StorageSettings = {
+    enable_autosave: boolean;
+    autosave_interval_ms: number;
+};
+
+export type ApplicationBehaviorSettings = {
+    restore_opened_requests_on_startup: boolean;
+    restore_last_workspace_on_startup: boolean;
+};
+
+export type GeneralSettings = {
+    requests: RequestBehaviorSettings;
+    security: SecuritySettings;
+    storage: StorageSettings;
+    application: ApplicationBehaviorSettings;
+};
+
 export type AppSettings = {
+    general: GeneralSettings;
     proxy: ProxySettings;
 };
 

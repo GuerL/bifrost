@@ -1047,6 +1047,7 @@ export default function App() {
     const pendingCollapsedFoldersHydrationStateRef = useRef<Record<string, boolean> | null>(null);
     const hydratedRunnerCollectionIdRef = useRef<string | null>(null);
     const hydratedRunnerSelectionCollectionIdRef = useRef<string | null>(null);
+    const startupHydrationCompletedRef = useRef(false);
     const noCollectionsModalShownRef = useRef(false);
     const pgToBfMigrationCheckStartedRef = useRef(false);
     const runnerSelectedRequestsStateRef = useRef<RunnerSelectedRequestsState>(
@@ -1131,6 +1132,22 @@ export default function App() {
                 const nextSettings = {
                     ...previous,
                     proxy: nextProxySettings,
+                };
+                if (appSettingsLoaded) {
+                    void queueAppSettingsSave(nextSettings);
+                }
+                return nextSettings;
+            });
+        },
+        [appSettingsLoaded, queueAppSettingsSave]
+    );
+
+    const updateGeneralSettings = useCallback(
+        (nextGeneralSettings: AppSettings["general"]) => {
+            setAppSettings((previous) => {
+                const nextSettings = {
+                    ...previous,
+                    general: nextGeneralSettings,
                 };
                 if (appSettingsLoaded) {
                     void queueAppSettingsSave(nextSettings);
@@ -1407,7 +1424,10 @@ export default function App() {
         hydratedRunnerSelectionCollectionIdRef.current = null;
     }
 
-    async function reloadCollectionsAndRestoreActive(preferredCollectionId?: string | null) {
+    async function reloadCollectionsAndRestoreActive(
+        preferredCollectionId?: string | null,
+        options?: { restoreLastWorkspace?: boolean }
+    ) {
         flushCurrentCollapsedFoldersState();
         try {
             const list = await invoke<CollectionMeta[]>("list_collections");
@@ -1416,7 +1436,9 @@ export default function App() {
             let activeCollectionId =
                 preferredCollectionId !== undefined
                     ? preferredCollectionId
-                    : await invoke<string | null>("get_active_collection");
+                    : options?.restoreLastWorkspace === false
+                      ? null
+                      : await invoke<string | null>("get_active_collection");
 
             if (activeCollectionId && !list.some((c) => c.id === activeCollectionId)) {
                 await invoke("set_active_collection", { collectionId: null });
@@ -1925,8 +1947,9 @@ export default function App() {
             request: draft,
             variableValues: runtimeVariableValues,
             proxyTransport: proxyResolutionInfo,
+            generalSettings: appSettings.general,
         });
-    }, [draft, runtimeVariableValues, proxyResolutionInfo]);
+    }, [appSettings.general, draft, runtimeVariableValues, proxyResolutionInfo]);
 
     const requestDebugText = useMemo(() => {
         if (!requestDebugInfo) return "";
@@ -1943,6 +1966,7 @@ export default function App() {
         const preview = buildRequestDebugInfo({
             request: draft,
             variableValues: runtimeVariableValues,
+            generalSettings: appSettings.general,
         });
 
         if (preview.unresolvedVariables.length > 0) {
@@ -1986,7 +2010,7 @@ export default function App() {
         return () => {
             cancelled = true;
         };
-    }, [draft, runtimeVariableValues, appSettings.proxy]);
+    }, [draft, runtimeVariableValues, appSettings.general, appSettings.proxy]);
 
     const {
         beforeMountMonaco,
@@ -2185,11 +2209,18 @@ export default function App() {
     }
 
     useEffect(() => {
+        if (!appSettingsLoaded) return;
+        if (startupHydrationCompletedRef.current) return;
+
         let cancelled = false;
 
         (async () => {
-            await reloadCollectionsAndRestoreActive();
+            await reloadCollectionsAndRestoreActive(undefined, {
+                restoreLastWorkspace:
+                    appSettings.general.application.restore_last_workspace_on_startup,
+            });
             await reloadEnvironments();
+            startupHydrationCompletedRef.current = true;
             if (!cancelled) {
                 await maybePromptPgToBfMigration({ source: "startup" });
             }
@@ -2198,7 +2229,10 @@ export default function App() {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [
+        appSettings.general.application.restore_last_workspace_on_startup,
+        appSettingsLoaded,
+    ]);
 
     useEffect(() => {
         if (!import.meta.env.DEV) return;
@@ -2248,16 +2282,22 @@ export default function App() {
 
     useEffect(() => {
         if (!current) return;
+        if (!appSettings.general.storage.enable_autosave) return;
 
         const timeout = setTimeout(() => {
             void invoke("save_drafts", {
                 collectionId: current.meta.id,
                 drafts: draftsById,
             });
-        }, 300);
+        }, appSettings.general.storage.autosave_interval_ms);
 
         return () => clearTimeout(timeout);
-    }, [draftsById, current?.meta.id]);
+    }, [
+        appSettings.general.storage.autosave_interval_ms,
+        appSettings.general.storage.enable_autosave,
+        draftsById,
+        current?.meta.id,
+    ]);
 
     useEffect(() => {
         if (!current) {
@@ -2352,29 +2392,40 @@ export default function App() {
         }
 
         const validIds = new Set(current.requests.map((request) => request.id));
-        const persistedState = readPersistedTabsState();
-        const persistedEntry = sanitizePersistedTabsEntry(persistedState[current.meta.id]);
-        const restoredIds = persistedEntry.openRequestIds.filter((requestId) =>
-            validIds.has(requestId)
-        );
+        const shouldRestoreTabs =
+            startupHydrationCompletedRef.current ||
+            appSettings.general.application.restore_opened_requests_on_startup;
 
-        setOpenRequestIds((previous) =>
-            restoredIds.length > 0
-                ? restoredIds
-                : previous.filter((requestId) => validIds.has(requestId))
-        );
+        if (shouldRestoreTabs) {
+            const persistedState = readPersistedTabsState();
+            const persistedEntry = sanitizePersistedTabsEntry(persistedState[current.meta.id]);
+            const restoredIds = persistedEntry.openRequestIds.filter((requestId) =>
+                validIds.has(requestId)
+            );
 
-        if (persistedEntry.activeRequestId && validIds.has(persistedEntry.activeRequestId)) {
-            setSelectedRequestId(persistedEntry.activeRequestId);
-        } else if (
-            restoredIds.length > 0 &&
-            (!selectedRequestId || !validIds.has(selectedRequestId))
-        ) {
-            setSelectedRequestId(restoredIds[0]);
+            setOpenRequestIds((previous) =>
+                restoredIds.length > 0
+                    ? restoredIds
+                    : previous.filter((requestId) => validIds.has(requestId))
+            );
+
+            if (persistedEntry.activeRequestId && validIds.has(persistedEntry.activeRequestId)) {
+                setSelectedRequestId(persistedEntry.activeRequestId);
+            } else if (
+                restoredIds.length > 0 &&
+                (!selectedRequestId || !validIds.has(selectedRequestId))
+            ) {
+                setSelectedRequestId(restoredIds[0]);
+            }
+        } else {
+            setOpenRequestIds([]);
+            if (!selectedRequestId || !validIds.has(selectedRequestId)) {
+                setSelectedRequestId(null);
+            }
         }
 
         hydratedTabsCollectionIdRef.current = current.meta.id;
-    }, [current?.meta.id]);
+    }, [current?.meta.id, appSettings.general.application.restore_opened_requests_on_startup]);
 
     useEffect(() => {
         if (!current) return;
@@ -5556,6 +5607,7 @@ export default function App() {
                 proxyPreview={proxyResolutionInfo}
                 proxyPreviewError={proxyResolutionError}
                 onThemeChange={setTheme}
+                onGeneralSettingsChange={updateGeneralSettings}
                 onProxySettingsChange={updateProxySettings}
                 onClose={() => setSettingsModalOpen(false)}
             />

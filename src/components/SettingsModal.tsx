@@ -9,7 +9,6 @@ import {
 import { listShortcuts } from "../helpers/ShortcutRegistry.ts";
 import {
     THEME_OPTIONS,
-    formatThemeLabel,
     type ResolvedTheme,
     type Theme,
 } from "../helpers/Theme.tsx";
@@ -34,6 +33,7 @@ type SettingsModalProps = {
     proxyPreview: ProxyResolutionInfo | null;
     proxyPreviewError: string;
     onThemeChange: (nextTheme: Theme) => void;
+    onGeneralSettingsChange: (nextGeneralSettings: AppSettings["general"]) => void;
     onProxySettingsChange: (nextProxySettings: ProxySettings) => void;
     onClose: () => void;
 };
@@ -149,6 +149,14 @@ function selectedProxySourceFromSettings(proxySettings: ProxySettings): ProxySou
     return "direct";
 }
 
+function parseNonNegativeInteger(value: string): number {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        return 0;
+    }
+    return parsed;
+}
+
 export default function SettingsModal({
     open,
     theme,
@@ -159,6 +167,7 @@ export default function SettingsModal({
     proxyPreview,
     proxyPreviewError,
     onThemeChange,
+    onGeneralSettingsChange,
     onProxySettingsChange,
     onClose,
 }: SettingsModalProps) {
@@ -168,8 +177,8 @@ export default function SettingsModal({
     const [aboutInfo, setAboutInfo] = useState<AboutRuntimeInfo | null>(null);
     const [aboutInfoError, setAboutInfoError] = useState("");
     const shortcuts = useMemo(() => listShortcuts(), []);
+    const generalSettings = appSettings.general;
     const proxySettings = appSettings.proxy;
-    const activeThemeLabel = formatThemeLabel(theme, systemTheme);
     const selectedProxySource = selectedProxySourceFromSettings(proxySettings);
     const customProxyHost = proxySettings.custom.host.trim();
     const customProxyPort = proxySettings.custom.port.trim();
@@ -234,6 +243,57 @@ export default function SettingsModal({
         onProxySettingsChange({
             ...proxySettings,
             ...patch,
+        });
+    }
+
+    function updateGeneralSettings(patch: Partial<AppSettings["general"]>) {
+        onGeneralSettingsChange({
+            ...generalSettings,
+            ...patch,
+        });
+    }
+
+    function updateRequestSettings(
+        patch: Partial<AppSettings["general"]["requests"]>
+    ) {
+        updateGeneralSettings({
+            requests: {
+                ...generalSettings.requests,
+                ...patch,
+            },
+        });
+    }
+
+    function updateSecuritySettings(
+        patch: Partial<AppSettings["general"]["security"]>
+    ) {
+        updateGeneralSettings({
+            security: {
+                ...generalSettings.security,
+                ...patch,
+            },
+        });
+    }
+
+    function updateStorageSettings(
+        patch: Partial<AppSettings["general"]["storage"]>
+    ) {
+        updateGeneralSettings({
+            storage: {
+                ...generalSettings.storage,
+                ...patch,
+            },
+        });
+    }
+
+    function updateApplicationSettings(
+        patch: Partial<AppSettings["general"]["application"]>
+    ) {
+        updateGeneralSettings({
+            application: {
+                ...generalSettings.application,
+                ...patch,
+            },
         });
     }
 
@@ -467,25 +527,164 @@ export default function SettingsModal({
                     }}
                 >
                     {selectedTab === "general" && (
-                        <>
-                            <div style={sectionCardStyle}>
-                                <div style={fieldCaptionStyle}>Application scope</div>
-                                <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.6 }}>
-                                    Settings in this modal are application-wide. Proxy preferences stay
-                                    active across restarts, collections, and workspace switches.
+                        <div style={proxyTabStackStyle}>
+                            <div style={proxySectionStyle}>
+                                <div style={fieldCaptionStyle}>Requests</div>
+                                <div style={proxyFieldGridStyle}>
+                                    <label style={fieldLabelStyle}>
+                                        <span style={fieldCaptionStyle}>Request timeout (ms)</span>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            step={100}
+                                            value={generalSettings.requests.request_timeout_ms}
+                                            onChange={(event) =>
+                                                updateRequestSettings({
+                                                    request_timeout_ms: parseNonNegativeInteger(
+                                                        event.target.value
+                                                    ),
+                                                })
+                                            }
+                                            style={modalInputStyle()}
+                                        />
+                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                            0 = no timeout
+                                        </span>
+                                    </label>
                                 </div>
                             </div>
-                            <div style={sectionCardStyle}>
-                                <div style={fieldCaptionStyle}>Current appearance</div>
-                                <div style={{ fontSize: 14, color: "var(--pg-text)" }}>
-                                    Active theme: <strong>{activeThemeLabel}</strong>
-                                </div>
-                                <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
-                                    Theme selection moved here from the top bar so future settings can
-                                    live in a single place.
+
+                            <div style={proxySectionStyle}>
+                                <div style={fieldCaptionStyle}>Security</div>
+                                <label style={proxySettingRowStyle}>
+                                    <input
+                                        type="checkbox"
+                                        checked={generalSettings.security.verify_tls_certificates}
+                                        onChange={(event) =>
+                                            updateSecuritySettings({
+                                                verify_tls_certificates: event.target.checked,
+                                            })
+                                        }
+                                    />
+                                    <span style={{ display: "grid", gap: 3 }}>
+                                        <span style={{ fontSize: 13, fontWeight: 700 }}>
+                                            SSL/TLS certificate verification
+                                        </span>
+                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                            Enabled by default for secure requests.
+                                        </span>
+                                    </span>
+                                </label>
+                                <div style={{ fontSize: 12, color: "var(--pg-text-muted)", lineHeight: 1.5 }}>
+                                    This section will later host CA certificates and TLS settings.
                                 </div>
                             </div>
-                        </>
+
+                            <div style={proxySectionStyle}>
+                                <div style={fieldCaptionStyle}>Storage</div>
+                                <label style={proxySettingRowStyle}>
+                                    <input
+                                        type="checkbox"
+                                        checked={generalSettings.storage.enable_autosave}
+                                        onChange={(event) =>
+                                            updateStorageSettings({
+                                                enable_autosave: event.target.checked,
+                                            })
+                                        }
+                                    />
+                                    <span style={{ display: "grid", gap: 3 }}>
+                                        <span style={{ fontSize: 13, fontWeight: 700 }}>
+                                            Enable autosave
+                                        </span>
+                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                            Automatically saves draft requests to the application data
+                                            folder.
+                                        </span>
+                                    </span>
+                                </label>
+                                <div style={proxyFieldGridStyle}>
+                                    <label style={fieldLabelStyle}>
+                                        <span style={fieldCaptionStyle}>Autosave interval (ms)</span>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            step={100}
+                                            disabled={!generalSettings.storage.enable_autosave}
+                                            value={generalSettings.storage.autosave_interval_ms}
+                                            onChange={(event) =>
+                                                updateStorageSettings({
+                                                    autosave_interval_ms: parseNonNegativeInteger(
+                                                        event.target.value
+                                                    ),
+                                                })
+                                            }
+                                            style={modalInputStyle()}
+                                        />
+                                    </label>
+                                </div>
+                                <div>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            void invoke("open_app_data_dir").catch((error) => {
+                                                console.error("Failed to open app data directory", error);
+                                            });
+                                        }}
+                                        style={buttonStyle(false)}
+                                    >
+                                        Open data folder
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div style={proxySectionStyle}>
+                                <div style={fieldCaptionStyle}>Application</div>
+                                <label style={proxySettingRowStyle}>
+                                    <input
+                                        type="checkbox"
+                                        checked={
+                                            generalSettings.application.restore_opened_requests_on_startup
+                                        }
+                                        onChange={(event) =>
+                                            updateApplicationSettings({
+                                                restore_opened_requests_on_startup:
+                                                    event.target.checked,
+                                            })
+                                        }
+                                    />
+                                    <span style={{ display: "grid", gap: 3 }}>
+                                        <span style={{ fontSize: 13, fontWeight: 700 }}>
+                                            Restore opened requests on startup
+                                        </span>
+                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                            Reopens the last saved request tabs when the app starts.
+                                        </span>
+                                    </span>
+                                </label>
+                                <label style={proxySettingRowStyle}>
+                                    <input
+                                        type="checkbox"
+                                        checked={
+                                            generalSettings.application.restore_last_workspace_on_startup
+                                        }
+                                        onChange={(event) =>
+                                            updateApplicationSettings({
+                                                restore_last_workspace_on_startup:
+                                                    event.target.checked,
+                                            })
+                                        }
+                                    />
+                                    <span style={{ display: "grid", gap: 3 }}>
+                                        <span style={{ fontSize: 13, fontWeight: 700 }}>
+                                            Restore last workspace on startup
+                                        </span>
+                                        <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                            Reopens the last active collection when Bifrost launches.
+                                        </span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
                     )}
 
                     {selectedTab === "themes" && (

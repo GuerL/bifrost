@@ -1,4 +1,5 @@
 import type {
+    GeneralSettings,
     GeneratedHeaderName,
     KeyValue,
     ProxyResolutionInfo,
@@ -248,6 +249,7 @@ export function buildRequestDebugInfo(args: {
     request: Request;
     variableValues?: Map<string, string>;
     proxyTransport?: ProxyResolutionInfo | null;
+    generalSettings?: GeneralSettings;
 }): RequestDebugInfo {
     const variableValues = args.variableValues ?? new Map<string, string>();
     const resolvedUrl = resolveKnownVariables(args.request.url, variableValues);
@@ -263,6 +265,11 @@ export function buildRequestDebugInfo(args: {
         proxy_url: null,
         detail: null,
     };
+    const generalSettings = args.generalSettings;
+    const verifyTlsCertificates =
+        generalSettings?.security.verify_tls_certificates ?? true;
+    const requestTimeoutMs =
+        generalSettings?.requests.request_timeout_ms ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
     return {
         method: args.request.method.toUpperCase(),
@@ -278,13 +285,15 @@ export function buildRequestDebugInfo(args: {
             proxySummary: proxyTransport.summary,
             proxyTarget: proxyTransport.proxy_url ?? "<none>",
             proxyDetail: proxyTransport.detail,
-            tlsValidation: requestTls.allow_invalid_certificates
-                ? "disabled (allow invalid certificates)"
-                : "enabled",
+            tlsValidation: !verifyTlsCertificates
+                ? "disabled (general setting)"
+                : requestTls.allow_invalid_certificates
+                  ? "disabled (allow invalid certificates)"
+                  : "enabled",
             customCaCertificate: requestTls.ca_certificate_path?.trim() || "<none>",
             clientCertificate: requestTls.client_certificate_path?.trim() || "<none>",
             redirects: "follow (HTTP client default)",
-            timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+            timeoutMs: requestTimeoutMs,
         },
     };
 }
