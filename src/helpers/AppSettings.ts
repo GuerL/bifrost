@@ -251,6 +251,7 @@ export function sanitizeProxyResolutionInfo(value: unknown): ProxyResolutionInfo
             summary: "Direct connection",
             proxy_url: null,
             detail: null,
+            diagnostics: [],
         };
     }
 
@@ -268,6 +269,9 @@ export function sanitizeProxyResolutionInfo(value: unknown): ProxyResolutionInfo
         summary: sanitizeString(source.summary) || "Direct connection",
         proxy_url: typeof source.proxy_url === "string" ? source.proxy_url : null,
         detail: typeof source.detail === "string" ? source.detail : null,
+        diagnostics: Array.isArray(source.diagnostics)
+            ? source.diagnostics.filter((value): value is string => typeof value === "string")
+            : [],
     };
 }
 

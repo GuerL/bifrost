@@ -156,4 +156,6 @@ pub struct ProxyResolutionInfo {
     pub summary: String,
     pub proxy_url: Option<String>,
     pub detail: Option<String>,
+    #[serde(default)]
+    pub diagnostics: Vec<String>,
 }

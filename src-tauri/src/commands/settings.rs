@@ -17,11 +17,32 @@ struct ProxyCandidate {
     auth: Option<(String, String)>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProxyBuilderMode {
+    Direct,
+    Explicit,
+}
+
+#[derive(Clone, Copy)]
+enum ConfiguredProxySource {
+    Direct,
+    System,
+    Environment,
+    Custom,
+}
+
 #[derive(Clone)]
 pub(crate) struct ResolvedProxyTransport {
     pub info: ProxyResolutionInfo,
     proxy_config: Option<ProxyConfig>,
     auth: Option<(String, String)>,
+    builder_mode: ProxyBuilderMode,
+    credentials_configured: bool,
+}
+
+struct EnvironmentProxySource {
+    config: Option<ProxyConfig>,
+    detected_variable_names: Vec<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -40,9 +61,12 @@ impl ResolvedProxyTransport {
                 summary: "Direct connection".to_string(),
                 proxy_url: None,
                 detail,
+                diagnostics: vec![],
             },
             proxy_config: None,
             auth: None,
+            builder_mode: ProxyBuilderMode::Direct,
+            credentials_configured: false,
         }
     }
 }
@@ -100,12 +124,27 @@ pub(crate) fn build_reqwest_proxy(
         return Ok(None);
     };
 
-    let mut proxy = Proxy::custom(move |url| proxy_config.get_proxy_for_url(url));
+    let mut proxy = Proxy::custom(move |url| proxy_url_for_target(&proxy_config, url));
     if let Some((username, password)) = &resolved_proxy.auth {
         proxy = proxy.basic_auth(username, password);
     }
 
     Ok(Some(proxy))
+}
+
+pub(crate) fn apply_reqwest_proxy_configuration(
+    builder: reqwest::ClientBuilder,
+    resolved_proxy: &ResolvedProxyTransport,
+) -> Result<reqwest::ClientBuilder, String> {
+    match resolved_proxy.builder_mode {
+        ProxyBuilderMode::Direct => Ok(builder.no_proxy()),
+        ProxyBuilderMode::Explicit => {
+            let Some(proxy) = build_reqwest_proxy(resolved_proxy)? else {
+                return Ok(builder.no_proxy());
+            };
+            Ok(builder.proxy(proxy))
+        }
+    }
 }
 
 pub(crate) fn resolve_effective_proxy_transport(
@@ -114,23 +153,35 @@ pub(crate) fn resolve_effective_proxy_transport(
     proxy_settings_override: Option<ProxySettings>,
 ) -> Result<ResolvedProxyTransport, String> {
     let proxy_settings = proxy_settings_override.unwrap_or(load_app_settings_value(app)?.proxy);
+    let configured_source = configured_proxy_source_from_settings(&proxy_settings);
     let system_proxy = if proxy_settings.use_system_proxy {
         load_system_proxy_config()?
     } else {
         None
     };
-    let environment_proxy = if proxy_settings.respect_environment_variables {
-        load_environment_proxy_config_from_process()
+    let environment_proxy_source = if proxy_settings.respect_environment_variables {
+        load_environment_proxy_source_from_process()
     } else {
-        None
+        EnvironmentProxySource {
+            config: None,
+            detected_variable_names: vec![],
+        }
     };
 
-    resolve_proxy_from_sources(
+    let mut resolved = resolve_proxy_from_sources(
         url,
         &proxy_settings,
         system_proxy.as_ref(),
-        environment_proxy.as_ref(),
-    )
+        environment_proxy_source.config.as_ref(),
+    )?;
+    resolved.info.diagnostics = build_proxy_diagnostics(
+        configured_source,
+        &resolved,
+        system_proxy.as_ref(),
+        proxy_settings.respect_environment_variables,
+        &environment_proxy_source,
+    );
+    Ok(resolved)
 }
 
 fn resolve_proxy_from_sources(
@@ -167,7 +218,170 @@ fn resolve_proxy_from_sources(
         }
     }
 
-    Ok(ResolvedProxyTransport::direct(None))
+    let fallback_detail = match configured_proxy_source_from_settings(proxy_settings) {
+        ConfiguredProxySource::Custom => {
+            Some("No custom proxy endpoint matched this request. Falling back to a direct connection.".to_string())
+        }
+        ConfiguredProxySource::System => Some(format!(
+            "No supported system proxy configuration matched this request on {}. Falling back to a direct connection.",
+            system_proxy_backend_label()
+        )),
+        ConfiguredProxySource::Environment => Some(
+            "No supported HTTP_PROXY / HTTPS_PROXY / ALL_PROXY configuration was detected in the current process. Falling back to a direct connection.".to_string(),
+        ),
+        ConfiguredProxySource::Direct => None,
+    };
+
+    Ok(ResolvedProxyTransport::direct(fallback_detail))
+}
+
+fn configured_proxy_source_from_settings(proxy_settings: &ProxySettings) -> ConfiguredProxySource {
+    if proxy_settings.use_custom_proxy {
+        return ConfiguredProxySource::Custom;
+    }
+    if proxy_settings.use_system_proxy {
+        return ConfiguredProxySource::System;
+    }
+    if proxy_settings.respect_environment_variables {
+        return ConfiguredProxySource::Environment;
+    }
+    ConfiguredProxySource::Direct
+}
+
+fn configured_proxy_source_label(source: ConfiguredProxySource) -> &'static str {
+    match source {
+        ConfiguredProxySource::Direct => "direct connection",
+        ConfiguredProxySource::System => "system proxy",
+        ConfiguredProxySource::Environment => "environment variables",
+        ConfiguredProxySource::Custom => "custom proxy",
+    }
+}
+
+fn builder_mode_label(mode: ProxyBuilderMode) -> &'static str {
+    match mode {
+        ProxyBuilderMode::Direct => "direct via reqwest no_proxy()",
+        ProxyBuilderMode::Explicit => "explicit reqwest proxy configuration",
+    }
+}
+
+fn build_profile_label() -> &'static str {
+    if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    }
+}
+
+fn system_proxy_backend_label() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        return "macOS System Configuration";
+    }
+    #[cfg(windows)]
+    {
+        return "Windows WinINet / WinHTTP";
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return "Linux environment / /etc/sysconfig/proxy";
+    }
+    #[allow(unreachable_code)]
+    "OS proxy configuration"
+}
+
+fn system_proxy_limitation_note() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        return "Only manual HTTP/HTTPS system proxies are supported. PAC and auto-discovery are not supported yet.";
+    }
+    #[cfg(windows)]
+    {
+        return "Manual WinINet or WinHTTP proxies are supported. PAC and WPAD are not supported yet.";
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return "Linux system proxy detection is limited to environment variables and /etc/sysconfig/proxy.";
+    }
+    #[allow(unreachable_code)]
+    "Proxy support depends on platform-specific configuration.";
+}
+
+fn environment_variable_process_note() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        return "macOS packaged GUI apps often do not inherit shell proxy environment variables.";
+    }
+    #[cfg(windows)]
+    {
+        return "Windows packaged GUI apps only see environment variables available to the launched process.";
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return "Environment proxy variables depend on how the application process is launched.";
+    }
+    #[allow(unreachable_code)]
+    "Environment proxy variables depend on the current process environment.";
+}
+
+fn build_proxy_diagnostics(
+    configured_source: ConfiguredProxySource,
+    resolved: &ResolvedProxyTransport,
+    system_proxy: Option<&ProxyConfig>,
+    respect_environment_variables: bool,
+    environment_proxy_source: &EnvironmentProxySource,
+) -> Vec<String> {
+    let mut diagnostics = vec![
+        format!(
+            "Configured source: {}",
+            configured_proxy_source_label(configured_source)
+        ),
+        format!(
+            "Effective source: {}",
+            summary_for_mode(&resolved.info.mode)
+        ),
+        format!(
+            "Reqwest strategy: {}",
+            builder_mode_label(resolved.builder_mode)
+        ),
+    ];
+
+    if matches!(configured_source, ConfiguredProxySource::System) {
+        let status = if system_proxy.is_some() {
+            format!("detected via {}", system_proxy_backend_label())
+        } else {
+            format!("not detected via {}", system_proxy_backend_label())
+        };
+        diagnostics.push(format!("System proxy detection: {status}"));
+        diagnostics.push(format!(
+            "System proxy limitations: {}",
+            system_proxy_limitation_note()
+        ));
+    }
+
+    if matches!(configured_source, ConfiguredProxySource::Environment)
+        || respect_environment_variables
+    {
+        if environment_proxy_source.detected_variable_names.is_empty() {
+            diagnostics.push("Environment variables detected: none".to_string());
+            diagnostics.push(format!(
+                "Environment note: {}",
+                environment_variable_process_note()
+            ));
+        } else {
+            diagnostics.push(format!(
+                "Environment variables detected: {}",
+                environment_proxy_source.detected_variable_names.join(", ")
+            ));
+        }
+    }
+
+    if resolved.credentials_configured {
+        diagnostics.push("Proxy credentials: configured (hidden)".to_string());
+    }
+
+    diagnostics.push(format!("Build profile: {}", build_profile_label()));
+
+    diagnostics
 }
 
 fn display_platform_name(value: &str) -> &str {
@@ -204,7 +418,7 @@ fn resolve_candidate(
         return Ok(None);
     }
 
-    let Some(proxy_address) = config.get_proxy_for_url(url) else {
+    let Some(proxy_address) = proxy_url_for_target(&config, url) else {
         return Ok(Some(ResolvedProxyTransport::direct(Some(format!(
             "Bypassed by {} proxy rules.",
             source_name_for_mode(&mode)
@@ -212,6 +426,8 @@ fn resolve_candidate(
     };
 
     let normalized_endpoint = normalize_proxy_endpoint(&proxy_address)?;
+    let credentials_configured =
+        normalized_endpoint.contains_credentials || candidate.auth.is_some();
 
     Ok(Some(ResolvedProxyTransport {
         info: ProxyResolutionInfo {
@@ -219,9 +435,12 @@ fn resolve_candidate(
             summary: summary_for_mode(&mode).to_string(),
             proxy_url: Some(normalized_endpoint.display),
             detail: None,
+            diagnostics: vec![],
         },
         proxy_config: Some(config),
         auth: candidate.auth,
+        builder_mode: ProxyBuilderMode::Explicit,
+        credentials_configured,
     }))
 }
 
@@ -281,15 +500,21 @@ fn build_custom_proxy_candidate(
     Ok(Some(ProxyCandidate { config, auth }))
 }
 
+#[cfg(target_os = "linux")]
 fn load_environment_proxy_config_from_process() -> Option<ProxyConfig> {
+    build_environment_proxy_config(env::vars()).config
+}
+
+fn load_environment_proxy_source_from_process() -> EnvironmentProxySource {
     build_environment_proxy_config(env::vars())
 }
 
-fn build_environment_proxy_config<I>(pairs: I) -> Option<ProxyConfig>
+fn build_environment_proxy_config<I>(pairs: I) -> EnvironmentProxySource
 where
     I: IntoIterator<Item = (String, String)>,
 {
     let mut config = ProxyConfig::default();
+    let mut detected_variable_names: Vec<&'static str> = Vec::new();
 
     for (raw_key, raw_value) in pairs {
         let key = raw_key.to_ascii_lowercase();
@@ -301,26 +526,47 @@ where
         match key.as_str() {
             "http_proxy" => {
                 config.proxies.insert("http".to_string(), value.to_string());
+                if !detected_variable_names.contains(&"HTTP_PROXY") {
+                    detected_variable_names.push("HTTP_PROXY");
+                }
             }
             "https_proxy" => {
                 config
                     .proxies
                     .insert("https".to_string(), value.to_string());
+                if !detected_variable_names.contains(&"HTTPS_PROXY") {
+                    detected_variable_names.push("HTTPS_PROXY");
+                }
+            }
+            "all_proxy" => {
+                config.proxies.insert("*".to_string(), value.to_string());
+                if !detected_variable_names.contains(&"ALL_PROXY") {
+                    detected_variable_names.push("ALL_PROXY");
+                }
             }
             "no_proxy" => {
                 let (whitelist, exclude_simple) = parse_bypass_list(value);
                 config.whitelist.extend(whitelist);
                 config.exclude_simple |= exclude_simple;
+                if !detected_variable_names.contains(&"NO_PROXY") {
+                    detected_variable_names.push("NO_PROXY");
+                }
             }
             _ => {}
         }
     }
 
     if config.proxies.is_empty() {
-        return None;
+        return EnvironmentProxySource {
+            config: None,
+            detected_variable_names,
+        };
     }
 
-    Some(config)
+    EnvironmentProxySource {
+        config: Some(config),
+        detected_variable_names,
+    }
 }
 
 fn load_system_proxy_config() -> Result<Option<ProxyConfig>, String> {
@@ -347,6 +593,18 @@ fn normalize_proxy_config(config: ProxyConfig) -> Result<Option<ProxyConfig>, St
     }
 
     Ok(Some(normalized))
+}
+
+fn proxy_url_for_target(config: &ProxyConfig, url: &Url) -> Option<String> {
+    if !config.use_proxy_for_address(url.as_str()) {
+        return None;
+    }
+
+    config
+        .proxies
+        .get(url.scheme())
+        .or_else(|| config.proxies.get("*"))
+        .cloned()
 }
 
 fn parse_bypass_list(input: &str) -> (HashSet<String>, bool) {
@@ -390,6 +648,7 @@ fn source_name_for_mode(mode: &ProxyResolutionMode) -> &'static str {
 struct NormalizedProxyEndpoint {
     url: String,
     display: String,
+    contains_credentials: bool,
 }
 
 fn normalize_proxy_endpoint(raw: &str) -> Result<NormalizedProxyEndpoint, String> {
@@ -422,10 +681,12 @@ fn normalize_proxy_endpoint(raw: &str) -> Result<NormalizedProxyEndpoint, String
     let port = parsed
         .port_or_known_default()
         .ok_or_else(|| "Proxy URL is missing a port.".to_string())?;
+    let contains_credentials = !parsed.username().is_empty() || parsed.password().is_some();
 
     Ok(NormalizedProxyEndpoint {
         url: parsed.to_string(),
         display: format!("{host}:{port}"),
+        contains_credentials,
     })
 }
 
@@ -443,7 +704,7 @@ mod tests {
 
     #[test]
     fn environment_proxy_config_reads_expected_variables() {
-        let config = build_environment_proxy_config([
+        let source = build_environment_proxy_config([
             (
                 "HTTP_PROXY".to_string(),
                 "http://proxy.local:8080".to_string(),
@@ -452,8 +713,8 @@ mod tests {
                 "NO_PROXY".to_string(),
                 "localhost, *.company.local".to_string(),
             ),
-        ])
-        .expect("environment proxy should exist");
+        ]);
+        let config = source.config.expect("environment proxy should exist");
 
         assert_eq!(
             config.proxies.get("http").map(String::as_str),
@@ -461,6 +722,25 @@ mod tests {
         );
         assert!(config.whitelist.contains("localhost"));
         assert!(config.whitelist.contains("*.company.local"));
+        assert_eq!(
+            source.detected_variable_names,
+            vec!["HTTP_PROXY", "NO_PROXY"]
+        );
+    }
+
+    #[test]
+    fn environment_proxy_config_reads_all_proxy() {
+        let source = build_environment_proxy_config([(
+            "ALL_PROXY".to_string(),
+            "http://shared.proxy.local:8080".to_string(),
+        )]);
+        let config = source.config.expect("environment proxy should exist");
+
+        assert_eq!(
+            config.proxies.get("*").map(String::as_str),
+            Some("http://shared.proxy.local:8080")
+        );
+        assert_eq!(source.detected_variable_names, vec!["ALL_PROXY"]);
     }
 
     #[test]
@@ -488,6 +768,7 @@ mod tests {
         .expect("proxy resolution should succeed");
 
         assert!(matches!(resolved.info.mode, ProxyResolutionMode::Custom));
+        assert_eq!(resolved.builder_mode, ProxyBuilderMode::Explicit);
         assert_eq!(
             resolved.info.proxy_url.as_deref(),
             Some("custom.proxy.local:8080")
@@ -511,7 +792,120 @@ mod tests {
                 .expect("proxy resolution should succeed");
 
         assert!(matches!(resolved.info.mode, ProxyResolutionMode::Direct));
+        assert_eq!(resolved.builder_mode, ProxyBuilderMode::Direct);
         assert_eq!(resolved.info.proxy_url, None);
+    }
+
+    #[test]
+    fn direct_mode_maps_to_reqwest_no_proxy_strategy() {
+        let url = Url::parse("https://api.example.com/ping").unwrap();
+        let proxy_settings = ProxySettings {
+            use_system_proxy: false,
+            respect_environment_variables: false,
+            use_custom_proxy: false,
+            custom: CustomProxySettings::default(),
+        };
+
+        let resolved = resolve_proxy_from_sources(&url, &proxy_settings, None, None)
+            .expect("proxy resolution should succeed");
+        let diagnostics = build_proxy_diagnostics(
+            ConfiguredProxySource::Direct,
+            &resolved,
+            None,
+            false,
+            &EnvironmentProxySource {
+                config: None,
+                detected_variable_names: vec![],
+            },
+        );
+
+        assert_eq!(resolved.builder_mode, ProxyBuilderMode::Direct);
+        assert!(diagnostics
+            .iter()
+            .any(|line| line.contains("Reqwest strategy: direct via reqwest no_proxy()")));
+    }
+
+    #[test]
+    fn custom_proxy_auth_is_hidden_in_debug_output() {
+        let url = Url::parse("https://api.example.com/users").unwrap();
+        let proxy_settings = ProxySettings {
+            use_system_proxy: false,
+            respect_environment_variables: false,
+            use_custom_proxy: true,
+            custom: CustomProxySettings {
+                host: "custom.proxy.local".to_string(),
+                port: "8080".to_string(),
+                requires_authentication: true,
+                username: "Alice".to_string(),
+                password: "SeCrEt".to_string(),
+                ..CustomProxySettings::default()
+            },
+        };
+
+        let resolved = resolve_proxy_from_sources(&url, &proxy_settings, None, None)
+            .expect("proxy resolution should succeed");
+        let diagnostics = build_proxy_diagnostics(
+            ConfiguredProxySource::Custom,
+            &resolved,
+            None,
+            false,
+            &EnvironmentProxySource {
+                config: None,
+                detected_variable_names: vec![],
+            },
+        );
+
+        assert_eq!(
+            resolved.info.proxy_url.as_deref(),
+            Some("custom.proxy.local:8080")
+        );
+        assert!(resolved.credentials_configured);
+        assert!(diagnostics
+            .iter()
+            .any(|line| line == "Proxy credentials: configured (hidden)"));
+        assert!(!diagnostics.join("\n").contains("SeCrEt"));
+        assert!(!diagnostics.join("\n").contains("Alice"));
+    }
+
+    #[test]
+    fn environment_only_mode_reports_detected_process_variables() {
+        let url = Url::parse("https://api.example.com/ping").unwrap();
+        let proxy_settings = ProxySettings {
+            use_system_proxy: false,
+            respect_environment_variables: true,
+            use_custom_proxy: false,
+            custom: CustomProxySettings::default(),
+        };
+        let environment_source = build_environment_proxy_config([
+            (
+                "HTTPS_PROXY".to_string(),
+                "http://env.proxy.local:9000".to_string(),
+            ),
+            ("NO_PROXY".to_string(), "localhost".to_string()),
+        ]);
+        let resolved = resolve_proxy_from_sources(
+            &url,
+            &proxy_settings,
+            None,
+            environment_source.config.as_ref(),
+        )
+        .expect("proxy resolution should succeed");
+        let diagnostics = build_proxy_diagnostics(
+            ConfiguredProxySource::Environment,
+            &resolved,
+            None,
+            true,
+            &environment_source,
+        );
+
+        assert!(matches!(
+            resolved.info.mode,
+            ProxyResolutionMode::Environment
+        ));
+        assert_eq!(resolved.builder_mode, ProxyBuilderMode::Explicit);
+        assert!(diagnostics
+            .iter()
+            .any(|line| line.contains("Environment variables detected: HTTPS_PROXY, NO_PROXY")));
     }
 
     #[test]

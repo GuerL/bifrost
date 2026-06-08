@@ -1,6 +1,6 @@
 use crate::commands::environment::load_environment_values;
 use crate::commands::settings::{
-    build_reqwest_proxy, load_app_settings_value, resolve_effective_proxy_transport,
+    apply_reqwest_proxy_configuration, load_app_settings_value, resolve_effective_proxy_transport,
 };
 use crate::commands::state::{RequestRegistry, RunningRequest};
 use crate::model::collection::{
@@ -38,6 +38,30 @@ fn err(
 fn map_reqwest_error(e: reqwest::Error, duration_ms: Option<u128>) -> HttpErrorDto {
     let msg = e.to_string();
     let msg_lower = msg.to_lowercase();
+
+    if msg_lower.contains("proxy authentication")
+        || msg_lower.contains("proxy auth")
+        || msg_lower.contains("407")
+    {
+        return err(
+            "proxy",
+            "Proxy authentication failed",
+            Some(msg),
+            duration_ms,
+        );
+    }
+
+    if msg_lower.contains("proxy connect")
+        || msg_lower.contains("proxy error")
+        || msg_lower.contains("proxy tunnel")
+    {
+        return err(
+            "proxy",
+            "Failed to connect through proxy",
+            Some(msg),
+            duration_ms,
+        );
+    }
 
     if msg_lower.contains("invalid header")
         || msg_lower.contains("header name")
@@ -116,6 +140,14 @@ fn map_reqwest_error(e: reqwest::Error, duration_ms: Option<u128>) -> HttpErrorD
 
     // Connect
     if e.is_connect() {
+        if msg_lower.contains("proxy") {
+            return err(
+                "proxy",
+                "Could not connect to proxy",
+                Some(msg),
+                duration_ms,
+            );
+        }
         if msg_lower.contains("connection refused") {
             return err(
                 "connect",
@@ -804,16 +836,13 @@ pub async fn do_send_request(
     let verify_tls_certificates = app_settings.general.security.verify_tls_certificates;
 
     // 2) client with explicit timeout budget + TLS options
-    let mut client_builder = reqwest::Client::builder().no_proxy();
+    let mut client_builder = reqwest::Client::builder();
     if request_timeout_ms > 0 {
         let timeout = std::time::Duration::from_millis(request_timeout_ms);
         client_builder = client_builder.timeout(timeout).connect_timeout(timeout);
     }
-    if let Some(proxy) = build_reqwest_proxy(&resolved_proxy)
-        .map_err(|error| err("proxy", "Failed to apply proxy settings", Some(error), None))?
-    {
-        client_builder = client_builder.proxy(proxy);
-    }
+    client_builder = apply_reqwest_proxy_configuration(client_builder, &resolved_proxy)
+        .map_err(|error| err("proxy", "Failed to apply proxy settings", Some(error), None))?;
     let client_builder = apply_tls_settings(client_builder, &req.tls, verify_tls_certificates)?;
     let client = client_builder.build().map_err(|e| {
         err(

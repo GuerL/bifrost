@@ -167,6 +167,7 @@ export type ProxyResolutionInfo = {
     summary: string;
     proxy_url: string | null;
     detail: string | null;
+    diagnostics: string[];
 };
 
 export type ImportPostmanResult = {

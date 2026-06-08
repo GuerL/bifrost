@@ -2002,6 +2002,7 @@ export default function App() {
                     summary: "Direct connection",
                     proxy_url: null,
                     detail: message,
+                    diagnostics: [],
                 });
                 setProxyResolutionError(message);
             }
@@ -6980,6 +6981,7 @@ export default function App() {
                                                 requestDebugInfo.transport.proxyDetail
                                                     ? `Proxy detail: ${requestDebugInfo.transport.proxyDetail}`
                                                     : null,
+                                                ...requestDebugInfo.transport.proxyDiagnostics,
                                                 `TLS validation: ${requestDebugInfo.transport.tlsValidation}`,
                                                 `Custom CA certificate: ${requestDebugInfo.transport.customCaCertificate}`,
                                                 `Client certificate: ${requestDebugInfo.transport.clientCertificate}`,

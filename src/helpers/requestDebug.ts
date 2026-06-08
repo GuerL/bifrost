@@ -39,6 +39,7 @@ export type RequestDebugInfo = {
         proxySummary: string;
         proxyTarget: string;
         proxyDetail: string | null;
+        proxyDiagnostics: string[];
         tlsValidation: string;
         customCaCertificate: string;
         clientCertificate: string;
@@ -264,6 +265,7 @@ export function buildRequestDebugInfo(args: {
         summary: "Direct connection",
         proxy_url: null,
         detail: null,
+        diagnostics: [],
     };
     const generalSettings = args.generalSettings;
     const verifyTlsCertificates =
@@ -285,6 +287,7 @@ export function buildRequestDebugInfo(args: {
             proxySummary: proxyTransport.summary,
             proxyTarget: proxyTransport.proxy_url ?? "<none>",
             proxyDetail: proxyTransport.detail,
+            proxyDiagnostics: proxyTransport.diagnostics ?? [],
             tlsValidation: !verifyTlsCertificates
                 ? "disabled (general setting)"
                 : requestTls.allow_invalid_certificates
@@ -338,6 +341,9 @@ export function buildRequestDebugText(info: RequestDebugInfo): string {
     lines.push(`Proxy target: ${info.transport.proxyTarget}`);
     if (info.transport.proxyDetail) {
         lines.push(`Proxy detail: ${info.transport.proxyDetail}`);
+    }
+    for (const diagnostic of info.transport.proxyDiagnostics) {
+        lines.push(diagnostic);
     }
     lines.push(`TLS validation: ${info.transport.tlsValidation}`);
     lines.push(`Custom CA certificate: ${info.transport.customCaCertificate}`);
