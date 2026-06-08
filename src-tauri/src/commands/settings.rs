@@ -3,6 +3,7 @@ use std::env;
 
 use proxy_cfg::ProxyConfig;
 use reqwest::{Proxy, Url};
+use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::model::settings::{
@@ -21,6 +22,14 @@ pub(crate) struct ResolvedProxyTransport {
     pub info: ProxyResolutionInfo,
     proxy_config: Option<ProxyConfig>,
     auth: Option<(String, String)>,
+}
+
+#[derive(Serialize)]
+pub struct AboutRuntimeInfo {
+    version: String,
+    architecture: String,
+    platform: String,
+    runtime: String,
 }
 
 impl ResolvedProxyTransport {
@@ -46,6 +55,16 @@ pub fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
 #[tauri::command]
 pub fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
     save_app_settings_value(&app, &settings)
+}
+
+#[tauri::command]
+pub fn get_about_runtime_info(app: AppHandle) -> AboutRuntimeInfo {
+    AboutRuntimeInfo {
+        version: app.package_info().version.to_string(),
+        architecture: display_architecture_name(env::consts::ARCH).to_string(),
+        platform: display_platform_name(env::consts::OS).to_string(),
+        runtime: "Tauri".to_string(),
+    }
 }
 
 #[tauri::command]
@@ -149,6 +168,25 @@ fn resolve_proxy_from_sources(
     }
 
     Ok(ResolvedProxyTransport::direct(None))
+}
+
+fn display_platform_name(value: &str) -> &str {
+    match value {
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        other => other,
+    }
+}
+
+fn display_architecture_name(value: &str) -> &str {
+    match value {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        "x86" => "x86",
+        "arm" => "arm",
+        other => other,
+    }
 }
 
 fn resolve_candidate(

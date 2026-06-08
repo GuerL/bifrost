@@ -1,4 +1,7 @@
+import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useMemo, useState } from "react";
+import bifrostLogo from "../assets/bifrost_logo.svg";
 import {
     readStoredSettingsTab,
     writeStoredSettingsTab,
@@ -13,7 +16,6 @@ import {
 import {
     buttonStyle,
     modalInputStyle,
-    primaryButtonStyle,
 } from "../helpers/UiStyles.ts";
 import type {
     AppSettings,
@@ -37,6 +39,13 @@ type SettingsModalProps = {
 };
 
 type ProxySource = "direct" | "system" | "custom";
+
+type AboutRuntimeInfo = {
+    version: string;
+    architecture: string;
+    platform: string;
+    runtime: string;
+};
 
 const SETTINGS_TABS: Array<{ id: SettingsTabId; label: string }> = [
     { id: "general", label: "General" },
@@ -109,6 +118,29 @@ const proxyFieldGridStyle = {
     gap: 10,
 };
 
+function sanitizeAboutRuntimeInfo(value: unknown): AboutRuntimeInfo {
+    if (!value || typeof value !== "object") {
+        return {
+            version: "Unavailable",
+            architecture: "Unavailable",
+            platform: "Unavailable",
+            runtime: "Tauri",
+        };
+    }
+
+    const source = value as Record<string, unknown>;
+
+    return {
+        version: typeof source.version === "string" && source.version ? source.version : "Unavailable",
+        architecture:
+            typeof source.architecture === "string" && source.architecture
+                ? source.architecture
+                : "Unavailable",
+        platform: typeof source.platform === "string" && source.platform ? source.platform : "Unavailable",
+        runtime: typeof source.runtime === "string" && source.runtime ? source.runtime : "Tauri",
+    };
+}
+
 function selectedProxySourceFromSettings(proxySettings: ProxySettings): ProxySource {
     if (proxySettings.use_custom_proxy) return "custom";
     if (proxySettings.use_system_proxy || proxySettings.respect_environment_variables) {
@@ -133,6 +165,8 @@ export default function SettingsModal({
     const [selectedTab, setSelectedTab] = useState<SettingsTabId>(() =>
         readStoredSettingsTab()
     );
+    const [aboutInfo, setAboutInfo] = useState<AboutRuntimeInfo | null>(null);
+    const [aboutInfoError, setAboutInfoError] = useState("");
     const shortcuts = useMemo(() => listShortcuts(), []);
     const proxySettings = appSettings.proxy;
     const activeThemeLabel = formatThemeLabel(theme, systemTheme);
@@ -164,6 +198,35 @@ export default function SettingsModal({
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [open, onClose]);
+
+    useEffect(() => {
+        if (!open || selectedTab !== "about") return;
+
+        let cancelled = false;
+
+        invoke("get_about_runtime_info")
+            .then((result) => {
+                if (cancelled) return;
+                setAboutInfo(sanitizeAboutRuntimeInfo(result));
+                setAboutInfoError("");
+            })
+            .catch((error) => {
+                if (cancelled) return;
+                setAboutInfo({
+                    version: "Unavailable",
+                    architecture: "Unavailable",
+                    platform: "Unavailable",
+                    runtime: "Tauri",
+                });
+                setAboutInfoError(
+                    error instanceof Error ? error.message : "Unable to load application information."
+                );
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [open, selectedTab]);
 
     if (!open) return null;
 
@@ -830,36 +893,172 @@ export default function SettingsModal({
                     )}
 
                     {selectedTab === "about" && (
-                        <>
-                            <div style={sectionCardStyle}>
-                                <div style={fieldCaptionStyle}>Bifrost</div>
-                                <div style={{ fontSize: 13, color: "var(--pg-text-dim)", lineHeight: 1.6 }}>
-                                    Centralized settings now live in one modal so additional categories can
-                                    be added without changing the rest of the workspace layout.
-                                </div>
-                            </div>
-                            <div style={sectionCardStyle}>
-                                <div style={fieldCaptionStyle}>Current configuration</div>
-                                <div style={{ display: "grid", gap: 8 }}>
-                                    <div style={{ fontSize: 13, color: "var(--pg-text)" }}>
-                                        Theme: <strong>{activeThemeLabel}</strong>
+                        <div
+                            style={{
+                                minHeight: "100%",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                padding: "8px 0",
+                            }}
+                        >
+                            <div
+                                style={{
+                                    width: "100%",
+                                    maxWidth: 520,
+                                    display: "grid",
+                                    gap: 18,
+                                    justifyItems: "center",
+                                    textAlign: "center",
+                                    margin: "0 auto",
+                                }}
+                            >
+                                <div style={{ display: "grid", gap: 10, justifyItems: "center" }}>
+                                    <div
+                                        style={{
+                                            width: 84,
+                                            height: 84,
+                                            borderRadius: 22,
+                                            border: "1px solid var(--pg-border)",
+                                            background:
+                                                "linear-gradient(180deg, rgba(var(--pg-primary-rgb), 0.16), rgba(255, 255, 255, 0.03))",
+                                            display: "grid",
+                                            placeItems: "center",
+                                            boxShadow:
+                                                "0 18px 34px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
+                                        }}
+                                    >
+                                        <img
+                                            src={bifrostLogo}
+                                            alt="Bifrost logo"
+                                            style={{ width: 54, height: 54, display: "block" }}
+                                        />
                                     </div>
-                                    <div style={{ fontSize: 13, color: "var(--pg-text)" }}>
-                                        Proxy mode preview:{" "}
-                                        <strong>{proxyPreview?.summary ?? "Direct connection"}</strong>
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                        <div
+                                            style={{
+                                                fontSize: 24,
+                                                fontWeight: 800,
+                                                color: "var(--pg-text)",
+                                                letterSpacing: -0.4,
+                                            }}
+                                        >
+                                            Bifrost
+                                        </div>
+                                        <div
+                                            style={{
+                                                fontSize: 13,
+                                                color: "var(--pg-text-muted)",
+                                                lineHeight: 1.5,
+                                            }}
+                                        >
+                                            Modern API client built with Tauri
+                                        </div>
                                     </div>
                                 </div>
-                                <div>
+
+                                <div
+                                    style={{
+                                        width: "100%",
+                                        display: "grid",
+                                        gap: 8,
+                                        padding: 14,
+                                        borderRadius: 14,
+                                        border: "1px solid var(--pg-border)",
+                                        background: "var(--pg-surface-0)",
+                                    }}
+                                >
+                                    {[
+                                        {
+                                            label: "Version",
+                                            value: aboutInfo?.version ?? "Loading...",
+                                        },
+                                        {
+                                            label: "Architecture",
+                                            value: aboutInfo?.architecture ?? "Loading...",
+                                        },
+                                        {
+                                            label: "Platform",
+                                            value: aboutInfo?.platform ?? "Loading...",
+                                        },
+                                        {
+                                            label: "Runtime",
+                                            value: aboutInfo?.runtime ?? "Loading...",
+                                        },
+                                    ].map((item) => (
+                                        <div
+                                            key={item.label}
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent: "space-between",
+                                                gap: 12,
+                                                padding: "7px 0",
+                                                borderBottom:
+                                                    item.label === "Runtime"
+                                                        ? "none"
+                                                        : "1px solid var(--pg-border-soft)",
+                                            }}
+                                        >
+                                            <span
+                                                style={{
+                                                    fontSize: 12,
+                                                    fontWeight: 700,
+                                                    color: "var(--pg-text-muted)",
+                                                    letterSpacing: 0.24,
+                                                }}
+                                            >
+                                                {item.label}
+                                            </span>
+                                            <span
+                                                style={{
+                                                    fontSize: 13,
+                                                    fontWeight: 600,
+                                                    color: "var(--pg-text)",
+                                                }}
+                                            >
+                                                {item.value}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        flexWrap: "wrap",
+                                        justifyContent: "center",
+                                        gap: 10,
+                                    }}
+                                >
                                     <button
                                         type="button"
-                                        onClick={() => setSelectedTab("proxy")}
-                                        style={primaryButtonStyle(false)}
+                                        onClick={() => void openUrl("https://github.com/GuerL/bifrost")}
+                                        style={buttonStyle(false)}
                                     >
-                                        Open proxy settings
+                                        GitHub
+                                    </button>
+                                    <button type="button" disabled style={buttonStyle(true)}>
+                                        Documentation
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            void openUrl("https://github.com/GuerL/bifrost/issues/new")
+                                        }
+                                        style={buttonStyle(false)}
+                                    >
+                                        Report an Issue
                                     </button>
                                 </div>
+
+                                {aboutInfoError && (
+                                    <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                        {aboutInfoError}
+                                    </div>
+                                )}
                             </div>
-                        </>
+                        </div>
                     )}
                 </div>
             </div>

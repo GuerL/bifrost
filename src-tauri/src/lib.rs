@@ -42,6 +42,7 @@ pub fn run() {
             commands::environment::open_environments_dir,
             commands::settings::load_app_settings,
             commands::settings::save_app_settings,
+            commands::settings::get_about_runtime_info,
             commands::settings::resolve_proxy_transport,
             commands::http::send_request,
             commands::http::is_pending,
