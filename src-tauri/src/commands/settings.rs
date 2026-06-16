@@ -4,6 +4,8 @@ use std::env;
 use std::process::Command;
 #[cfg(target_os = "macos")]
 use std::ptr;
+#[cfg(target_os = "macos")]
+use std::sync::OnceLock;
 
 use proxy_cfg::ProxyConfig;
 use reqwest::{Proxy, Url};
@@ -39,6 +41,9 @@ const ENV_PROXY_VARIABLE_NAMES: [&str; 8] = [
     "no_proxy",
 ];
 const STARTUP_PROXY_DIAGNOSTIC_SAMPLE_URL: &str = "https://example.com/";
+#[cfg(target_os = "macos")]
+static LOGIN_SHELL_PROXY_ENVIRONMENT_CACHE: OnceLock<Vec<ProxyEnvironmentVariableSnapshot>> =
+    OnceLock::new();
 
 #[derive(Clone)]
 struct ProxyCandidate {
@@ -52,7 +57,7 @@ enum ProxyBuilderMode {
     Explicit,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ConfiguredProxySource {
     Direct,
     System,
@@ -62,8 +67,14 @@ enum ConfiguredProxySource {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EnvironmentProxyOrigin {
+    LoginShell,
     Process,
     Manual,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SystemProxyFallbackReason {
+    PacUnsupported,
 }
 
 #[derive(Clone)]
@@ -74,6 +85,7 @@ pub(crate) struct ResolvedProxyTransport {
     builder_mode: ProxyBuilderMode,
     credentials_configured: bool,
     environment_origin: Option<EnvironmentProxyOrigin>,
+    system_fallback_reason: Option<SystemProxyFallbackReason>,
 }
 
 struct EnvironmentProxySource {
@@ -105,7 +117,16 @@ impl ResolvedProxyTransport {
             builder_mode: ProxyBuilderMode::Direct,
             credentials_configured: false,
             environment_origin: None,
+            system_fallback_reason: None,
         }
+    }
+}
+
+fn empty_environment_proxy_source() -> EnvironmentProxySource {
+    EnvironmentProxySource {
+        config: None,
+        detected_variable_names: vec![],
+        origin: None,
     }
 }
 
@@ -223,19 +244,28 @@ pub(crate) fn resolve_effective_proxy_transport(
 ) -> Result<ResolvedProxyTransport, String> {
     let proxy_settings = proxy_settings_override.unwrap_or(load_app_settings_value(app)?.proxy);
     let configured_source = configured_proxy_source_from_settings(&proxy_settings);
+    let macos_system_configuration = if proxy_settings.use_system_proxy {
+        Some(load_macos_system_proxy_diagnostics()?)
+    } else {
+        None
+    };
     let system_proxy = if proxy_settings.use_system_proxy {
         load_system_proxy_config()?
     } else {
         None
     };
-    let environment_proxy_source = if proxy_settings.respect_environment_variables {
+    let environment_proxy_source = if proxy_settings.use_system_proxy
+        && proxy_settings.respect_environment_variables
+    {
+        load_system_proxy_environment_fallback_source(
+            &proxy_settings,
+            system_proxy.as_ref(),
+            macos_system_configuration.as_ref(),
+        )
+    } else if proxy_settings.respect_environment_variables {
         load_environment_proxy_source(&proxy_settings)
     } else {
-        EnvironmentProxySource {
-            config: None,
-            detected_variable_names: vec![],
-            origin: None,
-        }
+        empty_environment_proxy_source()
     };
 
     let mut resolved = resolve_proxy_from_sources(
@@ -244,6 +274,15 @@ pub(crate) fn resolve_effective_proxy_transport(
         system_proxy.as_ref(),
         environment_proxy_source.config.as_ref(),
     )?;
+    if configured_source == ConfiguredProxySource::System
+        && system_proxy.is_none()
+        && macos_system_configuration
+            .as_ref()
+            .map(|diagnostics| diagnostics.pac_enabled)
+            .unwrap_or(false)
+    {
+        resolved.system_fallback_reason = Some(SystemProxyFallbackReason::PacUnsupported);
+    }
     if matches!(resolved.info.mode, ProxyResolutionMode::Environment) {
         resolved.environment_origin = environment_proxy_source.origin;
     }
@@ -253,8 +292,37 @@ pub(crate) fn resolve_effective_proxy_transport(
         system_proxy.as_ref(),
         proxy_settings.respect_environment_variables,
         &environment_proxy_source,
+        macos_system_configuration.as_ref(),
     );
     Ok(resolved)
+}
+
+fn load_system_proxy_environment_fallback_source(
+    proxy_settings: &ProxySettings,
+    system_proxy: Option<&ProxyConfig>,
+    macos_system_configuration: Option<&MacOsSystemProxyDiagnostics>,
+) -> EnvironmentProxySource {
+    #[cfg(target_os = "macos")]
+    {
+        if system_proxy.is_some() {
+            return empty_environment_proxy_source();
+        }
+
+        if macos_system_configuration.is_some() {
+            return build_system_proxy_environment_fallback_source_from_snapshots(
+                capture_proxy_environment_variable_snapshots_from_manual_settings(
+                    &proxy_settings.manual_environment,
+                ),
+                capture_proxy_environment_variable_snapshots_from_process(),
+                capture_proxy_environment_variable_snapshots_from_login_shell(),
+            );
+        }
+    }
+
+    let _ = proxy_settings;
+    let _ = system_proxy;
+    let _ = macos_system_configuration;
+    empty_environment_proxy_source()
 }
 
 fn resolve_proxy_from_sources(
@@ -300,7 +368,7 @@ fn resolve_proxy_from_sources(
             system_proxy_backend_label()
         )),
         ConfiguredProxySource::Environment => Some(
-            "No supported HTTP_PROXY / HTTPS_PROXY / ALL_PROXY configuration was detected in the current process. Falling back to a direct connection.".to_string(),
+            "No supported HTTP_PROXY / HTTPS_PROXY / ALL_PROXY configuration was detected in the login shell, process environment, or imported environment values. Falling back to a direct connection.".to_string(),
         ),
         ConfiguredProxySource::Direct => None,
     };
@@ -341,6 +409,7 @@ fn configured_proxy_source_display_label(source: ConfiguredProxySource) -> &'sta
 
 fn environment_origin_label(origin: EnvironmentProxyOrigin) -> &'static str {
     match origin {
+        EnvironmentProxyOrigin::LoginShell => "login shell environment variables",
         EnvironmentProxyOrigin::Process => "process environment variables",
         EnvironmentProxyOrigin::Manual => "manual environment proxy values",
     }
@@ -348,6 +417,7 @@ fn environment_origin_label(origin: EnvironmentProxyOrigin) -> &'static str {
 
 fn environment_origin_display_label(origin: EnvironmentProxyOrigin) -> &'static str {
     match origin {
+        EnvironmentProxyOrigin::LoginShell => "Login Shell Environment",
         EnvironmentProxyOrigin::Process => "Environment Variables",
         EnvironmentProxyOrigin::Manual => "Manual Environment Values",
     }
@@ -445,9 +515,7 @@ fn build_proxy_diagnostics_report(
         launchctl_environment_variables,
         login_shell_environment_variables,
         macos_system_configuration: macos_system_configuration.clone(),
-        effective_environment_source: resolved
-            .environment_origin
-            .map(environment_origin_display_label)
+        effective_environment_source: effective_environment_source_display_label(&resolved)
             .map(str::to_string),
         visibility_warning,
         resolution: ProxyDiagnosticsResolution {
@@ -458,10 +526,25 @@ fn build_proxy_diagnostics_report(
                 &macos_system_configuration,
             )
             .to_string(),
+            pac_support: diagnostics_pac_support_label(&resolved).map(str::to_string),
+            fallback_source: diagnostics_fallback_source_label(&resolved).map(str::to_string),
             effective_proxy: diagnostics_effective_proxy_display(url, &resolved),
             detail: resolved.info.detail.clone(),
         },
     })
+}
+
+fn effective_environment_source_display_label(
+    resolved: &ResolvedProxyTransport,
+) -> Option<&'static str> {
+    match resolved.system_fallback_reason {
+        Some(SystemProxyFallbackReason::PacUnsupported) => resolved
+            .environment_origin
+            .map(system_fallback_origin_display_label),
+        None => resolved
+            .environment_origin
+            .map(environment_origin_display_label),
+    }
 }
 
 fn diagnostics_detected_source_label(
@@ -469,6 +552,15 @@ fn diagnostics_detected_source_label(
     resolved: &ResolvedProxyTransport,
     macos_system_configuration: &MacOsSystemProxyDiagnostics,
 ) -> &'static str {
+    if configured_source == ConfiguredProxySource::System
+        && matches!(
+            resolved.system_fallback_reason,
+            Some(SystemProxyFallbackReason::PacUnsupported)
+        )
+    {
+        return "PAC";
+    }
+
     match &resolved.info.mode {
         ProxyResolutionMode::Custom => "Custom Proxy",
         ProxyResolutionMode::System => "System Proxy",
@@ -484,6 +576,34 @@ fn diagnostics_detected_source_label(
             ConfiguredProxySource::Custom => "Custom Proxy",
             ConfiguredProxySource::Direct => "Direct Connection",
         },
+    }
+}
+
+fn diagnostics_pac_support_label(
+    resolved: &ResolvedProxyTransport,
+) -> Option<&'static str> {
+    match resolved.system_fallback_reason {
+        Some(SystemProxyFallbackReason::PacUnsupported) => Some("not implemented"),
+        None => None,
+    }
+}
+
+fn diagnostics_fallback_source_label(
+    resolved: &ResolvedProxyTransport,
+) -> Option<&'static str> {
+    match resolved.system_fallback_reason {
+        Some(SystemProxyFallbackReason::PacUnsupported) => resolved
+            .environment_origin
+            .map(system_fallback_origin_display_label),
+        None => None,
+    }
+}
+
+fn system_fallback_origin_display_label(origin: EnvironmentProxyOrigin) -> &'static str {
+    match origin {
+        EnvironmentProxyOrigin::LoginShell => "Login Shell Environment",
+        EnvironmentProxyOrigin::Process => "Process Environment",
+        EnvironmentProxyOrigin::Manual => "Imported login shell proxy values",
     }
 }
 
@@ -524,6 +644,14 @@ fn capture_proxy_environment_variable_snapshots_from_launchctl(
 
 #[cfg(target_os = "macos")]
 fn capture_proxy_environment_variable_snapshots_from_login_shell(
+) -> Vec<ProxyEnvironmentVariableSnapshot> {
+    LOGIN_SHELL_PROXY_ENVIRONMENT_CACHE
+        .get_or_init(capture_proxy_environment_variable_snapshots_from_login_shell_uncached)
+        .clone()
+}
+
+#[cfg(target_os = "macos")]
+fn capture_proxy_environment_variable_snapshots_from_login_shell_uncached(
 ) -> Vec<ProxyEnvironmentVariableSnapshot> {
     let script = r#"for key in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy; do
   printf '%s=' "$key"
@@ -762,6 +890,22 @@ fn format_proxy_diagnostics_log_lines(report: &ProxyDiagnosticsInfo) -> Vec<Stri
         report.resolution.detected_source
     ));
     lines.push(format!(
+        "pac_support={}",
+        report
+            .resolution
+            .pac_support
+            .as_deref()
+            .unwrap_or("none")
+    ));
+    lines.push(format!(
+        "fallback_source={}",
+        report
+            .resolution
+            .fallback_source
+            .as_deref()
+            .unwrap_or("none")
+    ));
+    lines.push(format!(
         "effective_environment_source={}",
         report
             .effective_environment_source
@@ -791,6 +935,7 @@ fn build_proxy_diagnostics(
     system_proxy: Option<&ProxyConfig>,
     respect_environment_variables: bool,
     environment_proxy_source: &EnvironmentProxySource,
+    macos_system_configuration: Option<&MacOsSystemProxyDiagnostics>,
 ) -> Vec<String> {
     let mut diagnostics = vec![
         format!(
@@ -818,10 +963,23 @@ fn build_proxy_diagnostics(
             "System proxy limitations: {}",
             system_proxy_limitation_note()
         ));
+        if macos_system_configuration
+            .map(|diagnostics| diagnostics.pac_enabled)
+            .unwrap_or(false)
+        {
+            diagnostics.push(
+                "System proxy PAC detection: present, but PAC evaluation is not implemented."
+                    .to_string(),
+            );
+        }
     }
 
     if matches!(configured_source, ConfiguredProxySource::Environment)
         || respect_environment_variables
+        || matches!(
+            resolved.system_fallback_reason,
+            Some(SystemProxyFallbackReason::PacUnsupported)
+        )
     {
         if environment_proxy_source.detected_variable_names.is_empty() {
             diagnostics.push("Environment variables detected: none".to_string());
@@ -840,6 +998,9 @@ fn build_proxy_diagnostics(
                     environment_origin_label(origin)
                 ));
             }
+        }
+        if let Some(origin) = diagnostics_fallback_source_label(resolved) {
+            diagnostics.push(format!("Fallback source: {origin}"));
         }
     }
 
@@ -910,6 +1071,7 @@ fn resolve_candidate(
         builder_mode: ProxyBuilderMode::Explicit,
         credentials_configured,
         environment_origin: None,
+        system_fallback_reason: None,
     }))
 }
 
@@ -979,23 +1141,44 @@ fn load_environment_proxy_config_from_process() -> Option<ProxyConfig> {
 }
 
 fn load_environment_proxy_source(proxy_settings: &ProxySettings) -> EnvironmentProxySource {
+    let manual_snapshots =
+        capture_proxy_environment_variable_snapshots_from_manual_settings(
+            &proxy_settings.manual_environment,
+        );
     let process_snapshots = capture_proxy_environment_variable_snapshots_from_process();
-    let manual_snapshots = capture_proxy_environment_variable_snapshots_from_manual_settings(
-        &proxy_settings.manual_environment,
-    );
-    let process_has_proxy = snapshots_have_proxy_endpoint_values(&process_snapshots);
-    let manual_has_proxy = snapshots_have_proxy_endpoint_values(&manual_snapshots);
+    let login_shell_snapshots = capture_proxy_environment_variable_snapshots_from_login_shell();
 
-    let mut merged_pairs = snapshots_to_pairs(&manual_snapshots);
-    merged_pairs.extend(snapshots_to_pairs(&process_snapshots));
+    build_environment_proxy_source_from_snapshot_sets(&[
+        (EnvironmentProxyOrigin::Manual, manual_snapshots),
+        (EnvironmentProxyOrigin::Process, process_snapshots),
+        (EnvironmentProxyOrigin::LoginShell, login_shell_snapshots),
+    ])
+}
 
-    let origin = if process_has_proxy {
-        Some(EnvironmentProxyOrigin::Process)
-    } else if manual_has_proxy {
-        Some(EnvironmentProxyOrigin::Manual)
-    } else {
-        None
-    };
+fn build_system_proxy_environment_fallback_source_from_snapshots(
+    manual_snapshots: Vec<ProxyEnvironmentVariableSnapshot>,
+    process_snapshots: Vec<ProxyEnvironmentVariableSnapshot>,
+    login_shell_snapshots: Vec<ProxyEnvironmentVariableSnapshot>,
+) -> EnvironmentProxySource {
+    build_environment_proxy_source_from_snapshot_sets(&[
+        (EnvironmentProxyOrigin::LoginShell, login_shell_snapshots),
+        (EnvironmentProxyOrigin::Manual, manual_snapshots),
+        (EnvironmentProxyOrigin::Process, process_snapshots),
+    ])
+}
+
+fn build_environment_proxy_source_from_snapshot_sets(
+    snapshot_sets: &[(EnvironmentProxyOrigin, Vec<ProxyEnvironmentVariableSnapshot>)],
+) -> EnvironmentProxySource {
+    let mut merged_pairs = Vec::new();
+    let mut origin = None;
+
+    for (candidate_origin, snapshots) in snapshot_sets {
+        if snapshots_have_proxy_endpoint_values(snapshots) {
+            origin = Some(*candidate_origin);
+        }
+        merged_pairs.extend(snapshots_to_pairs(snapshots));
+    }
 
     build_environment_proxy_source_from_pairs(merged_pairs, origin)
 }
@@ -1047,6 +1230,17 @@ where
                 }
             }
             _ => {}
+        }
+    }
+
+    if !config.proxies.contains_key("https") {
+        if let Some(shared_proxy) = config
+            .proxies
+            .get("*")
+            .cloned()
+            .or_else(|| config.proxies.get("http").cloned())
+        {
+            config.proxies.insert("https".to_string(), shared_proxy);
         }
     }
 
@@ -1151,6 +1345,10 @@ fn parse_bypass_list(input: &str) -> (HashSet<String>, bool) {
         }
         if entry == "<local>" {
             exclude_simple = true;
+            continue;
+        }
+        if let Some(stripped) = entry.strip_prefix('.') {
+            whitelist.insert(format!("*.{stripped}"));
             continue;
         }
         whitelist.insert(entry);
@@ -1413,6 +1611,7 @@ mod tests {
                 detected_variable_names: vec![],
                 origin: None,
             },
+            None,
         );
 
         assert_eq!(resolved.builder_mode, ProxyBuilderMode::Direct);
@@ -1451,6 +1650,7 @@ mod tests {
                 detected_variable_names: vec![],
                 origin: None,
             },
+            None,
         );
 
         assert_eq!(
@@ -1500,6 +1700,7 @@ mod tests {
             None,
             true,
             &environment_source,
+            None,
         );
 
         assert!(matches!(
@@ -1517,15 +1718,22 @@ mod tests {
 
     #[test]
     fn manual_environment_proxy_values_are_used_when_process_env_is_missing() {
-        let source = load_environment_proxy_source(&ProxySettings {
-            respect_environment_variables: true,
-            manual_environment: ManualEnvironmentProxySettings {
-                all_proxy: "http://manual.proxy.local:8118".to_string(),
-                no_proxy: "localhost".to_string(),
-                ..ManualEnvironmentProxySettings::default()
-            },
-            ..ProxySettings::default()
-        });
+        let source = build_environment_proxy_source_from_snapshot_sets(&[
+            (
+                EnvironmentProxyOrigin::Manual,
+                capture_proxy_environment_variable_snapshots_from_manual_settings(
+                    &ManualEnvironmentProxySettings {
+                        all_proxy: "http://manual.proxy.local:8118".to_string(),
+                        no_proxy: "localhost".to_string(),
+                        ..ManualEnvironmentProxySettings::default()
+                    },
+                ),
+            ),
+            (
+                EnvironmentProxyOrigin::Process,
+                capture_proxy_environment_variable_snapshots_with(|_| None),
+            ),
+        ]);
 
         let config = source
             .config
@@ -1565,6 +1773,191 @@ mod tests {
             Some("http://process.proxy.local:8443")
         );
         assert_eq!(source.origin, Some(EnvironmentProxyOrigin::Process));
+    }
+
+    #[test]
+    fn login_shell_environment_proxy_values_take_priority_over_process_values() {
+        let process_snapshots =
+            capture_proxy_environment_variable_snapshots_with(|key| match key {
+                "http_proxy" => Some("http://process.proxy.local:8080".to_string()),
+                _ => None,
+            });
+        let login_shell_snapshots =
+            capture_proxy_environment_variable_snapshots_with(|key| match key {
+                "http_proxy" => Some("http://127.0.0.1:3128".to_string()),
+                _ => None,
+            });
+
+        let source = build_environment_proxy_source_from_snapshot_sets(&[
+            (EnvironmentProxyOrigin::Process, process_snapshots),
+            (EnvironmentProxyOrigin::LoginShell, login_shell_snapshots),
+        ]);
+        let config = source
+            .config
+            .expect("login shell environment proxy should exist");
+
+        assert_eq!(
+            config.proxies.get("http").map(String::as_str),
+            Some("http://127.0.0.1:3128")
+        );
+        assert_eq!(
+            config.proxies.get("https").map(String::as_str),
+            Some("http://127.0.0.1:3128")
+        );
+        assert_eq!(source.origin, Some(EnvironmentProxyOrigin::LoginShell));
+    }
+
+    #[test]
+    fn system_proxy_environment_fallback_uses_imported_values_when_process_env_is_empty() {
+        let source = build_system_proxy_environment_fallback_source_from_snapshots(
+            capture_proxy_environment_variable_snapshots_from_manual_settings(
+                &ManualEnvironmentProxySettings {
+                    http_proxy: "http://127.0.0.1:3128".to_string(),
+                    https_proxy: "http://127.0.0.1:3128".to_string(),
+                    no_proxy: "localhost,.local".to_string(),
+                    ..ManualEnvironmentProxySettings::default()
+                },
+            ),
+            capture_proxy_environment_variable_snapshots_with(|_| None),
+            capture_proxy_environment_variable_snapshots_with(|key| match key {
+                "http_proxy" => Some("http://shell.proxy.local:8080".to_string()),
+                _ => None,
+            }),
+        );
+        let config = source
+            .config
+            .expect("system fallback proxy should exist");
+
+        assert_eq!(
+            config.proxies.get("http").map(String::as_str),
+            Some("http://127.0.0.1:3128")
+        );
+        assert_eq!(
+            config.proxies.get("https").map(String::as_str),
+            Some("http://127.0.0.1:3128")
+        );
+        assert_eq!(source.origin, Some(EnvironmentProxyOrigin::Manual));
+    }
+
+    #[test]
+    fn lowercase_environment_variables_are_resolved_case_insensitively() {
+        let source = build_environment_proxy_source_from_pairs(
+            [
+                (
+                    "http_proxy".to_string(),
+                    "http://127.0.0.1:3128".to_string(),
+                ),
+                (
+                    "no_proxy".to_string(),
+                    "localhost,127.0.0.1,.local,169.254/16".to_string(),
+                ),
+            ],
+            Some(EnvironmentProxyOrigin::LoginShell),
+        );
+        let config = source
+            .config
+            .expect("lowercase environment proxy should exist");
+
+        assert_eq!(
+            config.proxies.get("http").map(String::as_str),
+            Some("http://127.0.0.1:3128")
+        );
+        assert_eq!(
+            config.proxies.get("https").map(String::as_str),
+            Some("http://127.0.0.1:3128")
+        );
+        assert!(config.whitelist.contains("localhost"));
+        assert!(config.whitelist.contains("127.0.0.1"));
+        assert!(config.whitelist.contains("*.local"));
+        assert!(config.whitelist.contains("169.254/16"));
+        assert_eq!(
+            source.detected_variable_names,
+            vec!["HTTP_PROXY", "NO_PROXY"]
+        );
+    }
+
+    #[test]
+    fn no_proxy_suffix_patterns_bypass_local_domains() {
+        let source = build_environment_proxy_source_from_pairs(
+            [
+                (
+                    "all_proxy".to_string(),
+                    "http://127.0.0.1:3128".to_string(),
+                ),
+                ("no_proxy".to_string(), ".local,localhost".to_string()),
+            ],
+            Some(EnvironmentProxyOrigin::LoginShell),
+        );
+        let config = source.config.expect("environment proxy should exist");
+        let local_url = Url::parse("https://service.local/ping").unwrap();
+        let remote_url = Url::parse("https://api.example.com/ping").unwrap();
+
+        assert_eq!(proxy_url_for_target(&config, &local_url), None);
+        assert_eq!(
+            proxy_url_for_target(&config, &remote_url).as_deref(),
+            Some("http://127.0.0.1:3128")
+        );
+    }
+
+    #[test]
+    fn pac_fallback_reports_login_shell_environment_source() {
+        let resolved = ResolvedProxyTransport {
+            info: ProxyResolutionInfo {
+                mode: ProxyResolutionMode::Environment,
+                summary: "Using environment proxy".to_string(),
+                proxy_url: Some("127.0.0.1:3128".to_string()),
+                detail: None,
+                diagnostics: vec![],
+            },
+            proxy_config: Some(config_with_proxy("http://127.0.0.1:3128")),
+            auth: None,
+            builder_mode: ProxyBuilderMode::Explicit,
+            credentials_configured: false,
+            environment_origin: Some(EnvironmentProxyOrigin::LoginShell),
+            system_fallback_reason: Some(SystemProxyFallbackReason::PacUnsupported),
+        };
+
+        assert_eq!(
+            diagnostics_detected_source_label(
+                ConfiguredProxySource::System,
+                &resolved,
+                &MacOsSystemProxyDiagnostics {
+                    supported: true,
+                    pac_enabled: true,
+                    ..MacOsSystemProxyDiagnostics::default()
+                },
+            ),
+            "PAC"
+        );
+        assert_eq!(diagnostics_pac_support_label(&resolved), Some("not implemented"));
+        assert_eq!(
+            diagnostics_fallback_source_label(&resolved),
+            Some("Login Shell Environment")
+        );
+    }
+
+    #[test]
+    fn pac_fallback_reports_imported_login_shell_proxy_values() {
+        let resolved = ResolvedProxyTransport {
+            info: ProxyResolutionInfo {
+                mode: ProxyResolutionMode::Environment,
+                summary: "Using environment proxy".to_string(),
+                proxy_url: Some("127.0.0.1:3128".to_string()),
+                detail: None,
+                diagnostics: vec![],
+            },
+            proxy_config: Some(config_with_proxy("http://127.0.0.1:3128")),
+            auth: None,
+            builder_mode: ProxyBuilderMode::Explicit,
+            credentials_configured: false,
+            environment_origin: Some(EnvironmentProxyOrigin::Manual),
+            system_fallback_reason: Some(SystemProxyFallbackReason::PacUnsupported),
+        };
+
+        assert_eq!(
+            diagnostics_fallback_source_label(&resolved),
+            Some("Imported login shell proxy values")
+        );
     }
 
     #[test]

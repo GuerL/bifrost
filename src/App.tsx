@@ -595,6 +595,12 @@ function formatProxyDiagnosticsText(info: ProxyDiagnosticsInfo): string {
     lines.push("");
     lines.push(`Configured mode: ${info.resolution.configured_mode}`);
     lines.push(`Detected source: ${info.resolution.detected_source}`);
+    if (info.resolution.pac_support) {
+        lines.push(`PAC support: ${info.resolution.pac_support}`);
+    }
+    if (info.resolution.fallback_source) {
+        lines.push(`Fallback source: ${info.resolution.fallback_source}`);
+    }
     if (info.effective_environment_source) {
         lines.push(`Environment source: ${info.effective_environment_source}`);
     }

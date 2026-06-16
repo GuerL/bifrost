@@ -368,6 +368,8 @@ function sanitizeProxyDiagnosticsResolution(value: unknown): ProxyDiagnosticsRes
         return {
             configured_mode: "Direct Connection",
             detected_source: "Direct Connection",
+            pac_support: null,
+            fallback_source: null,
             effective_proxy: null,
             detail: null,
         };
@@ -377,6 +379,9 @@ function sanitizeProxyDiagnosticsResolution(value: unknown): ProxyDiagnosticsRes
     return {
         configured_mode: sanitizeString(source.configured_mode) || "Direct Connection",
         detected_source: sanitizeString(source.detected_source) || "Direct Connection",
+        pac_support: typeof source.pac_support === "string" ? source.pac_support : null,
+        fallback_source:
+            typeof source.fallback_source === "string" ? source.fallback_source : null,
         effective_proxy: typeof source.effective_proxy === "string" ? source.effective_proxy : null,
         detail: typeof source.detail === "string" ? source.detail : null,
     };

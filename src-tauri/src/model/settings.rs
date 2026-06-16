@@ -205,6 +205,8 @@ pub struct MacOsSystemProxyDiagnostics {
 pub struct ProxyDiagnosticsResolution {
     pub configured_mode: String,
     pub detected_source: String,
+    pub pac_support: Option<String>,
+    pub fallback_source: Option<String>,
     pub effective_proxy: Option<String>,
     pub detail: Option<String>,
 }

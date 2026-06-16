@@ -201,6 +201,8 @@ export type MacOsSystemProxyDiagnostics = {
 export type ProxyDiagnosticsResolution = {
     configured_mode: string;
     detected_source: string;
+    pac_support: string | null;
+    fallback_source: string | null;
     effective_proxy: string | null;
     detail: string | null;
 };
