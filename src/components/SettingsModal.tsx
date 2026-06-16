@@ -1267,6 +1267,21 @@ export default function SettingsModal({
                                                             >
                                                                 Import from login shell
                                                             </button>
+                                                            <button
+                                                                type="button"
+                                                                style={buttonStyle(false)}
+                                                                onClick={() => {
+                                                                    clearProxyImportFeedback();
+                                                                    updateManualEnvironmentProxySettings({
+                                                                        http_proxy: "",
+                                                                        https_proxy: "",
+                                                                        all_proxy: "",
+                                                                        no_proxy: "",
+                                                                    });
+                                                                }}
+                                                            >
+                                                                Clear values
+                                                            </button>
                                                         </div>
 
                                                         {proxyImportMessage && (
