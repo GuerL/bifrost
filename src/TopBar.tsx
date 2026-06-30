@@ -7,12 +7,9 @@ import {
     primaryButtonStyle,
     windowButtonStyle,
 } from "./helpers/UiStyles.ts";
+import { shortcutLabel } from "./helpers/ShortcutRegistry.ts";
 import TopbarSelector, { type TopbarSelectorItem } from "./components/TopbarSelector.tsx";
-import { type Theme, useTheme } from "./helpers/Theme.tsx";
 
-const isMacOS =
-    typeof navigator !== "undefined" &&
-    /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
 const isWindows =
     typeof navigator !== "undefined" &&
     /Windows/i.test(navigator.userAgent);
@@ -29,6 +26,7 @@ type TopBarProps = {
     onSaveDraft: () => void;
     onOpenRawJson: () => void;
     onOpenCollectionRunner: () => void;
+    onOpenSettings: () => void;
     onOpenImport: () => void;
     onExportPortable: () => void;
     canSaveDraft: boolean;
@@ -50,6 +48,7 @@ export default function TopBar({
     onSaveDraft,
     onOpenRawJson,
     onOpenCollectionRunner,
+    onOpenSettings,
     onOpenImport,
     onExportPortable,
     canSaveDraft,
@@ -58,12 +57,8 @@ export default function TopBar({
     canExportCollection,
     isCollectionRunning,
 }: TopBarProps) {
-    const { theme, systemTheme, setTheme } = useTheme();
     const [isTransferMenuOpen, setIsTransferMenuOpen] = useState(false);
-    const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
     const transferMenuRef = useRef<HTMLDivElement | null>(null);
-    const themeMenuRef = useRef<HTMLDivElement | null>(null);
-    const saveDraftShortcutLabel = isMacOS ? "CMD + S" : "CTRL + S";
     const collectionSelectorItems: TopbarSelectorItem[] = collections.map((collection) => ({
         value: collection.id,
         label: collection.name,
@@ -74,7 +69,7 @@ export default function TopBar({
     }));
 
     useEffect(() => {
-        if (!isTransferMenuOpen && !isThemeMenuOpen) {
+        if (!isTransferMenuOpen) {
             return;
         }
 
@@ -83,18 +78,13 @@ export default function TopBar({
                 if (transferMenuRef.current?.contains(event.target)) {
                     return;
                 }
-                if (themeMenuRef.current?.contains(event.target)) {
-                    return;
-                }
             }
             setIsTransferMenuOpen(false);
-            setIsThemeMenuOpen(false);
         }
 
         function onKeyDown(event: KeyboardEvent) {
             if (event.key === "Escape") {
                 setIsTransferMenuOpen(false);
-                setIsThemeMenuOpen(false);
             }
         }
 
@@ -105,7 +95,7 @@ export default function TopBar({
             window.removeEventListener("mousedown", onPointerDown);
             window.removeEventListener("keydown", onKeyDown);
         };
-    }, [isThemeMenuOpen, isTransferMenuOpen]);
+    }, [isTransferMenuOpen]);
 
     async function runWindowAction(action: "minimize" | "toggleMaximize" | "close") {
         try {
@@ -136,11 +126,6 @@ export default function TopBar({
         onExportPortable();
     }
 
-    function runThemeAction(nextTheme: Theme) {
-        setTheme(nextTheme);
-        setIsThemeMenuOpen(false);
-    }
-
     function transferMenuItemStyle(disabled = false) {
         return {
             width: "100%",
@@ -152,19 +137,6 @@ export default function TopBar({
             borderRadius: 8,
             cursor: disabled ? "not-allowed" : "pointer",
             fontSize: 12,
-        };
-    }
-
-    function themeMenuItemStyle(active: boolean) {
-        return {
-            ...transferMenuItemStyle(false),
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            background: active ? "rgba(var(--pg-primary-rgb), 0.16)" : "transparent",
-            color: active ? "var(--pg-text)" : "var(--pg-text-dim)",
-            fontWeight: active ? 700 : 600,
         };
     }
 
@@ -285,87 +257,21 @@ export default function TopBar({
                 >
                     {isCollectionRunning ? "Runner • Running" : "Runner"}
                 </button>
-                <div ref={themeMenuRef} style={{ position: "relative" }}>
-                    <button
-                        onClick={() => {
-                            setIsTransferMenuOpen(false);
-                            setIsThemeMenuOpen((open) => !open);
-                        }}
-                        style={buttonStyle(false)}
-                        aria-haspopup="menu"
-                        aria-expanded={isThemeMenuOpen}
-                        title={`Theme: ${themeLabel(theme, systemTheme)}`}
-                    >
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            {themeIcon(theme)}
-                            Theme ▾
-                        </span>
-                    </button>
-                    {isThemeMenuOpen && (
-                        <div
-                            role="menu"
-                            style={{
-                                position: "absolute",
-                                top: "calc(100% + 6px)",
-                                right: 0,
-                                minWidth: 186,
-                                display: "flex",
-                                flexDirection: "column",
-                                gap: 2,
-                                border: "1px solid var(--pg-border)",
-                                borderRadius: 10,
-                                padding: 6,
-                                background: "var(--pg-surface-0)",
-                                boxShadow: "0 8px 24px var(--pg-shadow-color)",
-                                zIndex: 40,
-                            }}
-                        >
-                            <button
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={theme === "light"}
-                                onClick={() => runThemeAction("light")}
-                                style={themeMenuItemStyle(theme === "light")}
-                            >
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                                    <SunThemeIcon />
-                                    Light
-                                </span>
-                                {theme === "light" ? "✓" : ""}
-                            </button>
-                            <button
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={theme === "dark"}
-                                onClick={() => runThemeAction("dark")}
-                                style={themeMenuItemStyle(theme === "dark")}
-                            >
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                                    <MoonThemeIcon />
-                                    Dark
-                                </span>
-                                {theme === "dark" ? "✓" : ""}
-                            </button>
-                            <button
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={theme === "system"}
-                                onClick={() => runThemeAction("system")}
-                                style={themeMenuItemStyle(theme === "system")}
-                            >
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                                    <SystemThemeIcon />
-                                    System ({systemTheme})
-                                </span>
-                                {theme === "system" ? "✓" : ""}
-                            </button>
-                        </div>
-                    )}
-                </div>
+                <button
+                    onClick={() => {
+                        setIsTransferMenuOpen(false);
+                        onOpenSettings();
+                    }}
+                    style={buttonStyle(false)}
+                >
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <SettingsGlyph />
+                        Settings
+                    </span>
+                </button>
                 <div ref={transferMenuRef} style={{ position: "relative" }}>
                     <button
                         onClick={() => {
-                            setIsThemeMenuOpen(false);
                             setIsTransferMenuOpen((open) => !open);
                         }}
                         style={buttonStyle(false)}
@@ -417,7 +323,7 @@ export default function TopBar({
                     onClick={onSaveDraft}
                     disabled={!canSaveDraft}
                     style={primaryButtonStyle(!canSaveDraft)}
-                    title={`Save draft (${saveDraftShortcutLabel})`}
+                    title={`Save draft (${shortcutLabel("saveDraft")})`}
                 >
                     Save draft
                 </button>
@@ -469,51 +375,17 @@ function GlobeGlyph() {
     );
 }
 
-function themeLabel(theme: Theme, systemTheme: "light" | "dark"): string {
-    if (theme === "system") {
-        return `System (${systemTheme})`;
-    }
-    return theme === "dark" ? "Dark" : "Light";
-}
-
-function themeIcon(theme: Theme) {
-    if (theme === "light") return <SunThemeIcon />;
-    if (theme === "dark") return <MoonThemeIcon />;
-    return <SystemThemeIcon />;
-}
-
-function SunThemeIcon() {
+function SettingsGlyph() {
     return (
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="1.8" />
+            <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
             <path
-                d="M12 2.75V5.25M12 18.75V21.25M21.25 12H18.75M5.25 12H2.75M18.55 5.45L16.78 7.22M7.22 16.78L5.45 18.55M18.55 18.55L16.78 16.78M7.22 7.22L5.45 5.45"
+                d="M19.14 12.94C19.18 12.64 19.2 12.32 19.2 12C19.2 11.68 19.18 11.36 19.14 11.06L21.03 9.59C21.2 9.46 21.25 9.22 21.14 9.03L19.34 5.91C19.23 5.72 19 5.64 18.8 5.71L16.58 6.61C16.08 6.23 15.54 5.92 14.94 5.7L14.61 3.34C14.58 3.13 14.39 3 14.18 3H10.58C10.37 3 10.18 3.13 10.15 3.34L9.82 5.7C9.22 5.92 8.68 6.23 8.18 6.61L5.96 5.71C5.76 5.64 5.53 5.72 5.42 5.91L3.62 9.03C3.51 9.22 3.56 9.46 3.73 9.59L5.62 11.06C5.58 11.36 5.56 11.68 5.56 12C5.56 12.32 5.58 12.64 5.62 12.94L3.73 14.41C3.56 14.54 3.51 14.78 3.62 14.97L5.42 18.09C5.53 18.28 5.76 18.36 5.96 18.29L8.18 17.39C8.68 17.77 9.22 18.08 9.82 18.3L10.15 20.66C10.18 20.87 10.37 21 10.58 21H14.18C14.39 21 14.58 20.87 14.61 20.66L14.94 18.3C15.54 18.08 16.08 17.77 16.58 17.39L18.8 18.29C19 18.36 19.23 18.28 19.34 18.09L21.14 14.97C21.25 14.78 21.2 14.54 21.03 14.41L19.14 12.94Z"
                 stroke="currentColor"
                 strokeWidth="1.6"
                 strokeLinecap="round"
-            />
-        </svg>
-    );
-}
-
-function MoonThemeIcon() {
-    return (
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path
-                d="M18.4 14.9C17.35 15.44 16.16 15.75 14.9 15.75C10.74 15.75 7.35 12.36 7.35 8.2C7.35 6.94 7.66 5.75 8.2 4.7C5.23 6.06 3.17 9.06 3.17 12.53C3.17 17.28 7.02 21.13 11.77 21.13C15.24 21.13 18.24 19.07 19.6 16.1C19.2 15.76 18.8 15.34 18.4 14.9Z"
-                stroke="currentColor"
-                strokeWidth="1.8"
                 strokeLinejoin="round"
             />
-        </svg>
-    );
-}
-
-function SystemThemeIcon() {
-    return (
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <rect x="3.5" y="4.5" width="17" height="12" rx="2" stroke="currentColor" strokeWidth="1.7" />
-            <path d="M9 20H15M12 16.5V20" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
         </svg>
     );
 }

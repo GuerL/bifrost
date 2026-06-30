@@ -110,6 +110,114 @@ export type Environment = {
     variables: EnvironmentVariable[];
 };
 
+export type SettingsTabId = "general" | "themes" | "shortcuts" | "proxy" | "about";
+
+export type CustomProxySettings = {
+    http_enabled: boolean;
+    https_enabled: boolean;
+    host: string;
+    port: string;
+    requires_authentication: boolean;
+    username: string;
+    password: string;
+    bypass_list: string;
+};
+
+export type ManualEnvironmentProxySettings = {
+    http_proxy: string;
+    https_proxy: string;
+    all_proxy: string;
+    no_proxy: string;
+};
+
+export type ProxySettings = {
+    use_system_proxy: boolean;
+    respect_environment_variables: boolean;
+    use_custom_proxy: boolean;
+    custom: CustomProxySettings;
+    manual_environment: ManualEnvironmentProxySettings;
+};
+
+export type RequestBehaviorSettings = {
+    request_timeout_ms: number;
+};
+
+export type SecuritySettings = {
+    verify_tls_certificates: boolean;
+};
+
+export type StorageSettings = {
+    enable_autosave: boolean;
+    autosave_interval_ms: number;
+};
+
+export type ApplicationBehaviorSettings = {
+    restore_opened_requests_on_startup: boolean;
+    restore_last_workspace_on_startup: boolean;
+};
+
+export type GeneralSettings = {
+    requests: RequestBehaviorSettings;
+    security: SecuritySettings;
+    storage: StorageSettings;
+    application: ApplicationBehaviorSettings;
+};
+
+export type AppSettings = {
+    general: GeneralSettings;
+    proxy: ProxySettings;
+};
+
+export type ProxyResolutionMode = "custom" | "system" | "environment" | "direct";
+
+export type ProxyResolutionInfo = {
+    mode: ProxyResolutionMode;
+    summary: string;
+    proxy_url: string | null;
+    detail: string | null;
+    diagnostics: string[];
+};
+
+export type ProxyEnvironmentVariableSnapshot = {
+    key: string;
+    value: string | null;
+};
+
+export type MacOsSystemProxyDiagnostics = {
+    supported: boolean;
+    http_enabled: boolean;
+    http_proxy: string | null;
+    http_port: number | null;
+    https_enabled: boolean;
+    https_proxy: string | null;
+    https_port: number | null;
+    socks_enabled: boolean;
+    socks_proxy: string | null;
+    socks_port: number | null;
+    pac_enabled: boolean;
+    pac_url: string | null;
+};
+
+export type ProxyDiagnosticsResolution = {
+    configured_mode: string;
+    detected_source: string;
+    pac_support: string | null;
+    fallback_source: string | null;
+    effective_proxy: string | null;
+    detail: string | null;
+};
+
+export type ProxyDiagnosticsInfo = {
+    target_url: string;
+    process_environment_variables: ProxyEnvironmentVariableSnapshot[];
+    launchctl_environment_variables: ProxyEnvironmentVariableSnapshot[];
+    login_shell_environment_variables: ProxyEnvironmentVariableSnapshot[];
+    macos_system_configuration: MacOsSystemProxyDiagnostics;
+    effective_environment_source: string | null;
+    visibility_warning: string | null;
+    resolution: ProxyDiagnosticsResolution;
+};
+
 export type ImportPostmanResult = {
     collection_id: string;
     collection_name: string;

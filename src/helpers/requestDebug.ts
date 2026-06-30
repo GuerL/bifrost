@@ -1,4 +1,10 @@
-import type { GeneratedHeaderName, KeyValue, Request } from "../types.ts";
+import type {
+    GeneralSettings,
+    GeneratedHeaderName,
+    KeyValue,
+    ProxyResolutionInfo,
+    Request,
+} from "../types.ts";
 import {
     CALCULATED_HEADER_VALUE,
     GENERATED_HEADER_ORDER,
@@ -30,6 +36,10 @@ export type RequestDebugInfo = {
     contentTypeMode: string;
     contentLengthMode: string;
     transport: {
+        proxySummary: string;
+        proxyTarget: string;
+        proxyDetail: string | null;
+        proxyDiagnostics: string[];
         tlsValidation: string;
         customCaCertificate: string;
         clientCertificate: string;
@@ -239,6 +249,8 @@ function describeContentLengthMode(
 export function buildRequestDebugInfo(args: {
     request: Request;
     variableValues?: Map<string, string>;
+    proxyTransport?: ProxyResolutionInfo | null;
+    generalSettings?: GeneralSettings;
 }): RequestDebugInfo {
     const variableValues = args.variableValues ?? new Map<string, string>();
     const resolvedUrl = resolveKnownVariables(args.request.url, variableValues);
@@ -248,6 +260,18 @@ export function buildRequestDebugInfo(args: {
     });
     const generatedEnabled = generatedHeaderControlMap(args.request);
     const requestTls = args.request.tls ?? {};
+    const proxyTransport = args.proxyTransport ?? {
+        mode: "direct" as const,
+        summary: "Direct connection",
+        proxy_url: null,
+        detail: null,
+        diagnostics: [],
+    };
+    const generalSettings = args.generalSettings;
+    const verifyTlsCertificates =
+        generalSettings?.security.verify_tls_certificates ?? true;
+    const requestTimeoutMs =
+        generalSettings?.requests.request_timeout_ms ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
     return {
         method: args.request.method.toUpperCase(),
@@ -260,13 +284,19 @@ export function buildRequestDebugInfo(args: {
         contentTypeMode: describeContentTypeMode(args.request, generatedEnabled),
         contentLengthMode: describeContentLengthMode(args.request, generatedEnabled),
         transport: {
-            tlsValidation: requestTls.allow_invalid_certificates
-                ? "disabled (allow invalid certificates)"
-                : "enabled",
+            proxySummary: proxyTransport.summary,
+            proxyTarget: proxyTransport.proxy_url ?? "<none>",
+            proxyDetail: proxyTransport.detail,
+            proxyDiagnostics: proxyTransport.diagnostics ?? [],
+            tlsValidation: !verifyTlsCertificates
+                ? "disabled (general setting)"
+                : requestTls.allow_invalid_certificates
+                  ? "disabled (allow invalid certificates)"
+                  : "enabled",
             customCaCertificate: requestTls.ca_certificate_path?.trim() || "<none>",
             clientCertificate: requestTls.client_certificate_path?.trim() || "<none>",
             redirects: "follow (HTTP client default)",
-            timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+            timeoutMs: requestTimeoutMs,
         },
     };
 }
@@ -307,6 +337,14 @@ export function buildRequestDebugText(info: RequestDebugInfo): string {
     lines.push(info.bodyPreview || "<none>");
     lines.push("");
     lines.push("Transport:");
+    lines.push(`Proxy: ${info.transport.proxySummary}`);
+    lines.push(`Proxy target: ${info.transport.proxyTarget}`);
+    if (info.transport.proxyDetail) {
+        lines.push(`Proxy detail: ${info.transport.proxyDetail}`);
+    }
+    for (const diagnostic of info.transport.proxyDiagnostics) {
+        lines.push(diagnostic);
+    }
     lines.push(`TLS validation: ${info.transport.tlsValidation}`);
     lines.push(`Custom CA certificate: ${info.transport.customCaCertificate}`);
     lines.push(`Client certificate: ${info.transport.clientCertificate}`);

@@ -104,6 +104,13 @@ describe("buildRequestDebugText", () => {
                 headers: [{ key: "Content-Type", value: "application/json", enabled: true }],
                 body: { type: "json", value: { hello: "world" } },
             }),
+            proxyTransport: {
+                mode: "custom",
+                summary: "Using custom proxy",
+                proxy_url: "proxy.company.com:8080",
+                detail: null,
+                diagnostics: ["Configured source: custom proxy"],
+            },
         });
         const text = buildRequestDebugText(info);
 
@@ -114,6 +121,9 @@ describe("buildRequestDebugText", () => {
         expect(text).toContain("Disabled headers:");
         expect(text).toContain("Host");
         expect(text).toContain("Transport:");
+        expect(text).toContain("Proxy: Using custom proxy");
+        expect(text).toContain("Proxy target: proxy.company.com:8080");
+        expect(text).toContain("Configured source: custom proxy");
         expect(text).toContain("TLS validation: enabled");
     });
 });

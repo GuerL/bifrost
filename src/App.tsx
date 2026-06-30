@@ -33,6 +33,7 @@ import CollectionsModal from "./components/CollectionsModal.tsx";
 import EnvironmentsModal from "./components/EnvironmentsModal.tsx";
 import ConfirmationModal from "./components/ConfirmationModal.tsx";
 import NoCollectionsModal from "./components/NoCollectionsModal.tsx";
+import SettingsModal from "./components/SettingsModal.tsx";
 import ResponsePanel, { type ResponseTabId } from "./components/ResponsePanel.tsx";
 import CollectionRunnerModal from "./components/CollectionRunnerModal.tsx";
 import { useMonacoVariableSupport } from "./hooks/useMonacoVariableSupport.ts";
@@ -116,6 +117,7 @@ import type {
     RunnerRun,
 } from "./runner/types.ts";
 import type {
+    AppSettings,
     CollectionLoaded,
     CollectionMeta,
     Environment,
@@ -124,6 +126,8 @@ import type {
     ImportPostmanResult,
     ImportPortableResult,
     KeyValue,
+    ProxyDiagnosticsInfo,
+    ProxyResolutionInfo,
     RequestAuth,
     Request,
     RequestScripts,
@@ -141,6 +145,17 @@ import {
     notifySuccess,
 } from "./helpers/Toast.tsx";
 import { useTheme } from "./helpers/Theme.tsx";
+import {
+    DEFAULT_APP_SETTINGS,
+    getProxyDiagnostics,
+    loadAppSettings,
+    resolveProxyTransport,
+    saveAppSettings,
+} from "./helpers/AppSettings.ts";
+import {
+    matchesShortcut,
+    shortcutLabel,
+} from "./helpers/ShortcutRegistry.ts";
 import OpenApiImportDialog from "./features/openapi-import/OpenApiImportDialog.tsx";
 import { parseOpenApiSpec } from "./features/openapi-import/openApiParser.ts";
 import { mapOpenApiToBifrost } from "./features/openapi-import/openApiToBifrost.ts";
@@ -317,20 +332,6 @@ const SIDEBAR_MAX_WIDTH_PX = 420;
 const SIDEBAR_COLLAPSED_WIDTH_PX = 56;
 const SIDEBAR_COLLAPSE_TRIGGER_WIDTH_PX = SIDEBAR_MIN_WIDTH_PX - 8;
 const SIDEBAR_EXPAND_TRIGGER_WIDTH_PX = SIDEBAR_MIN_WIDTH_PX + 2;
-const IS_MACOS =
-    typeof navigator !== "undefined" &&
-    /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent);
-const PRIMARY_SHORTCUT_MODIFIER = IS_MACOS ? "CMD" : "CTRL";
-const SHORTCUT_LABELS = {
-    saveDraft: `${PRIMARY_SHORTCUT_MODIFIER} + S`,
-    newRequest: `${PRIMARY_SHORTCUT_MODIFIER} + T`,
-    duplicateRequest: `${PRIMARY_SHORTCUT_MODIFIER} + D`,
-    copyRequest: `${PRIMARY_SHORTCUT_MODIFIER} + C`,
-    copyAsCurl: `${PRIMARY_SHORTCUT_MODIFIER} + SHIFT + C`,
-    closeTab: `${PRIMARY_SHORTCUT_MODIFIER} + W`,
-    renameRequest: `${PRIMARY_SHORTCUT_MODIFIER} + E`,
-    deleteRequest: IS_MACOS ? "CMD + Backspace" : "CTRL + Delete",
-} as const;
 const DYNAMIC_VARIABLE_NAMES = [
     "$timestamp",
     "$timestampSeconds",
@@ -510,6 +511,111 @@ function httpErrorKindLabel(kind: string): string {
 
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+function formatDiagnosticsScalarValue(
+    value: string | number | null | undefined,
+    fallback: string
+): string {
+    if (value === null || value === undefined) return fallback;
+    return typeof value === "number" ? String(value) : value;
+}
+
+function formatProxyEnvironmentSnapshotSection(
+    title: string,
+    entries: ProxyDiagnosticsInfo["process_environment_variables"]
+): string[] {
+    const lines: string[] = [title, ""];
+    const envLabelWidth = entries.reduce(
+        (max, entry) => Math.max(max, entry.key.length),
+        0
+    );
+    const envWidth = Math.max(envLabelWidth, "HTTPS_PROXY".length);
+
+    for (const entry of entries) {
+        lines.push(
+            `${entry.key.padEnd(envWidth)}: ${formatDiagnosticsScalarValue(entry.value, "<not set>")}`
+        );
+    }
+
+    return lines;
+}
+
+function formatProxyDiagnosticsText(info: ProxyDiagnosticsInfo): string {
+    const lines: string[] = [];
+    lines.push(
+        ...formatProxyEnvironmentSnapshotSection(
+            "Environment Variables",
+            info.process_environment_variables
+        )
+    );
+    lines.push("");
+    lines.push(
+        ...formatProxyEnvironmentSnapshotSection(
+            "launchctl Environment",
+            info.launchctl_environment_variables
+        )
+    );
+    lines.push("");
+    lines.push(
+        ...formatProxyEnvironmentSnapshotSection(
+            "Login Shell Environment",
+            info.login_shell_environment_variables
+        )
+    );
+
+    const macos = info.macos_system_configuration;
+    lines.push("");
+    lines.push("macOS System Configuration");
+    lines.push("");
+    if (!macos.supported) {
+        lines.push("Unavailable on this platform");
+    } else {
+        const rows: Array<[string, string]> = [
+            ["HTTP Enabled", macos.http_enabled ? "true" : "false"],
+            ["HTTP Proxy", formatDiagnosticsScalarValue(macos.http_proxy, "<none>")],
+            ["HTTP Port", formatDiagnosticsScalarValue(macos.http_port, "<none>")],
+            ["HTTPS Enabled", macos.https_enabled ? "true" : "false"],
+            ["HTTPS Proxy", formatDiagnosticsScalarValue(macos.https_proxy, "<none>")],
+            ["HTTPS Port", formatDiagnosticsScalarValue(macos.https_port, "<none>")],
+            ["SOCKS Enabled", macos.socks_enabled ? "true" : "false"],
+            ["SOCKS Proxy", formatDiagnosticsScalarValue(macos.socks_proxy, "<none>")],
+            ["SOCKS Port", formatDiagnosticsScalarValue(macos.socks_port, "<none>")],
+            ["PAC Enabled", macos.pac_enabled ? "true" : "false"],
+            ["PAC URL", formatDiagnosticsScalarValue(macos.pac_url, "<none>")],
+        ];
+        const macWidth = rows.reduce((max, [label]) => Math.max(max, label.length), 0);
+        for (const [label, value] of rows) {
+            lines.push(`${label.padEnd(macWidth)}: ${value}`);
+        }
+    }
+
+    lines.push("");
+    lines.push("Bifrost Resolution");
+    lines.push("");
+    lines.push(`Configured mode: ${info.resolution.configured_mode}`);
+    lines.push(`Detected source: ${info.resolution.detected_source}`);
+    if (info.resolution.pac_support) {
+        lines.push(`PAC support: ${info.resolution.pac_support}`);
+    }
+    if (info.resolution.fallback_source) {
+        lines.push(`Fallback source: ${info.resolution.fallback_source}`);
+    }
+    if (info.effective_environment_source) {
+        lines.push(`Environment source: ${info.effective_environment_source}`);
+    }
+    lines.push(
+        `Effective proxy: ${formatDiagnosticsScalarValue(info.resolution.effective_proxy, "none")}`
+    );
+    if (info.resolution.detail) {
+        lines.push(`Detail: ${info.resolution.detail}`);
+    }
+    if (info.visibility_warning) {
+        lines.push(`Warning: ${info.visibility_warning}`);
+    }
+    lines.push(`Target URL: ${info.target_url}`);
+
+    return lines.join("\n");
 }
 
 function explainNoSupportedOpenApiOperations(plan: OpenApiImportPlan): string {
@@ -902,7 +1008,7 @@ function resolveSingleDialogPath(value: unknown): string | null {
 }
 
 export default function App() {
-    const { resolvedTheme } = useTheme();
+    const { resolvedTheme, theme, systemTheme, setTheme } = useTheme();
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
     const [activeEnvironmentId, setActiveEnvironmentId] = useState<string | null>(null);
@@ -985,6 +1091,17 @@ export default function App() {
     const [collectionBusy, setCollectionBusy] = useState(false);
     const [collectionError, setCollectionError] = useState("");
     const [noCollectionsModalOpen, setNoCollectionsModalOpen] = useState(false);
+    const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+    const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
+    const [appSettingsLoaded, setAppSettingsLoaded] = useState(false);
+    const [appSettingsSaveState, setAppSettingsSaveState] = useState<"idle" | "saving" | "saved" | "error">(
+        "idle"
+    );
+    const [appSettingsSaveError, setAppSettingsSaveError] = useState("");
+    const [proxyResolutionInfo, setProxyResolutionInfo] = useState<ProxyResolutionInfo | null>(null);
+    const [proxyResolutionError, setProxyResolutionError] = useState("");
+    const [proxyDiagnosticsInfo, setProxyDiagnosticsInfo] = useState<ProxyDiagnosticsInfo | null>(null);
+    const [proxyDiagnosticsError, setProxyDiagnosticsError] = useState("");
     const [runnerModalOpen, setRunnerModalOpen] = useState(false);
     const [runnerSelectedRequestIds, setRunnerSelectedRequestIds] = useState<string[]>([]);
     const [updateDownloadModal, setUpdateDownloadModal] = useState<UpdateDownloadModal | null>(null);
@@ -1017,6 +1134,8 @@ export default function App() {
     const [deleteEnvironmentModal, setDeleteEnvironmentModal] = useState<DeleteEnvironmentModal | null>(null);
     const [closeDraftModal, setCloseDraftModal] = useState<CloseDraftModal | null>(null);
     const [closeDraftBusy, setCloseDraftBusy] = useState(false);
+    const appSettingsSavePendingRef = useRef<AppSettings | null>(null);
+    const appSettingsSavePromiseRef = useRef<Promise<void> | null>(null);
     const postmanImportInputRef = useRef<HTMLInputElement | null>(null);
     const portableImportInputRef = useRef<HTMLInputElement | null>(null);
     const openApiImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -1037,6 +1156,7 @@ export default function App() {
     const pendingCollapsedFoldersHydrationStateRef = useRef<Record<string, boolean> | null>(null);
     const hydratedRunnerCollectionIdRef = useRef<string | null>(null);
     const hydratedRunnerSelectionCollectionIdRef = useRef<string | null>(null);
+    const startupHydrationCompletedRef = useRef(false);
     const noCollectionsModalShownRef = useRef(false);
     const pgToBfMigrationCheckStartedRef = useRef(false);
     const runnerSelectedRequestsStateRef = useRef<RunnerSelectedRequestsState>(
@@ -1066,6 +1186,86 @@ export default function App() {
         requestResponseSplitRef.current = node;
         setRequestResponseSplitElement(node);
     }, []);
+
+    const flushAppSettingsSave = useCallback(async () => {
+        const pendingSave = appSettingsSavePromiseRef.current;
+        if (pendingSave) {
+            await pendingSave;
+        }
+    }, []);
+
+    const queueAppSettingsSave = useCallback((nextSettings: AppSettings) => {
+        appSettingsSavePendingRef.current = nextSettings;
+
+        if (appSettingsSavePromiseRef.current) {
+            setAppSettingsSaveState("saving");
+            setAppSettingsSaveError("");
+            return appSettingsSavePromiseRef.current;
+        }
+
+        setAppSettingsSaveState("saving");
+        setAppSettingsSaveError("");
+
+        const saveLoop = (async () => {
+            while (appSettingsSavePendingRef.current) {
+                const settingsToSave = appSettingsSavePendingRef.current;
+                appSettingsSavePendingRef.current = null;
+                await saveAppSettings(settingsToSave);
+            }
+        })();
+
+        appSettingsSavePromiseRef.current = saveLoop
+            .then(() => {
+                setAppSettingsSaveState("saved");
+                setAppSettingsSaveError("");
+            })
+            .catch((error) => {
+                const message = errorMessage(error);
+                setAppSettingsSaveState("error");
+                setAppSettingsSaveError(message);
+                throw error;
+            })
+            .finally(() => {
+                appSettingsSavePromiseRef.current = null;
+                if (appSettingsSavePendingRef.current) {
+                    void queueAppSettingsSave(appSettingsSavePendingRef.current);
+                }
+            });
+
+        return appSettingsSavePromiseRef.current;
+    }, []);
+
+    const updateProxySettings = useCallback(
+        (nextProxySettings: AppSettings["proxy"]) => {
+            setAppSettings((previous) => {
+                const nextSettings = {
+                    ...previous,
+                    proxy: nextProxySettings,
+                };
+                if (appSettingsLoaded) {
+                    void queueAppSettingsSave(nextSettings);
+                }
+                return nextSettings;
+            });
+        },
+        [appSettingsLoaded, queueAppSettingsSave]
+    );
+
+    const updateGeneralSettings = useCallback(
+        (nextGeneralSettings: AppSettings["general"]) => {
+            setAppSettings((previous) => {
+                const nextSettings = {
+                    ...previous,
+                    general: nextGeneralSettings,
+                };
+                if (appSettingsLoaded) {
+                    void queueAppSettingsSave(nextSettings);
+                }
+                return nextSettings;
+            });
+        },
+        [appSettingsLoaded, queueAppSettingsSave]
+    );
 
     const resolveSidebarMaxWidthPx = useCallback(() => {
         if (typeof window === "undefined") return SIDEBAR_MAX_WIDTH_PX;
@@ -1333,7 +1533,10 @@ export default function App() {
         hydratedRunnerSelectionCollectionIdRef.current = null;
     }
 
-    async function reloadCollectionsAndRestoreActive(preferredCollectionId?: string | null) {
+    async function reloadCollectionsAndRestoreActive(
+        preferredCollectionId?: string | null,
+        options?: { restoreLastWorkspace?: boolean }
+    ) {
         flushCurrentCollapsedFoldersState();
         try {
             const list = await invoke<CollectionMeta[]>("list_collections");
@@ -1342,7 +1545,9 @@ export default function App() {
             let activeCollectionId =
                 preferredCollectionId !== undefined
                     ? preferredCollectionId
-                    : await invoke<string | null>("get_active_collection");
+                    : options?.restoreLastWorkspace === false
+                      ? null
+                      : await invoke<string | null>("get_active_collection");
 
             if (activeCollectionId && !list.some((c) => c.id === activeCollectionId)) {
                 await invoke("set_active_collection", { collectionId: null });
@@ -1819,18 +2024,163 @@ export default function App() {
         });
     }, [draft, runtimeVariableValues]);
 
+    useEffect(() => {
+        let cancelled = false;
+
+        (async () => {
+            try {
+                const loadedSettings = await loadAppSettings();
+                if (cancelled) return;
+                setAppSettings(loadedSettings);
+                setAppSettingsLoaded(true);
+                setAppSettingsSaveState("idle");
+                setAppSettingsSaveError("");
+            } catch (error) {
+                if (cancelled) return;
+                const message = errorMessage(error);
+                setAppSettingsLoaded(true);
+                setAppSettingsSaveState("error");
+                setAppSettingsSaveError(message);
+                notifyError(`Failed to load settings: ${message}`);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
     const requestDebugInfo = useMemo(() => {
         if (!draft) return null;
         return buildRequestDebugInfo({
             request: draft,
             variableValues: runtimeVariableValues,
+            proxyTransport: proxyResolutionInfo,
+            generalSettings: appSettings.general,
         });
-    }, [draft, runtimeVariableValues]);
+    }, [appSettings.general, draft, runtimeVariableValues, proxyResolutionInfo]);
 
     const requestDebugText = useMemo(() => {
         if (!requestDebugInfo) return "";
         return buildRequestDebugText(requestDebugInfo);
     }, [requestDebugInfo]);
+
+    const proxyDiagnosticsText = useMemo(() => {
+        if (proxyDiagnosticsInfo) {
+            return formatProxyDiagnosticsText(proxyDiagnosticsInfo);
+        }
+        if (proxyDiagnosticsError) {
+            return `Proxy diagnostics unavailable\n\n${proxyDiagnosticsError}`;
+        }
+        return "Proxy diagnostics require a valid resolved URL.";
+    }, [proxyDiagnosticsError, proxyDiagnosticsInfo]);
+
+    useEffect(() => {
+        if (!draft) {
+            setProxyResolutionInfo(null);
+            setProxyResolutionError("");
+            return;
+        }
+
+        const preview = buildRequestDebugInfo({
+            request: draft,
+            variableValues: runtimeVariableValues,
+            generalSettings: appSettings.general,
+        });
+
+        if (preview.unresolvedVariables.length > 0) {
+            setProxyResolutionInfo(null);
+            setProxyResolutionError("");
+            return;
+        }
+
+        try {
+            new URL(preview.resolvedUrl);
+        } catch {
+            setProxyResolutionInfo(null);
+            setProxyResolutionError("");
+            return;
+        }
+
+        let cancelled = false;
+
+        (async () => {
+            try {
+                const resolvedProxy = await resolveProxyTransport(
+                    preview.resolvedUrl,
+                    appSettings.proxy
+                );
+                if (cancelled) return;
+                setProxyResolutionInfo(resolvedProxy);
+                setProxyResolutionError("");
+            } catch (error) {
+                if (cancelled) return;
+                const message = errorMessage(error);
+                setProxyResolutionInfo({
+                    mode: "direct",
+                    summary: "Direct connection",
+                    proxy_url: null,
+                    detail: message,
+                    diagnostics: [],
+                });
+                setProxyResolutionError(message);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [draft, runtimeVariableValues, appSettings.general, appSettings.proxy]);
+
+    useEffect(() => {
+        if (tab !== "debug" || !draft) {
+            setProxyDiagnosticsInfo(null);
+            setProxyDiagnosticsError("");
+            return;
+        }
+
+        const preview = buildRequestDebugInfo({
+            request: draft,
+            variableValues: runtimeVariableValues,
+            generalSettings: appSettings.general,
+        });
+
+        if (preview.unresolvedVariables.length > 0) {
+            setProxyDiagnosticsInfo(null);
+            setProxyDiagnosticsError("");
+            return;
+        }
+
+        try {
+            new URL(preview.resolvedUrl);
+        } catch {
+            setProxyDiagnosticsInfo(null);
+            setProxyDiagnosticsError("");
+            return;
+        }
+
+        let cancelled = false;
+
+        (async () => {
+            try {
+                const diagnostics = await getProxyDiagnostics(
+                    preview.resolvedUrl,
+                    appSettings.proxy
+                );
+                if (cancelled) return;
+                setProxyDiagnosticsInfo(diagnostics);
+                setProxyDiagnosticsError("");
+            } catch (error) {
+                if (cancelled) return;
+                setProxyDiagnosticsInfo(null);
+                setProxyDiagnosticsError(errorMessage(error));
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [tab, draft, runtimeVariableValues, appSettings.general, appSettings.proxy]);
 
     const {
         beforeMountMonaco,
@@ -2029,11 +2379,18 @@ export default function App() {
     }
 
     useEffect(() => {
+        if (!appSettingsLoaded) return;
+        if (startupHydrationCompletedRef.current) return;
+
         let cancelled = false;
 
         (async () => {
-            await reloadCollectionsAndRestoreActive();
+            await reloadCollectionsAndRestoreActive(undefined, {
+                restoreLastWorkspace:
+                    appSettings.general.application.restore_last_workspace_on_startup,
+            });
             await reloadEnvironments();
+            startupHydrationCompletedRef.current = true;
             if (!cancelled) {
                 await maybePromptPgToBfMigration({ source: "startup" });
             }
@@ -2042,7 +2399,10 @@ export default function App() {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [
+        appSettings.general.application.restore_last_workspace_on_startup,
+        appSettingsLoaded,
+    ]);
 
     useEffect(() => {
         if (!import.meta.env.DEV) return;
@@ -2092,16 +2452,22 @@ export default function App() {
 
     useEffect(() => {
         if (!current) return;
+        if (!appSettings.general.storage.enable_autosave) return;
 
         const timeout = setTimeout(() => {
             void invoke("save_drafts", {
                 collectionId: current.meta.id,
                 drafts: draftsById,
             });
-        }, 300);
+        }, appSettings.general.storage.autosave_interval_ms);
 
         return () => clearTimeout(timeout);
-    }, [draftsById, current?.meta.id]);
+    }, [
+        appSettings.general.storage.autosave_interval_ms,
+        appSettings.general.storage.enable_autosave,
+        draftsById,
+        current?.meta.id,
+    ]);
 
     useEffect(() => {
         if (!current) {
@@ -2196,29 +2562,40 @@ export default function App() {
         }
 
         const validIds = new Set(current.requests.map((request) => request.id));
-        const persistedState = readPersistedTabsState();
-        const persistedEntry = sanitizePersistedTabsEntry(persistedState[current.meta.id]);
-        const restoredIds = persistedEntry.openRequestIds.filter((requestId) =>
-            validIds.has(requestId)
-        );
+        const shouldRestoreTabs =
+            startupHydrationCompletedRef.current ||
+            appSettings.general.application.restore_opened_requests_on_startup;
 
-        setOpenRequestIds((previous) =>
-            restoredIds.length > 0
-                ? restoredIds
-                : previous.filter((requestId) => validIds.has(requestId))
-        );
+        if (shouldRestoreTabs) {
+            const persistedState = readPersistedTabsState();
+            const persistedEntry = sanitizePersistedTabsEntry(persistedState[current.meta.id]);
+            const restoredIds = persistedEntry.openRequestIds.filter((requestId) =>
+                validIds.has(requestId)
+            );
 
-        if (persistedEntry.activeRequestId && validIds.has(persistedEntry.activeRequestId)) {
-            setSelectedRequestId(persistedEntry.activeRequestId);
-        } else if (
-            restoredIds.length > 0 &&
-            (!selectedRequestId || !validIds.has(selectedRequestId))
-        ) {
-            setSelectedRequestId(restoredIds[0]);
+            setOpenRequestIds((previous) =>
+                restoredIds.length > 0
+                    ? restoredIds
+                    : previous.filter((requestId) => validIds.has(requestId))
+            );
+
+            if (persistedEntry.activeRequestId && validIds.has(persistedEntry.activeRequestId)) {
+                setSelectedRequestId(persistedEntry.activeRequestId);
+            } else if (
+                restoredIds.length > 0 &&
+                (!selectedRequestId || !validIds.has(selectedRequestId))
+            ) {
+                setSelectedRequestId(restoredIds[0]);
+            }
+        } else {
+            setOpenRequestIds([]);
+            if (!selectedRequestId || !validIds.has(selectedRequestId)) {
+                setSelectedRequestId(null);
+            }
         }
 
         hydratedTabsCollectionIdRef.current = current.meta.id;
-    }, [current?.meta.id]);
+    }, [current?.meta.id, appSettings.general.application.restore_opened_requests_on_startup]);
 
     useEffect(() => {
         if (!current) return;
@@ -2506,6 +2883,7 @@ export default function App() {
                 setCollectionError("");
                 setDeleteCollectionModal(null);
             }
+            setSettingsModalOpen(false);
             setRunnerModalOpen(false);
             if (!closeDraftBusy) {
                 setCloseDraftModal(null);
@@ -2725,6 +3103,24 @@ export default function App() {
         closeRequestTab(requestId);
     }
 
+    const cycleOpenTabs = useCallback(
+        (direction: "next" | "previous") => {
+            if (!selectedRequestId || openRequestIds.length < 2) return;
+
+            const currentIndex = openRequestIds.indexOf(selectedRequestId);
+            if (currentIndex === -1) return;
+
+            const delta = direction === "next" ? 1 : -1;
+            const nextIndex =
+                (currentIndex + delta + openRequestIds.length) % openRequestIds.length;
+            const nextRequestId = openRequestIds[nextIndex] ?? null;
+            if (nextRequestId) {
+                setSelectedRequestId(nextRequestId);
+            }
+        },
+        [openRequestIds, selectedRequestId]
+    );
+
     async function confirmCloseWithSave() {
         if (!closeDraftModal || closeDraftBusy) return;
         setCloseDraftBusy(true);
@@ -2753,12 +3149,9 @@ export default function App() {
 
     useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
-            const isCommand = e.ctrlKey || e.metaKey;
-            if (!isCommand || e.altKey) return;
+            if (settingsModalOpen) return;
 
-            const key = e.key.toLowerCase();
-
-            if (key === "s") {
+            if (matchesShortcut(e, "saveDraft")) {
                 e.preventDefault();
                 if (isDirty) {
                     void saveDraft();
@@ -2766,14 +3159,14 @@ export default function App() {
                 return;
             }
 
-            if (key === "enter") {
+            if (matchesShortcut(e, "sendRequest")) {
                 if (!selectedRequestId || collectionRunPending) return;
                 e.preventDefault();
                 triggerSendFromUi();
                 return;
             }
 
-            if (key === "t") {
+            if (matchesShortcut(e, "newRequest")) {
                 if (collectionRunPending) return;
                 e.preventDefault();
                 setContextMenu(null);
@@ -2782,7 +3175,7 @@ export default function App() {
                 return;
             }
 
-            if (key === "d") {
+            if (matchesShortcut(e, "duplicateRequest")) {
                 if (!current || !selectedRequestId) return;
                 if (!openRequestIds.includes(selectedRequestId)) return;
                 e.preventDefault();
@@ -2792,22 +3185,29 @@ export default function App() {
                 return;
             }
 
-            if (key === "c") {
+            if (matchesShortcut(e, "copyRequest")) {
                 if (!selectedRequestId || collectionRunPending) return;
                 if (isEditableKeyboardTarget(e.target)) return;
                 if (window.getSelection()?.toString().trim()) return;
                 e.preventDefault();
                 setContextMenu(null);
                 setRootAddMenu(null);
-                if (e.shiftKey) {
-                    void onCopyAsCurl(selectedRequestId);
-                    return;
-                }
                 void onCopyRequest(selectedRequestId);
                 return;
             }
 
-            if (key === "w") {
+            if (matchesShortcut(e, "copyAsCurl")) {
+                if (!selectedRequestId || collectionRunPending) return;
+                if (isEditableKeyboardTarget(e.target)) return;
+                if (window.getSelection()?.toString().trim()) return;
+                e.preventDefault();
+                setContextMenu(null);
+                setRootAddMenu(null);
+                void onCopyAsCurl(selectedRequestId);
+                return;
+            }
+
+            if (matchesShortcut(e, "closeTab")) {
                 if (!selectedRequestId) return;
                 if (!openRequestIds.includes(selectedRequestId)) return;
                 e.preventDefault();
@@ -2817,7 +3217,21 @@ export default function App() {
                 return;
             }
 
-            if (key === "e") {
+            if (matchesShortcut(e, "nextTab")) {
+                if (!selectedRequestId) return;
+                e.preventDefault();
+                cycleOpenTabs("next");
+                return;
+            }
+
+            if (matchesShortcut(e, "previousTab")) {
+                if (!selectedRequestId) return;
+                e.preventDefault();
+                cycleOpenTabs("previous");
+                return;
+            }
+
+            if (matchesShortcut(e, "renameRequest")) {
                 if (!current || !selectedRequestId) return;
                 e.preventDefault();
                 const row = sidebarRows.find(
@@ -2839,7 +3253,7 @@ export default function App() {
                 return;
             }
 
-            if (key === "backspace" || key === "delete") {
+            if (matchesShortcut(e, "deleteRequest")) {
                 if (!selectedRequestId || collectionRunPending) return;
                 if (isEditableKeyboardTarget(e.target)) return;
                 e.preventDefault();
@@ -2859,7 +3273,8 @@ export default function App() {
         openRequestIds,
         collectionRunPending,
         sidebarRows,
-        sendSelected,
+        settingsModalOpen,
+        cycleOpenTabs,
         onCopyRequest,
         onCopyAsCurl,
     ]);
@@ -2969,6 +3384,13 @@ export default function App() {
         const req = resolveRequestForExecution(selectedRequestId);
 
         if (!req) return;
+
+        try {
+            await flushAppSettingsSave();
+        } catch (error) {
+            notifyError(`Failed to persist settings before sending: ${errorMessage(error)}`);
+            return;
+        }
 
         setResp(null);
         setPending(true);
@@ -3227,6 +3649,13 @@ export default function App() {
 
     async function runCollection(requestIdsToRun?: string[]) {
         if (!current || collectionRunPending) return;
+
+        try {
+            await flushAppSettingsSave();
+        } catch (error) {
+            notifyError(`Failed to persist settings before running: ${errorMessage(error)}`);
+            return;
+        }
 
         const ordered = requestsInTreeOrder(current);
         if (ordered.length === 0) {
@@ -5329,6 +5758,7 @@ export default function App() {
                 onSaveDraft={saveDraft}
                 onOpenRawJson={() => setTab("json")}
                 onOpenCollectionRunner={() => setRunnerModalOpen(true)}
+                onOpenSettings={() => setSettingsModalOpen(true)}
                 onOpenImport={openImportCollectionModal}
                 onExportPortable={() => void onExportPortableCollection()}
                 canSaveDraft={!!current && !!draft && isDirty}
@@ -5336,6 +5766,20 @@ export default function App() {
                 canOpenCollectionRunner={!!current}
                 canExportCollection={!!current}
                 isCollectionRunning={collectionRunPending}
+            />
+            <SettingsModal
+                open={settingsModalOpen}
+                theme={theme}
+                systemTheme={systemTheme}
+                appSettings={appSettings}
+                saveState={appSettingsSaveState}
+                saveError={appSettingsSaveError}
+                proxyPreview={proxyResolutionInfo}
+                proxyPreviewError={proxyResolutionError}
+                onThemeChange={setTheme}
+                onGeneralSettingsChange={updateGeneralSettings}
+                onProxySettingsChange={updateProxySettings}
+                onClose={() => setSettingsModalOpen(false)}
             />
             <ImportCollectionModal
                 open={importCollectionModalOpen}
@@ -5917,7 +6361,7 @@ export default function App() {
                                                 requestCloseTab(openTab.requestId)
                                             }
                                             style={draftTabCloseButtonStyle()}
-                                            title={`Close tab (${SHORTCUT_LABELS.closeTab})`}
+                                            title={`Close tab (${shortcutLabel("closeTab")})`}
                                         >
                                             ×
                                         </button>
@@ -6701,14 +7145,60 @@ export default function App() {
                                             }}
                                         >
                                             {[
+                                                `Proxy: ${requestDebugInfo.transport.proxySummary}`,
+                                                `Proxy target: ${requestDebugInfo.transport.proxyTarget}`,
+                                                requestDebugInfo.transport.proxyDetail
+                                                    ? `Proxy detail: ${requestDebugInfo.transport.proxyDetail}`
+                                                    : null,
+                                                ...requestDebugInfo.transport.proxyDiagnostics,
                                                 `TLS validation: ${requestDebugInfo.transport.tlsValidation}`,
                                                 `Custom CA certificate: ${requestDebugInfo.transport.customCaCertificate}`,
                                                 `Client certificate: ${requestDebugInfo.transport.clientCertificate}`,
                                                 `Redirects: ${requestDebugInfo.transport.redirects}`,
                                                 `Timeout: ${requestDebugInfo.transport.timeoutMs}ms`,
-                                            ].join("\n")}
+                                            ]
+                                                .filter((entry): entry is string => !!entry)
+                                                .join("\n")}
                                         </pre>
                                     </div>
+                                    <details
+                                        open
+                                        style={{
+                                            border: "1px solid var(--pg-border-soft)",
+                                            borderRadius: 8,
+                                            background: "var(--pg-surface-alt)",
+                                            padding: 8,
+                                        }}
+                                    >
+                                        <summary
+                                            style={{
+                                                cursor: "pointer",
+                                                fontSize: 12,
+                                                fontWeight: 600,
+                                                color: "var(--pg-text)",
+                                                userSelect: "none",
+                                            }}
+                                        >
+                                            === Proxy Diagnostics ===
+                                        </summary>
+                                        <pre
+                                            style={{
+                                                margin: "8px 0 0",
+                                                padding: 8,
+                                                border: "1px solid var(--pg-border-soft)",
+                                                borderRadius: 6,
+                                                background: "var(--pg-surface)",
+                                                color: "var(--pg-text)",
+                                                fontSize: 12,
+                                                whiteSpace: "pre-wrap",
+                                                overflowX: "auto",
+                                                maxWidth: "100%",
+                                                overflowWrap: "anywhere",
+                                            }}
+                                        >
+                                            {proxyDiagnosticsText}
+                                        </pre>
+                                    </details>
                                     </div>
                                 </div>
                             )}
@@ -6915,7 +7405,7 @@ export default function App() {
                                 setRootAddMenu(null);
                                 onNewRequest(null);
                             }}
-                            title={`Add request (${SHORTCUT_LABELS.newRequest})`}
+                            title={`Add request (${shortcutLabel("newRequest")})`}
                         >
                             <span
                                 style={{
@@ -6942,7 +7432,7 @@ export default function App() {
                                 <span
                                     style={sidebarAddMenuShortcutStyle()}
                                 >
-                                    {SHORTCUT_LABELS.newRequest}
+                                    {shortcutLabel("newRequest")}
                                 </span>
                             </span>
                         </button>
@@ -7026,7 +7516,7 @@ export default function App() {
                             onClick={() => openRenameModal(contextMenu.row)}
                             title={
                                 contextMenu.row.kind === "request"
-                                    ? `Rename (${SHORTCUT_LABELS.renameRequest})`
+                                    ? `Rename (${shortcutLabel("renameRequest")})`
                                     : "Rename"
                             }
                         >
@@ -7048,7 +7538,7 @@ export default function App() {
                                             fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
                                         }}
                                     >
-                                        {SHORTCUT_LABELS.renameRequest}
+                                        {shortcutLabel("renameRequest")}
                                     </span>
                                 )}
                             </span>
@@ -7062,7 +7552,7 @@ export default function App() {
                                     setContextMenu(null);
                                     void onDuplicateRequest(row.requestId, row.parentFolderId);
                                 }}
-                                title={`Duplicate (${SHORTCUT_LABELS.duplicateRequest})`}
+                                title={`Duplicate (${shortcutLabel("duplicateRequest")})`}
                             >
                                 <span
                                     style={{
@@ -7081,7 +7571,7 @@ export default function App() {
                                             fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
                                         }}
                                     >
-                                        {SHORTCUT_LABELS.duplicateRequest}
+                                        {shortcutLabel("duplicateRequest")}
                                     </span>
                                 </span>
                             </button>
@@ -7095,7 +7585,7 @@ export default function App() {
                                     setContextMenu(null);
                                     void onCopyRequest(row.requestId);
                                 }}
-                                title={`Copy request (${SHORTCUT_LABELS.copyRequest})`}
+                                title={`Copy request (${shortcutLabel("copyRequest")})`}
                             >
                                 <span
                                     style={{
@@ -7114,7 +7604,7 @@ export default function App() {
                                             fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
                                         }}
                                     >
-                                        {SHORTCUT_LABELS.copyRequest}
+                                        {shortcutLabel("copyRequest")}
                                     </span>
                                 </span>
                             </button>
@@ -7128,7 +7618,7 @@ export default function App() {
                                     setContextMenu(null);
                                     void onCopyAsCurl(row.requestId);
                                 }}
-                                title={`Copy as cURL (${SHORTCUT_LABELS.copyAsCurl})`}
+                                title={`Copy as cURL (${shortcutLabel("copyAsCurl")})`}
                             >
                                 <span
                                     style={{
@@ -7147,7 +7637,7 @@ export default function App() {
                                             fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
                                         }}
                                     >
-                                        {SHORTCUT_LABELS.copyAsCurl}
+                                        {shortcutLabel("copyAsCurl")}
                                     </span>
                                 </span>
                             </button>
@@ -7207,7 +7697,7 @@ export default function App() {
                             }}
                             title={
                                 contextMenu.row.kind === "request"
-                                    ? `Delete (${SHORTCUT_LABELS.deleteRequest})`
+                                    ? `Delete (${shortcutLabel("deleteRequest")})`
                                     : "Delete"
                             }
                         >
@@ -7229,7 +7719,7 @@ export default function App() {
                                             fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
                                         }}
                                     >
-                                        {SHORTCUT_LABELS.deleteRequest}
+                                        {shortcutLabel("deleteRequest")}
                                     </span>
                                 )}
                             </span>
