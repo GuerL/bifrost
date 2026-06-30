@@ -27,6 +27,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 json5 = "0.4"
 reqwest = { version = "0.12", features = ["json", "multipart", "gzip", "brotli", "deflate", "rustls-tls"] }
+# cookie 0.18.1 uses the pre-0.3.52 parsing API. Keep CI from resolving
+# time 0.3.52 until the transitive cookie dependency is updated.
+time = "=0.3.47"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tokio-util = "0.7"
 uuid = { version = "1", features = ["v4"] }
