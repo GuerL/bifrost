@@ -99,6 +99,11 @@ export type HttpResponseDto = {
     duration_ms: number;
 };
 
+export type HttpErrorDiagnosticDto = {
+    label: string;
+    value: string;
+};
+
 export type EnvironmentVariable = {
     key: string;
     value: string;

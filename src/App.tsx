@@ -135,6 +135,7 @@ import type {
     CollectionMeta,
     Environment,
     GeneratedHeaderName,
+    HttpErrorDiagnosticDto,
     HttpResponseDto,
     ImportPostmanResult,
     ImportPortableResult,
@@ -492,18 +493,35 @@ function dynamicVariablePreview(name: string): string | undefined {
     return DYNAMIC_VARIABLE_PREVIEWS[normalizeDynamicVariableKey(name)];
 }
 
-function parseHttpError(error: unknown): { kind: string; message: string; detail?: string; durationMs?: number } {
+function parseHttpError(error: unknown): {
+    kind: string;
+    message: string;
+    detail?: string;
+    diagnostics?: HttpErrorDiagnosticDto[];
+    durationMs?: number;
+} {
     const source = error as {
         kind?: unknown;
         message?: unknown;
         detail?: unknown;
+        diagnostics?: unknown;
         duration_ms?: unknown;
     };
+    const diagnostics = Array.isArray(source?.diagnostics)
+        ? source.diagnostics
+            .map((entry) => {
+                const row = entry as { label?: unknown; value?: unknown };
+                if (typeof row.label !== "string" || typeof row.value !== "string") return null;
+                return { label: row.label, value: row.value };
+            })
+            .filter((entry): entry is HttpErrorDiagnosticDto => entry !== null)
+        : undefined;
 
     return {
         kind: typeof source?.kind === "string" ? source.kind : "unknown",
         message: typeof source?.message === "string" ? source.message : String(error),
         detail: typeof source?.detail === "string" ? source.detail : undefined,
+        diagnostics,
         durationMs: typeof source?.duration_ms === "number" ? source.duration_ms : undefined,
     };
 }
@@ -511,9 +529,14 @@ function parseHttpError(error: unknown): { kind: string; message: string; detail
 function httpErrorKindLabel(kind: string): string {
     const normalized = kind.trim().toLowerCase();
     if (normalized === "dns") return "DNS error";
-    if (normalized === "connect") return "Connection error";
-    if (normalized === "timeout") return "Timeout";
+    if (normalized === "connect" || normalized === "connection") return "Connection error";
+    if (normalized === "connection_refused") return "Connection refused";
+    if (normalized === "connection_timeout") return "Connection timed out";
+    if (normalized === "request_timeout" || normalized === "timeout") return "Request timed out";
+    if (normalized === "connection_reset") return "Connection reset";
     if (normalized === "tls" || normalized === "tls_config") return "TLS error";
+    if (normalized === "proxy") return "Proxy error";
+    if (normalized === "proxy_auth") return "Proxy authentication error";
     if (normalized === "invalid_header") return "Invalid header";
     if (normalized === "protocol") return "Protocol error";
     if (normalized === "invalid_url") return "Invalid URL";
@@ -1965,6 +1988,7 @@ export default function App() {
             title: selectedExecutionState.title,
             message: selectedExecutionState.message,
             detail: selectedExecutionState.detail,
+            diagnostics: selectedExecutionState.diagnostics,
         }
         : null;
     const selectedResponseDurationText = useMemo(() => {
@@ -3603,8 +3627,8 @@ export default function App() {
             const environmentPersistError = await persistScriptEnvironmentMutations(
                 scriptEnvironmentMutations
             );
-            const { kind, message, detail, durationMs } = parseHttpError(e);
-            const parsedTransportError = { kind, message, detail, durationMs };
+            const { kind, message, detail, diagnostics, durationMs } = parseHttpError(e);
+            const parsedTransportError = { kind, message, detail, diagnostics, durationMs };
             const transportPresentation = transportErrorPresentation(
                 classifyTransportError(parsedTransportError),
                 parsedTransportError

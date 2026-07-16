@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import type { HttpResponseDto } from "../types.ts";
+import type { HttpErrorDiagnosticDto, HttpResponseDto } from "../types.ts";
 import type { ScriptTestResult } from "../helpers/RequestScriptsRuntime.ts";
 import FindBar from "./FindBar.tsx";
 import { copyTextToClipboard } from "../helpers/ClipboardRequestTransfer.ts";
@@ -46,6 +46,7 @@ type ResponsePanelProps = {
         title: string;
         message: string;
         detail?: string;
+        diagnostics?: HttpErrorDiagnosticDto[];
     } | null;
     scriptReport: {
         preRequestError: string | null;
@@ -353,15 +354,27 @@ export default function ResponsePanel({
                             <div style={{ color: "var(--pg-text-dim)", fontSize: 13 }}>
                                 {transportError.message}
                             </div>
-                            {transportError.detail && (
+                            {(transportError.diagnostics?.length || transportError.detail) && (
                                 <details style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
                                     <summary style={{ cursor: "pointer" }}>Technical details</summary>
-                                    <pre style={transportErrorDetailStyle()}>{transportError.detail}</pre>
+                                    <div style={transportErrorDetailsGridStyle()}>
+                                        {(transportError.diagnostics?.length
+                                            ? transportError.diagnostics
+                                            : [{ label: "Underlying error", value: transportError.detail ?? "" }]
+                                        )
+                                            .filter((row) => row.value.trim().length > 0)
+                                            .map((row, index) => (
+                                                <div key={`${row.label}-${index}`} style={transportErrorDetailRowStyle()}>
+                                                    <div style={transportErrorDetailLabelStyle()}>{row.label}</div>
+                                                    <div style={transportErrorDetailValueStyle()}>{row.value}</div>
+                                                </div>
+                                            ))}
+                                    </div>
                                 </details>
                             )}
                         </div>
                     )}
-                    {findOpen && bodyMode === "raw" && (
+                    {!transportError && findOpen && bodyMode === "raw" && (
                         <FindBar
                             inputRef={findInputRef}
                             query={findQuery}
@@ -376,66 +389,68 @@ export default function ResponsePanel({
                             onToggleCaseSensitive={() => setFindCaseSensitive((previous) => !previous)}
                         />
                     )}
-                    <div
-                        style={responseBodyContainerStyle()}
-                        onMouseEnter={() => setBodyControlsHovered(true)}
-                        onMouseLeave={() => setBodyControlsHovered(false)}
-                    >
-                        {bodyView.canPreview && (
-                            <div style={bodyModeControlsStyle(bodyControlsHovered)}>
-                                <button
-                                    onClick={() => setBodyMode("raw")}
-                                    style={bodyModeButtonStyle(bodyMode === "raw")}
+                    {!transportError && (
+                        <div
+                            style={responseBodyContainerStyle()}
+                            onMouseEnter={() => setBodyControlsHovered(true)}
+                            onMouseLeave={() => setBodyControlsHovered(false)}
+                        >
+                            {bodyView.canPreview && (
+                                <div style={bodyModeControlsStyle(bodyControlsHovered)}>
+                                    <button
+                                        onClick={() => setBodyMode("raw")}
+                                        style={bodyModeButtonStyle(bodyMode === "raw")}
+                                    >
+                                        Raw
+                                    </button>
+                                    <button
+                                        onClick={() => setBodyMode("preview")}
+                                        style={bodyModeButtonStyle(bodyMode === "preview")}
+                                    >
+                                        Preview
+                                    </button>
+                                </div>
+                            )}
+                            {bodyMode === "preview" && bodyView.canPreview ? (
+                                <div style={responsePreviewWrapStyle()}>
+                                    <iframe
+                                        title="Response preview"
+                                        srcDoc={bodyView.previewHtml ?? ""}
+                                        sandbox=""
+                                        style={responsePreviewFrameStyle()}
+                                    />
+                                </div>
+                            ) : (
+                                <pre
+                                    style={responsePreStyle(bodyView.isJson, bodyView.canPreview)}
                                 >
-                                    Raw
-                                </button>
-                                <button
-                                    onClick={() => setBodyMode("preview")}
-                                    style={bodyModeButtonStyle(bodyMode === "preview")}
-                                >
-                                    Preview
-                                </button>
-                            </div>
-                        )}
-                        {bodyMode === "preview" && bodyView.canPreview ? (
-                            <div style={responsePreviewWrapStyle()}>
-                                <iframe
-                                    title="Response preview"
-                                    srcDoc={bodyView.previewHtml ?? ""}
-                                    sandbox=""
-                                    style={responsePreviewFrameStyle()}
-                                />
-                            </div>
-                        ) : (
-                            <pre
-                                style={responsePreStyle(bodyView.isJson, bodyView.canPreview)}
-                            >
-                                {findOpen && hasFindQuery
-                                    ? bodyHighlightSegments.map((segment, index) =>
-                                        segment.matchIndex === null ? (
-                                            <span key={`segment-${index}`}>{segment.text}</span>
-                                        ) : (
-                                            <span
-                                                key={`match-${segment.matchIndex}`}
-                                                ref={(element) => {
-                                                    matchElementsRef.current[segment.matchIndex ?? 0] = element;
-                                                }}
-                                                style={findMatchStyle(segment.matchIndex === activeMatchIndex)}
-                                            >
-                                                {segment.text}
-                                            </span>
+                                    {findOpen && hasFindQuery
+                                        ? bodyHighlightSegments.map((segment, index) =>
+                                            segment.matchIndex === null ? (
+                                                <span key={`segment-${index}`}>{segment.text}</span>
+                                            ) : (
+                                                <span
+                                                    key={`match-${segment.matchIndex}`}
+                                                    ref={(element) => {
+                                                        matchElementsRef.current[segment.matchIndex ?? 0] = element;
+                                                    }}
+                                                    style={findMatchStyle(segment.matchIndex === activeMatchIndex)}
+                                                >
+                                                    {segment.text}
+                                                </span>
+                                            )
                                         )
-                                    )
-                                    : bodyView.isJson
-                                    ? jsonTokens.map((token, index) => (
-                                        <span key={`${token.type}-${index}`} style={jsonTokenStyle(token.type)}>
-                                            {token.text}
-                                        </span>
-                                    ))
-                                    : bodyView.displayText}
-                            </pre>
-                        )}
-                    </div>
+                                        : bodyView.isJson
+                                        ? jsonTokens.map((token, index) => (
+                                            <span key={`${token.type}-${index}`} style={jsonTokenStyle(token.type)}>
+                                                {token.text}
+                                            </span>
+                                        ))
+                                        : bodyView.displayText}
+                                </pre>
+                            )}
+                        </div>
+                    )}
                     {appVersion && (
                         <div style={responseVersionStyle()}>
                             v{appVersion}
@@ -1079,12 +1094,35 @@ function transportErrorPanelStyle(): React.CSSProperties {
     };
 }
 
-function transportErrorDetailStyle(): React.CSSProperties {
+function transportErrorDetailsGridStyle(): React.CSSProperties {
     return {
-        margin: "8px 0 0",
+        marginTop: 10,
+        display: "grid",
+        gap: 10,
+    };
+}
+
+function transportErrorDetailRowStyle(): React.CSSProperties {
+    return {
+        display: "grid",
+        gridTemplateColumns: "minmax(120px, 180px) minmax(0, 1fr)",
+        gap: 12,
+        alignItems: "start",
+    };
+}
+
+function transportErrorDetailLabelStyle(): React.CSSProperties {
+    return {
+        color: "var(--pg-text-muted)",
+        fontWeight: 700,
+    };
+}
+
+function transportErrorDetailValueStyle(): React.CSSProperties {
+    return {
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
-        color: "var(--pg-text-muted)",
+        color: "var(--pg-text-dim)",
         fontSize: 12,
         fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
     };

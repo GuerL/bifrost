@@ -1,7 +1,8 @@
-import type { HttpResponseDto } from "../types.ts";
+import type { HttpErrorDiagnosticDto, HttpResponseDto } from "../types.ts";
 
 export type TransportErrorCategory =
-    | "timeout"
+    | "request_timeout"
+    | "connection_timeout"
     | "cancelled"
     | "dns"
     | "proxy"
@@ -13,6 +14,7 @@ export type TransportErrorCategory =
     | "redirect"
     | "invalid_url"
     | "invalid_request"
+    | "response_body"
     | "unknown";
 
 export type RequestExecutionState =
@@ -26,6 +28,7 @@ export type RequestExecutionState =
           title: string;
           message: string;
           detail?: string;
+          diagnostics: HttpErrorDiagnosticDto[];
           durationMs?: number;
           completedAt: number;
       };
@@ -36,6 +39,7 @@ export type ParsedHttpError = {
     kind: string;
     message: string;
     detail?: string;
+    diagnostics?: HttpErrorDiagnosticDto[];
     durationMs?: number;
 };
 
@@ -97,6 +101,7 @@ export function finishRequestExecutionWithTransportError(
             title: presentation.title,
             message: presentation.message,
             detail: error.detail,
+            diagnostics: error.diagnostics ?? diagnosticsFromLegacyDetail(error),
             durationMs: error.durationMs,
             completedAt: now,
         },
@@ -116,10 +121,16 @@ export function cancelRequestExecution(
             category: "cancelled",
             title: "Request cancelled",
             message: "Request cancelled",
+            diagnostics: [],
             durationMs,
             completedAt: now,
         },
     };
+}
+
+function diagnosticsFromLegacyDetail(error: ParsedHttpError): HttpErrorDiagnosticDto[] {
+    if (!error.detail) return [];
+    return [{ label: "Underlying error", value: error.detail }];
 }
 
 export function classifyTransportError(error: ParsedHttpError): TransportErrorCategory {
@@ -127,15 +138,18 @@ export function classifyTransportError(error: ParsedHttpError): TransportErrorCa
     const text = `${error.message} ${error.detail ?? ""}`.toLowerCase();
 
     if (kind === "cancelled") return "cancelled";
-    if (kind === "timeout" || text.includes("timed out") || text.includes("deadline")) return "timeout";
+    if (kind === "connection_timeout") return "connection_timeout";
+    if (kind === "request_timeout" || kind === "timeout") return "request_timeout";
     if (kind === "dns" || text.includes("dns") || text.includes("resolve") || text.includes("name or service")) return "dns";
     if (kind === "proxy_auth" || text.includes("proxy authentication") || text.includes("407")) return "proxy_auth";
     if (kind === "proxy" || text.includes("proxy")) return "proxy";
     if (kind === "tls" || kind === "tls_config" || text.includes("certificate") || text.includes("tls") || text.includes("ssl")) return "tls";
     if (kind === "invalid_url" || text.includes("invalid url") || text.includes("relative url")) return "invalid_url";
     if (kind === "invalid_request" || kind === "invalid_header" || kind === "variables") return "invalid_request";
+    if (kind === "response_body") return "response_body";
     if (kind === "redirect" || text.includes("redirect")) return "redirect";
     if (text.includes("connection refused") || text.includes("os error 61") || text.includes("os error 111")) return "connection_refused";
+    if (text.includes("timed out") || text.includes("deadline")) return "request_timeout";
     if (text.includes("connection reset") || text.includes("reset by peer")) return "connection_reset";
     if (kind === "connect" || kind === "connection" || text.includes("connection") || text.includes("connect")) return "connection";
 
@@ -147,14 +161,16 @@ export function transportErrorPresentation(
     error: ParsedHttpError
 ): { title: string; message: string } {
     switch (category) {
-        case "timeout":
+        case "request_timeout":
             return {
                 title: "Request timed out",
                 message:
                     error.durationMs != null
                         ? `The server did not respond within ${error.durationMs} ms.`
-                        : "The server did not respond before the timeout.",
+                        : "The server did not respond within the configured timeout.",
             };
+        case "connection_timeout":
+            return { title: "Connection timed out", message: "The TCP connection could not be established." };
         case "cancelled":
             return { title: "Request cancelled", message: "Request cancelled" };
         case "dns":
@@ -171,6 +187,8 @@ export function transportErrorPresentation(
             return { title: "Connection reset", message: "The connection was reset before the response completed." };
         case "connection":
             return { title: "Connection failed", message: "The request could not establish a network connection." };
+        case "response_body":
+            return { title: "Response body read failed", message: "The response body could not be read." };
         case "redirect":
             return { title: "Redirect failed", message: "The request could not complete the redirect chain." };
         case "invalid_url":
@@ -190,14 +208,47 @@ export function statusTextForExecutionState(
 ): string {
     if (!state || state.phase === "idle") return fallback;
     if (state.phase === "running") return `Running • ${formatElapsedSeconds(elapsedMs)}`;
-    if (state.phase === "success") return `Success • ${state.response.status} ${httpStatusReason(state.response.status)} • ${state.response.duration_ms} ms`;
-    if (state.phase === "http_error") return `HTTP Error • ${state.response.status} ${httpStatusReason(state.response.status)} • ${state.response.duration_ms} ms`;
-    if (state.category === "timeout") {
-        return state.durationMs != null
-            ? `Request timed out • ${state.durationMs} ms`
-            : "Request timed out";
+    if (state.phase === "success") return `✅ ${state.response.status} ${httpStatusReason(state.response.status)}`;
+    if (state.phase === "http_error") {
+        const prefix = state.response.status >= 500 ? "❌" : "⚠";
+        return `${prefix} ${state.response.status} ${httpStatusReason(state.response.status)}`;
     }
-    return state.title;
+    return statusBadgeForTransportError(state.category);
+}
+
+function statusBadgeForTransportError(category: TransportErrorCategory): string {
+    switch (category) {
+        case "dns":
+            return "❌ DNS failed";
+        case "connection_refused":
+            return "❌ Connection refused";
+        case "connection_timeout":
+            return "❌ Connection timed out";
+        case "request_timeout":
+            return "❌ Request timed out";
+        case "tls":
+            return "🔒 TLS failed";
+        case "proxy":
+        case "proxy_auth":
+            return "🌐 Proxy failed";
+        case "connection_reset":
+            return "❌ Connection reset";
+        case "connection":
+            return "❌ Connection failed";
+        case "redirect":
+            return "❌ Redirect failed";
+        case "invalid_url":
+            return "❌ Invalid URL";
+        case "invalid_request":
+            return "❌ Invalid request";
+        case "response_body":
+            return "❌ Response read failed";
+        case "cancelled":
+            return "Request cancelled";
+        case "unknown":
+        default:
+            return "❌ Unknown network error";
+    }
 }
 
 export function formatElapsedSeconds(elapsedMs: number): string {

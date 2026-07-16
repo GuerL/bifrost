@@ -1,14 +1,17 @@
 use crate::commands::environment::load_environment_values;
 use crate::commands::settings::{
     apply_reqwest_proxy_configuration, load_app_settings_value, resolve_effective_proxy_transport,
+    ResolvedProxyTransport,
 };
 use crate::commands::state::{RequestRegistry, RunningRequest};
 use crate::model::collection::{
     Auth, AuthLocation, Body, HttpMethod, KeyValue, MultipartField, Request, RequestTls,
 };
-use crate::model::http::{HttpErrorDto, HttpResponseDto};
+use crate::model::http::{HttpErrorDiagnosticDto, HttpErrorDto, HttpResponseDto};
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
+use std::error::Error;
+use std::io;
 use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
@@ -27,80 +30,569 @@ fn err(
     detail: Option<String>,
     duration_ms: Option<u128>,
 ) -> HttpErrorDto {
+    err_with_diagnostics(kind, message, detail, duration_ms, vec![])
+}
+
+fn err_with_diagnostics(
+    kind: &str,
+    message: impl Into<String>,
+    detail: Option<String>,
+    duration_ms: Option<u128>,
+    diagnostics: Vec<HttpErrorDiagnosticDto>,
+) -> HttpErrorDto {
     HttpErrorDto {
         kind: kind.to_string(),
         message: message.into(),
         detail,
+        diagnostics,
         duration_ms,
     }
 }
 
-fn map_reqwest_error(e: reqwest::Error, duration_ms: Option<u128>) -> HttpErrorDto {
-    let msg = e.to_string();
-    let msg_lower = msg.to_lowercase();
+struct TransportErrorContext<'a> {
+    target_url: &'a reqwest::Url,
+    request_timeout_ms: u64,
+    verify_tls_certificates: bool,
+    request_tls: &'a RequestTls,
+    proxy: &'a ResolvedProxyTransport,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NetworkErrorKind {
+    Dns,
+    ConnectionRefused,
+    ConnectionTimeout,
+    RequestTimeout,
+    Tls,
+    Proxy,
+    ProxyAuthentication,
+    ConnectionReset,
+    Connection,
+    Redirect,
+    InvalidUrl,
+    InvalidRequest,
+    InvalidHeader,
+    ResponseBody,
+    Unknown,
+}
+
+impl NetworkErrorKind {
+    fn wire(self) -> &'static str {
+        match self {
+            Self::Dns => "dns",
+            Self::ConnectionRefused => "connection_refused",
+            Self::ConnectionTimeout => "connection_timeout",
+            Self::RequestTimeout => "request_timeout",
+            Self::Tls => "tls",
+            Self::Proxy => "proxy",
+            Self::ProxyAuthentication => "proxy_auth",
+            Self::ConnectionReset => "connection_reset",
+            Self::Connection => "connection",
+            Self::Redirect => "redirect",
+            Self::InvalidUrl => "invalid_url",
+            Self::InvalidRequest => "invalid_request",
+            Self::InvalidHeader => "invalid_header",
+            Self::ResponseBody => "response_body",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    fn error_type(self) -> &'static str {
+        match self {
+            Self::Dns => "DNS resolution",
+            Self::ConnectionRefused => "Connection refused",
+            Self::ConnectionTimeout => "Connection timeout",
+            Self::RequestTimeout => "Request timeout",
+            Self::Tls => "TLS / certificate",
+            Self::Proxy => "Proxy transport",
+            Self::ProxyAuthentication => "Proxy authentication",
+            Self::ConnectionReset => "Connection reset",
+            Self::Connection => "Connection",
+            Self::Redirect => "Redirect",
+            Self::InvalidUrl => "Invalid URL",
+            Self::InvalidRequest => "Invalid request",
+            Self::InvalidHeader => "Invalid header",
+            Self::ResponseBody => "Response body",
+            Self::Unknown => "Transport error",
+        }
+    }
+
+    fn failure_phase(self) -> &'static str {
+        match self {
+            Self::Dns => "DNS resolution",
+            Self::ConnectionRefused | Self::ConnectionTimeout | Self::Connection => {
+                "Opening TCP connection"
+            }
+            Self::Tls => "TLS handshake",
+            Self::Proxy | Self::ProxyAuthentication => "Proxy negotiation",
+            Self::RequestTimeout => "Waiting for response",
+            Self::ConnectionReset | Self::ResponseBody => "Reading response body",
+            Self::Redirect => "Following redirect",
+            Self::InvalidUrl | Self::InvalidRequest | Self::InvalidHeader => "Sending request",
+            Self::Unknown => "HTTP transport",
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::Dns => "The hostname could not be resolved.",
+            Self::ConnectionRefused => "The remote server refused the TCP connection.",
+            Self::ConnectionTimeout => "The TCP connection could not be established.",
+            Self::RequestTimeout => "The server did not respond within the configured timeout.",
+            Self::Tls => "The TLS handshake or certificate validation failed.",
+            Self::Proxy => "The request could not connect through the configured proxy.",
+            Self::ProxyAuthentication => "The proxy rejected the configured credentials.",
+            Self::ConnectionReset => "The connection was reset before the response completed.",
+            Self::Connection => "The request could not establish a network connection.",
+            Self::Redirect => "The request could not complete the redirect chain.",
+            Self::InvalidUrl => "The request URL is invalid.",
+            Self::InvalidRequest => "The request could not be sent.",
+            Self::InvalidHeader => "A request header name or value is invalid.",
+            Self::ResponseBody => "The response body could not be read.",
+            Self::Unknown => "The request failed before an HTTP response was received.",
+        }
+    }
+}
+
+fn diagnostic(label: impl Into<String>, value: impl Into<String>) -> HttpErrorDiagnosticDto {
+    HttpErrorDiagnosticDto {
+        label: label.into(),
+        value: value.into(),
+    }
+}
+
+fn deepest_error_message(error: &(dyn Error + 'static)) -> Option<String> {
+    let mut current = error.source()?;
+    while let Some(next) = current.source() {
+        current = next;
+    }
+    let message = current.to_string();
+    if message.trim().is_empty() {
+        None
+    } else {
+        Some(message)
+    }
+}
+
+fn source_messages(error: &(dyn Error + 'static)) -> Vec<String> {
+    let mut messages = vec![];
+    let mut current = error.source();
+    while let Some(source) = current {
+        let message = source.to_string();
+        if !message.trim().is_empty() {
+            messages.push(message);
+        }
+        current = source.source();
+    }
+    messages
+}
+
+fn error_chain_hierarchy(error: &(dyn Error + 'static), kind: NetworkErrorKind) -> String {
+    let messages = source_messages(error);
+    let mut nodes = vec!["Reqwest".to_string()];
+
+    match kind {
+        NetworkErrorKind::Dns => {
+            nodes.push("Connect".to_string());
+            nodes.push("DNS".to_string());
+        }
+        NetworkErrorKind::ConnectionRefused
+        | NetworkErrorKind::ConnectionTimeout
+        | NetworkErrorKind::Connection
+        | NetworkErrorKind::ConnectionReset => {
+            nodes.push("Connect".to_string());
+        }
+        NetworkErrorKind::Tls => {
+            nodes.push("Connect".to_string());
+            nodes.push("TLS".to_string());
+        }
+        NetworkErrorKind::Proxy | NetworkErrorKind::ProxyAuthentication => {
+            nodes.push("Proxy".to_string());
+        }
+        NetworkErrorKind::RequestTimeout => {
+            nodes.push("Timeout".to_string());
+        }
+        NetworkErrorKind::ResponseBody => {
+            nodes.push("ResponseBody".to_string());
+        }
+        NetworkErrorKind::Redirect => {
+            nodes.push("Redirect".to_string());
+        }
+        _ => {}
+    }
+
+    if let Some(deepest) = deepest_error_message(error) {
+        let cleaned = concise_underlying_error(&deepest);
+        if nodes.last().map(|last| last != &cleaned).unwrap_or(true) {
+            nodes.push(cleaned);
+        }
+    } else {
+        for message in messages {
+            let cleaned = concise_underlying_error(&message);
+            if nodes.last().map(|last| last != &cleaned).unwrap_or(true) {
+                nodes.push(cleaned);
+            }
+        }
+    }
+
+    nodes
+        .into_iter()
+        .enumerate()
+        .map(|(index, node)| {
+            if index == 0 {
+                node
+            } else {
+                format!("{}└── {}", "    ".repeat(index - 1), node)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn io_error_kind(error: &(dyn Error + 'static)) -> Option<io::ErrorKind> {
+    let mut current = error.source();
+    while let Some(source) = current {
+        if let Some(io_error) = source.downcast_ref::<io::Error>() {
+            return Some(io_error.kind());
+        }
+        current = source.source();
+    }
+    None
+}
+
+fn reqwest_error_kind(e: &reqwest::Error) -> String {
+    let mut kinds = vec![];
+    if e.is_timeout() {
+        kinds.push("timeout");
+    }
+    if e.is_connect() {
+        kinds.push("connect");
+    }
+    if e.is_request() {
+        kinds.push("request");
+    }
+    if e.is_body() {
+        kinds.push("body");
+    }
+    if e.is_decode() {
+        kinds.push("decode");
+    }
+    if e.is_redirect() {
+        kinds.push("redirect");
+    }
+    if e.is_builder() {
+        kinds.push("builder");
+    }
+    if kinds.is_empty() {
+        "unknown".to_string()
+    } else {
+        kinds.join(", ")
+    }
+}
+
+fn certificate_hint(message: &str) -> Option<&'static str> {
+    let lower = message.to_lowercase();
+    if lower.contains("expired") {
+        return Some("Expired");
+    }
+    if lower.contains("not yet valid") {
+        return Some("Not yet valid");
+    }
+    if lower.contains("unknownissuer")
+        || lower.contains("unknown issuer")
+        || lower.contains("self signed")
+        || lower.contains("local issuer")
+    {
+        return Some("Untrusted issuer");
+    }
+    if lower.contains("hostname") || lower.contains("dns name") || lower.contains("not valid for") {
+        return Some("Hostname mismatch");
+    }
+    None
+}
+
+fn build_transport_diagnostics(
+    kind: NetworkErrorKind,
+    e: &reqwest::Error,
+    msg: &str,
+    duration_ms: Option<u128>,
+    ctx: &TransportErrorContext<'_>,
+) -> Vec<HttpErrorDiagnosticDto> {
+    let deepest = deepest_error_message(e).unwrap_or_else(|| msg.to_string());
+    let mut rows = vec![
+        diagnostic("Error type", kind.error_type()),
+        diagnostic("Target URL", ctx.target_url.as_str().to_string()),
+    ];
+
+    if let Some(host) = ctx.target_url.host_str() {
+        rows.push(diagnostic("Host", host.to_string()));
+    }
+
+    match kind {
+        NetworkErrorKind::RequestTimeout | NetworkErrorKind::ConnectionTimeout => {
+            rows.push(diagnostic(
+                "Configured timeout",
+                format!("{} ms", ctx.request_timeout_ms),
+            ));
+            if let Some(duration) = duration_ms {
+                rows.push(diagnostic("Elapsed time", format!("{duration} ms")));
+            }
+            rows.push(diagnostic("Failure phase", kind.failure_phase()));
+            rows.push(diagnostic(
+                "Underlying transport error",
+                concise_underlying_error(&deepest),
+            ));
+        }
+        NetworkErrorKind::Proxy | NetworkErrorKind::ProxyAuthentication => {
+            rows.push(diagnostic(
+                "Proxy",
+                ctx.proxy
+                    .info
+                    .proxy_url
+                    .clone()
+                    .unwrap_or_else(|| ctx.proxy.info.summary.clone()),
+            ));
+            rows.push(diagnostic(
+                "Authentication",
+                if ctx.proxy.credentials_configured() {
+                    "Configured"
+                } else {
+                    "Disabled"
+                },
+            ));
+            rows.push(diagnostic("Failure phase", kind.failure_phase()));
+            rows.push(diagnostic(
+                "Underlying error",
+                concise_underlying_error(&deepest),
+            ));
+        }
+        NetworkErrorKind::Tls => {
+            rows.push(diagnostic(
+                "TLS validation",
+                if ctx.verify_tls_certificates && !ctx.request_tls.allow_invalid_certificates {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                },
+            ));
+            if let Some(hint) = certificate_hint(&deepest).or_else(|| certificate_hint(msg)) {
+                rows.push(diagnostic("Certificate", hint));
+            }
+            rows.push(diagnostic("Failure phase", kind.failure_phase()));
+            rows.push(diagnostic(
+                "Underlying error",
+                concise_underlying_error(&deepest),
+            ));
+        }
+        NetworkErrorKind::Dns => {
+            rows.push(diagnostic("Resolver", "System"));
+            rows.push(diagnostic("Failure phase", kind.failure_phase()));
+            rows.push(diagnostic(
+                "Underlying error",
+                concise_underlying_error(&deepest),
+            ));
+        }
+        _ => {
+            rows.push(diagnostic("Failure phase", kind.failure_phase()));
+            rows.push(diagnostic(
+                "Underlying error",
+                concise_underlying_error(&deepest),
+            ));
+        }
+    }
+
+    rows.push(diagnostic("Reqwest error kind", reqwest_error_kind(e)));
+    rows.push(diagnostic("Error chain", error_chain_hierarchy(e, kind)));
+    rows
+}
+
+fn concise_underlying_error(message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return "Unknown".to_string();
+    }
+    trimmed
+        .strip_prefix("error trying to connect: ")
+        .or_else(|| trimmed.strip_prefix("client error (Connect): "))
+        .or_else(|| trimmed.strip_prefix("client error (Request): "))
+        .unwrap_or(trimmed)
+        .to_string()
+}
+
+fn classify_reqwest_error_kind(e: &reqwest::Error, msg_lower: &str) -> NetworkErrorKind {
+    let io_kind = io_error_kind(e);
 
     if msg_lower.contains("proxy authentication")
         || msg_lower.contains("proxy auth")
         || msg_lower.contains("407")
     {
-        return err(
-            "proxy",
-            "Proxy authentication failed",
-            Some(msg),
-            duration_ms,
-        );
+        return NetworkErrorKind::ProxyAuthentication;
     }
-
     if msg_lower.contains("proxy connect")
         || msg_lower.contains("proxy error")
         || msg_lower.contains("proxy tunnel")
     {
-        return err(
-            "proxy",
-            "Failed to connect through proxy",
-            Some(msg),
-            duration_ms,
-        );
+        return NetworkErrorKind::Proxy;
     }
-
     if msg_lower.contains("invalid header")
         || msg_lower.contains("header name")
         || msg_lower.contains("header value")
     {
-        return err(
-            "invalid_header",
-            "Invalid header name or value",
-            Some(msg),
-            duration_ms,
-        );
+        return NetworkErrorKind::InvalidHeader;
     }
-
-    // Url invalide / parsing
     if e.is_builder() {
         if msg_lower.contains("url") {
-            return err("invalid_url", "Invalid URL", Some(msg), duration_ms);
+            return NetworkErrorKind::InvalidUrl;
         }
-        return err(
-            "invalid_request",
-            "Invalid request (URL/headers/body)",
-            Some(msg),
-            duration_ms,
-        );
+        return NetworkErrorKind::InvalidRequest;
     }
 
-    // Timeout
-    if e.is_timeout() {
-        return err("timeout", "Request timed out", Some(msg), duration_ms);
+    if msg_lower.contains("dns")
+        || msg_lower.contains("failed to lookup address")
+        || msg_lower.contains("failed to lookup address information")
+        || msg_lower.contains("name or service not known")
+        || msg_lower.contains("nodename nor servname provided")
+        || msg_lower.contains("temporary failure in name resolution")
+    {
+        return NetworkErrorKind::Dns;
     }
 
-    // TLS / certificate
-    // (reqwest does not provide an "is_tls" helper, keep a soft heuristic)
+    if io_kind == Some(io::ErrorKind::ConnectionRefused) || msg_lower.contains("connection refused")
+    {
+        return NetworkErrorKind::ConnectionRefused;
+    }
+
+    if io_kind == Some(io::ErrorKind::TimedOut) || e.is_timeout() {
+        if e.is_connect()
+            || msg_lower.contains("tcp")
+            || msg_lower.contains("connect")
+            || msg_lower.contains("connecting")
+        {
+            return NetworkErrorKind::ConnectionTimeout;
+        }
+        return NetworkErrorKind::RequestTimeout;
+    }
+
+    if io_kind == Some(io::ErrorKind::ConnectionReset)
+        || msg_lower.contains("connection reset")
+        || msg_lower.contains("reset by peer")
+    {
+        return NetworkErrorKind::ConnectionReset;
+    }
+
     if msg_lower.contains("tls")
         || msg_lower.contains("certificate")
         || msg_lower.contains("unknownissuer")
         || msg_lower.contains("x509")
         || msg_lower.contains("ssl")
     {
+        return NetworkErrorKind::Tls;
+    }
+    if e.is_redirect() || msg_lower.contains("redirect") {
+        return NetworkErrorKind::Redirect;
+    }
+    if e.is_connect() {
+        if msg_lower.contains("proxy") {
+            return NetworkErrorKind::Proxy;
+        }
+        return NetworkErrorKind::Connection;
+    }
+    if e.is_body() {
+        return NetworkErrorKind::ResponseBody;
+    }
+    if msg_lower.contains("http/2")
+        || msg_lower.contains("frame")
+        || msg_lower.contains("unexpected eof")
+        || msg_lower.contains("broken pipe")
+    {
+        return NetworkErrorKind::ResponseBody;
+    }
+    NetworkErrorKind::Unknown
+}
+
+fn map_reqwest_error(
+    e: reqwest::Error,
+    duration_ms: Option<u128>,
+    ctx: &TransportErrorContext<'_>,
+) -> HttpErrorDto {
+    let msg = e.to_string();
+    let msg_lower = msg.to_lowercase();
+    let kind = classify_reqwest_error_kind(&e, &msg_lower);
+    let diagnostics = build_transport_diagnostics(kind, &e, &msg, duration_ms, ctx);
+
+    if kind == NetworkErrorKind::ProxyAuthentication {
+        return err_with_diagnostics(
+            kind.wire(),
+            "Proxy authentication failed",
+            deepest_error_message(&e),
+            duration_ms,
+            diagnostics,
+        );
+    }
+
+    if kind == NetworkErrorKind::Proxy {
+        return err_with_diagnostics(
+            kind.wire(),
+            "Proxy connection failed",
+            deepest_error_message(&e),
+            duration_ms,
+            diagnostics,
+        );
+    }
+
+    if kind == NetworkErrorKind::InvalidHeader {
+        return err_with_diagnostics(
+            kind.wire(),
+            "Invalid header name or value",
+            deepest_error_message(&e),
+            duration_ms,
+            diagnostics,
+        );
+    }
+
+    // Url invalide / parsing
+    if kind == NetworkErrorKind::InvalidUrl {
+        return err_with_diagnostics(
+            kind.wire(),
+            "Invalid URL",
+            deepest_error_message(&e),
+            duration_ms,
+            diagnostics,
+        );
+    }
+    if kind == NetworkErrorKind::InvalidRequest {
+        return err_with_diagnostics(
+            kind.wire(),
+            "Invalid request (URL/headers/body)",
+            deepest_error_message(&e),
+            duration_ms,
+            diagnostics,
+        );
+    }
+
+    // Timeout
+    if kind == NetworkErrorKind::RequestTimeout {
+        return err_with_diagnostics(
+            kind.wire(),
+            "Request timed out",
+            deepest_error_message(&e),
+            duration_ms,
+            diagnostics,
+        );
+    }
+    if kind == NetworkErrorKind::ConnectionTimeout {
+        return err_with_diagnostics(
+            kind.wire(),
+            "Connection timed out",
+            deepest_error_message(&e),
+            duration_ms,
+            diagnostics,
+        );
+    }
+
+    // TLS / certificate
+    // (reqwest does not provide an "is_tls" helper, keep a soft heuristic)
+    if kind == NetworkErrorKind::Tls {
         let explanation = if msg_lower.contains("unknownissuer")
             || msg_lower.contains("unknown issuer")
             || msg_lower.contains("self signed")
@@ -120,65 +612,78 @@ fn map_reqwest_error(e: reqwest::Error, duration_ms: Option<u128>) -> HttpErrorD
             "TLS handshake failed. Check certificate chain and TLS settings."
         };
 
-        return err("tls", explanation, Some(msg), duration_ms);
+        return err_with_diagnostics(
+            kind.wire(),
+            if explanation.is_empty() {
+                kind.message()
+            } else {
+                explanation
+            },
+            deepest_error_message(&e),
+            duration_ms,
+            diagnostics,
+        );
     }
 
     // DNS (typically a domain typo)
     // (heuristic, but works well)
-    if msg_lower.contains("dns")
-        || msg_lower.contains("failed to lookup address")
-        || msg_lower.contains("name or service not known")
-        || msg_lower.contains("nodename nor servname provided")
-    {
-        return err(
-            "dns",
-            "DNS lookup failed (domain not found)",
-            Some(msg),
+    if kind == NetworkErrorKind::Dns {
+        return err_with_diagnostics(
+            kind.wire(),
+            "DNS resolution failed",
+            deepest_error_message(&e),
             duration_ms,
+            diagnostics,
         );
     }
 
     // Connect
-    if e.is_connect() {
+    if kind == NetworkErrorKind::Connection {
         if msg_lower.contains("proxy") {
-            return err(
+            return err_with_diagnostics(
                 "proxy",
-                "Could not connect to proxy",
-                Some(msg),
+                "Proxy connection failed",
+                deepest_error_message(&e),
                 duration_ms,
+                diagnostics,
             );
         }
-        if msg_lower.contains("connection refused") {
-            return err(
-                "connect",
-                "Connection refused by remote host",
-                Some(msg),
-                duration_ms,
-            );
-        }
-        return err(
-            "connect",
-            "Could not connect to server",
-            Some(msg),
+        return err_with_diagnostics(
+            kind.wire(),
+            kind.message(),
+            deepest_error_message(&e),
             duration_ms,
+            diagnostics,
         );
     }
 
-    if msg_lower.contains("http/2")
-        || msg_lower.contains("frame")
-        || msg_lower.contains("unexpected eof")
-        || msg_lower.contains("connection reset")
-        || msg_lower.contains("broken pipe")
-    {
-        return err(
-            "protocol",
-            "HTTP protocol/connection error",
-            Some(msg),
+    if kind == NetworkErrorKind::ConnectionRefused {
+        return err_with_diagnostics(
+            kind.wire(),
+            "Connection refused",
+            deepest_error_message(&e),
             duration_ms,
+            diagnostics,
         );
     }
 
-    err("unknown", "Request failed", Some(msg), duration_ms)
+    if kind == NetworkErrorKind::ConnectionReset {
+        return err_with_diagnostics(
+            kind.wire(),
+            "Connection reset",
+            deepest_error_message(&e),
+            duration_ms,
+            diagnostics,
+        );
+    }
+
+    err_with_diagnostics(
+        kind.wire(),
+        kind.message(),
+        deepest_error_message(&e),
+        duration_ms,
+        diagnostics,
+    )
 }
 
 fn replace_vars_in_text(
@@ -813,6 +1318,7 @@ pub async fn do_send_request(
     // 1) validate URL early
     let url = reqwest::Url::parse(&req.url)
         .map_err(|e| err("invalid_url", "Invalid URL", Some(e.to_string()), None))?;
+    let url_for_diagnostics = url.clone();
     let app_settings = load_app_settings_value(app).map_err(|error| {
         err(
             "settings",
@@ -946,7 +1452,14 @@ pub async fn do_send_request(
     let start = Instant::now();
     let resp = builder.send().await.map_err(|e| {
         let d = start.elapsed().as_millis();
-        map_reqwest_error(e, Some(d))
+        let ctx = TransportErrorContext {
+            target_url: &url_for_diagnostics,
+            request_timeout_ms,
+            verify_tls_certificates,
+            request_tls: &req.tls,
+            proxy: &resolved_proxy,
+        };
+        map_reqwest_error(e, Some(d), &ctx)
     })?;
     let duration_ms = start.elapsed().as_millis();
 
@@ -963,7 +1476,14 @@ pub async fn do_send_request(
 
     let body_text = resp.text().await.map_err(|e| {
         let d = start.elapsed().as_millis();
-        map_reqwest_error(e, Some(d))
+        let ctx = TransportErrorContext {
+            target_url: &url_for_diagnostics,
+            request_timeout_ms,
+            verify_tls_certificates,
+            request_tls: &req.tls,
+            proxy: &resolved_proxy,
+        };
+        map_reqwest_error(e, Some(d), &ctx)
     })?;
 
     Ok(HttpResponseDto {
@@ -980,6 +1500,7 @@ fn cancelled(duration_ms: Option<u128>) -> HttpErrorDto {
         kind: "cancelled".into(),
         message: "Request cancelled".into(),
         detail: None,
+        diagnostics: vec![],
         duration_ms,
     }
 }

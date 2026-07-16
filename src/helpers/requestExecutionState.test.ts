@@ -76,11 +76,11 @@ describe("request execution state", () => {
         expect(isRequestRunning(timedOut, "req-a")).toBe(false);
         expect(timedOut["req-a"]).toMatchObject({
             phase: "transport_error",
-            category: "timeout",
+            category: "request_timeout",
             title: "Request timed out",
             message: "The server did not respond within 5000 ms.",
         });
-        expect(statusTextForExecutionState(timedOut["req-a"], 0, "Idle")).toBe("Request timed out • 5000 ms");
+        expect(statusTextForExecutionState(timedOut["req-a"], 0, "Idle")).toBe("❌ Request timed out");
     });
 
     it("classifies transport errors into friendly categories", () => {
@@ -89,6 +89,8 @@ describe("request execution state", () => {
         expect(classifyTransportError({ kind: "unknown", message: "407 proxy authentication required" })).toBe("proxy_auth");
         expect(classifyTransportError({ kind: "tls", message: "certificate verify failed" })).toBe("tls");
         expect(classifyTransportError({ kind: "connect", message: "connection refused" })).toBe("connection_refused");
+        expect(classifyTransportError({ kind: "connection_timeout", message: "deadline elapsed" })).toBe("connection_timeout");
+        expect(classifyTransportError({ kind: "request_timeout", message: "deadline elapsed" })).toBe("request_timeout");
         expect(classifyTransportError({ kind: "protocol", message: "connection reset by peer" })).toBe("connection_reset");
         expect(classifyTransportError({ kind: "redirect", message: "too many redirects" })).toBe("redirect");
         expect(classifyTransportError({ kind: "invalid_url", message: "relative URL" })).toBe("invalid_url");
@@ -100,8 +102,26 @@ describe("request execution state", () => {
 
         expect(states["req-a"]).toMatchObject({ phase: "http_error", response: { status: 500 } });
         expect(statusTextForExecutionState(states["req-a"], 0, "Idle")).toBe(
-            "HTTP Error • 500 Internal Server Error • 84 ms"
+            "❌ 500 Internal Server Error"
         );
+    });
+
+    it("uses explicit status badges for network categories", () => {
+        const refused = finishRequestExecutionWithTransportError(
+            {},
+            "req-a",
+            { kind: "connection_refused", message: "connection refused" },
+            1_000
+        );
+        const connectTimeout = finishRequestExecutionWithTransportError(
+            {},
+            "req-b",
+            { kind: "connection_timeout", message: "operation timed out" },
+            1_000
+        );
+
+        expect(statusTextForExecutionState(refused["req-a"], 0, "Idle")).toBe("❌ Connection refused");
+        expect(statusTextForExecutionState(connectTimeout["req-b"], 0, "Idle")).toBe("❌ Connection timed out");
     });
 
     it("running indicator belongs only to the correct tab", () => {
