@@ -11,6 +11,7 @@ type MultipartFieldRowProps = {
     resolveVariableStatus: (name: string) => VariableStatus;
     resolveVariableValue: (name: string) => string | undefined;
     variableSuggestions: string[];
+    disabled?: boolean;
 };
 
 const FIELD_KIND_OPTIONS = [
@@ -26,6 +27,7 @@ export default function MultipartFieldRow({
     resolveVariableStatus,
     resolveVariableValue,
     variableSuggestions,
+    disabled = false,
 }: MultipartFieldRowProps) {
     return (
         <div style={{ display: "grid", gap: 8 }}>
@@ -33,6 +35,7 @@ export default function MultipartFieldRow({
                 <input
                     type="checkbox"
                     checked={field.enabled}
+                    disabled={disabled}
                     onChange={(event) => onChange({ ...field, enabled: event.target.checked })}
                     title="Enable field"
                 />
@@ -44,12 +47,14 @@ export default function MultipartFieldRow({
                     resolveVariableValue={resolveVariableValue}
                     variableSuggestions={variableSuggestions}
                     containerStyle={{ flex: 1 }}
+                    disabled={disabled}
                 />
                 <AppSelect
                     value={field.kind}
                     options={FIELD_KIND_OPTIONS}
                     ariaLabel="Multipart field type"
                     style={{ width: 90 }}
+                    disabled={disabled}
                     onValueChange={(nextValue) =>
                         onChange(
                             switchMultipartFieldKind(
@@ -59,7 +64,7 @@ export default function MultipartFieldRow({
                         )
                     }
                 />
-                <button onClick={onDelete}>-</button>
+                <button disabled={disabled} onClick={onDelete}>-</button>
             </div>
             {field.kind === "text" ? (
                 <VariableInput
@@ -69,6 +74,7 @@ export default function MultipartFieldRow({
                     resolveVariableStatus={resolveVariableStatus}
                     resolveVariableValue={resolveVariableValue}
                     variableSuggestions={variableSuggestions}
+                    disabled={disabled}
                 />
             ) : (
                 <div style={{ display: "grid", gap: 6 }}>
@@ -81,8 +87,9 @@ export default function MultipartFieldRow({
                             resolveVariableValue={resolveVariableValue}
                             variableSuggestions={variableSuggestions}
                             containerStyle={{ flex: 1 }}
+                            disabled={disabled}
                         />
-                        <button onClick={onPickFile}>Browse...</button>
+                        <button disabled={disabled} onClick={onPickFile}>Browse...</button>
                     </div>
                     <span style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
                         {field.file_name ?? "No file selected"}

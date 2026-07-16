@@ -42,6 +42,11 @@ type HighlightSegment = {
 type ResponsePanelProps = {
     response: HttpResponseDto | null;
     statusText: string;
+    transportError?: {
+        title: string;
+        message: string;
+        detail?: string;
+    } | null;
     scriptReport: {
         preRequestError: string | null;
         postResponseError: string | null;
@@ -60,6 +65,7 @@ type ResponsePanelProps = {
 export default function ResponsePanel({
     response,
     statusText,
+    transportError,
     scriptReport,
     runtimeVariables,
     onClearRuntimeVariables,
@@ -69,7 +75,10 @@ export default function ResponsePanel({
     showHeader = true,
     showTabs = true,
 }: ResponsePanelProps) {
-    const bodyView = useMemo(() => formatResponseBody(response), [response]);
+    const bodyView = useMemo(
+        () => transportError ? formatTransportErrorBody(transportError) : formatResponseBody(response),
+        [response, transportError]
+    );
     const jsonTokens = useMemo(
         () => (bodyView.isJson ? tokenizeJson(bodyView.displayText) : []),
         [bodyView.displayText, bodyView.isJson]
@@ -336,6 +345,22 @@ export default function ResponsePanel({
 
             {activeTab === "body" && (
                 <>
+                    {transportError && (
+                        <div style={transportErrorPanelStyle()}>
+                            <div style={{ fontWeight: 700, color: "var(--pg-text)" }}>
+                                {transportError.title}
+                            </div>
+                            <div style={{ color: "var(--pg-text-dim)", fontSize: 13 }}>
+                                {transportError.message}
+                            </div>
+                            {transportError.detail && (
+                                <details style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                    <summary style={{ cursor: "pointer" }}>Technical details</summary>
+                                    <pre style={transportErrorDetailStyle()}>{transportError.detail}</pre>
+                                </details>
+                            )}
+                        </div>
+                    )}
                     {findOpen && bodyMode === "raw" && (
                         <FindBar
                             inputRef={findInputRef}
@@ -577,6 +602,17 @@ function formatResponseBody(response: HttpResponseDto | null): ResponseBodyView 
     } catch {
         return { displayText: raw, copyText: raw, isJson: false, canPreview: false, previewHtml: null };
     }
+}
+
+function formatTransportErrorBody(error: NonNullable<ResponsePanelProps["transportError"]>): ResponseBodyView {
+    const detailText = error.detail ? `\n\nTechnical details:\n${error.detail}` : "";
+    return {
+        displayText: `${error.title}\n\n${error.message}${detailText}`,
+        copyText: `${error.title}\n\n${error.message}${detailText}`,
+        isJson: false,
+        canPreview: false,
+        previewHtml: null,
+    };
 }
 
 function isHtmlContent(contentType: string, body: string): boolean {
@@ -1028,5 +1064,28 @@ function scriptErrorStyle(): React.CSSProperties {
         fontSize: 12,
         color: "var(--pg-danger)",
         lineHeight: 1.4,
+    };
+}
+
+function transportErrorPanelStyle(): React.CSSProperties {
+    return {
+        border: "1px solid rgba(239, 68, 68, 0.38)",
+        borderRadius: 10,
+        background: "rgba(239, 68, 68, 0.08)",
+        padding: 12,
+        display: "grid",
+        gap: 8,
+        flexShrink: 0,
+    };
+}
+
+function transportErrorDetailStyle(): React.CSSProperties {
+    return {
+        margin: "8px 0 0",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        color: "var(--pg-text-muted)",
+        fontSize: 12,
+        fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
     };
 }
