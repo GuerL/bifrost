@@ -43,6 +43,16 @@ export type ParsedHttpError = {
     durationMs?: number;
 };
 
+export type PersistedTransportErrorState = {
+    category: TransportErrorCategory;
+    title: string;
+    message: string;
+    detail?: string;
+    diagnostics: HttpErrorDiagnosticDto[];
+    durationMs?: number;
+    completedAt: number;
+};
+
 export function emptyExecutionState(): RequestExecutionState {
     return { phase: "idle" };
 }
@@ -131,6 +141,38 @@ export function cancelRequestExecution(
 function diagnosticsFromLegacyDetail(error: ParsedHttpError): HttpErrorDiagnosticDto[] {
     if (!error.detail) return [];
     return [{ label: "Underlying error", value: error.detail }];
+}
+
+export function createPersistedTransportErrorState(
+    error: ParsedHttpError,
+    completedAt = Date.now()
+): PersistedTransportErrorState {
+    const category = classifyTransportError(error);
+    const presentation = transportErrorPresentation(category, error);
+    return {
+        category,
+        title: presentation.title,
+        message: presentation.message,
+        detail: error.detail,
+        diagnostics: error.diagnostics ?? diagnosticsFromLegacyDetail(error),
+        durationMs: error.durationMs,
+        completedAt,
+    };
+}
+
+export function executionStateFromPersistedTransportError(
+    error: PersistedTransportErrorState
+): RequestExecutionState {
+    return {
+        phase: "transport_error",
+        category: error.category,
+        title: error.title,
+        message: error.message,
+        detail: error.detail,
+        diagnostics: error.diagnostics,
+        durationMs: error.durationMs,
+        completedAt: error.completedAt,
+    };
 }
 
 export function classifyTransportError(error: ParsedHttpError): TransportErrorCategory {

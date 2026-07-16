@@ -6,6 +6,7 @@ import {
     useRef,
     useState,
 } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { isPending } from "./helpers/HttpHelper";
 import Editor from "@monaco-editor/react";
@@ -96,7 +97,9 @@ import {
 } from "./helpers/requestExecutionSnapshot.ts";
 import {
     cancelRequestExecution,
+    createPersistedTransportErrorState,
     emptyExecutionState,
+    executionStateFromPersistedTransportError,
     finishRequestExecutionWithResponse,
     finishRequestExecutionWithTransportError,
     formatElapsedSeconds,
@@ -105,6 +108,8 @@ import {
     statusTextForExecutionState,
     transportErrorPresentation,
     classifyTransportError,
+    type TransportErrorCategory,
+    type PersistedTransportErrorState,
     type RequestExecutionStateMap,
 } from "./helpers/requestExecutionState.ts";
 import {
@@ -308,10 +313,13 @@ type PersistedTabsState = Record<string, PersistedTabsEntry>;
 
 type PersistedResponseEntry = {
     response: HttpResponseDto | null;
+    transportError: PersistedTransportError | null;
     statusText: string;
     updatedAt: string;
     testExecution: PersistedTestExecution | null;
 };
+
+type PersistedTransportError = PersistedTransportErrorState;
 
 type PersistedResponsesCollection = Record<string, PersistedResponseEntry>;
 type PersistedResponsesState = Record<string, PersistedResponsesCollection>;
@@ -955,6 +963,42 @@ function sanitizeHttpResponse(input: unknown): HttpResponseDto | null {
     };
 }
 
+function sanitizeHttpErrorDiagnostics(input: unknown): HttpErrorDiagnosticDto[] {
+    if (!Array.isArray(input)) return [];
+    return input
+        .map((entry) => {
+            const row = entry as { label?: unknown; value?: unknown };
+            if (typeof row.label !== "string" || typeof row.value !== "string") {
+                return null;
+            }
+            return { label: row.label, value: row.value };
+        })
+        .filter((entry): entry is HttpErrorDiagnosticDto => entry !== null);
+}
+
+function sanitizePersistedTransportError(input: unknown): PersistedTransportError | null {
+    if (!input || typeof input !== "object") return null;
+    const source = input as Record<string, unknown>;
+    if (
+        typeof source.category !== "string" ||
+        typeof source.title !== "string" ||
+        typeof source.message !== "string" ||
+        typeof source.completedAt !== "number"
+    ) {
+        return null;
+    }
+
+    return {
+        category: source.category as TransportErrorCategory,
+        title: source.title,
+        message: source.message,
+        detail: typeof source.detail === "string" ? source.detail : undefined,
+        diagnostics: sanitizeHttpErrorDiagnostics(source.diagnostics),
+        durationMs: typeof source.durationMs === "number" ? source.durationMs : undefined,
+        completedAt: source.completedAt,
+    };
+}
+
 function sanitizeResponseEntry(entry: unknown): PersistedResponseEntry | null {
     if (!entry || typeof entry !== "object") return null;
     const source = entry as Record<string, unknown>;
@@ -966,6 +1010,7 @@ function sanitizeResponseEntry(entry: unknown): PersistedResponseEntry | null {
 
     return {
         response: sanitizeHttpResponse(source.response),
+        transportError: sanitizePersistedTransportError(source.transportError),
         statusText: normalizeStatusTextWithTestExecution(source.statusText, testExecution),
         updatedAt: source.updatedAt,
         testExecution,
@@ -1047,6 +1092,7 @@ export default function App() {
     const { resolvedTheme, theme, systemTheme, setTheme } = useTheme();
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
+    const [appVersion, setAppVersion] = useState<string | null>(null);
     const [activeEnvironmentId, setActiveEnvironmentId] = useState<string | null>(null);
     const [current, setCurrent] = useState<CollectionLoaded | null>(null);
     const [status, setStatus] = useState<string>("");
@@ -1398,6 +1444,25 @@ export default function App() {
         if (Object.keys(executionRuntimeVariables).length === 0) return;
         setExecutionRuntimeVariables({});
     }, [executionRuntimeActive, executionRuntimeVariables]);
+
+    useEffect(() => {
+        let cancelled = false;
+        void getVersion()
+            .then((version) => {
+                if (!cancelled) {
+                    setAppVersion(version);
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setAppVersion(null);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     useEffect(() => {
         const hasRunningRequest = Object.values(requestExecutionStates).some(
@@ -2574,6 +2639,15 @@ export default function App() {
         ) as PersistedResponsesCollection;
 
         setResponsesByRequestId(filtered);
+        setRequestExecutionStates(() => {
+            const next: RequestExecutionStateMap = {};
+            for (const [requestId, entry] of Object.entries(filtered)) {
+                if (entry.transportError) {
+                    next[requestId] = executionStateFromPersistedTransportError(entry.transportError);
+                }
+            }
+            return next;
+        });
         const restoredScriptReports =
             restorePersistedScriptReports(filtered) as Record<string, RequestScriptExecutionReport>;
         setScriptReportsByRequestId(restoredScriptReports);
@@ -3535,6 +3609,7 @@ export default function App() {
                     classifyTransportError(invalidRequestError),
                     invalidRequestError
                 );
+                const persistedTransportError = createPersistedTransportErrorState(invalidRequestError);
                 setRequestExecutionStates((previous) =>
                     finishRequestExecutionWithTransportError(previous, executingRequestId, invalidRequestError)
                 );
@@ -3551,7 +3626,8 @@ export default function App() {
                 setResponsesByRequestId((previous) => ({
                     ...previous,
                     [executingRequestId]: {
-                        response: previous[executingRequestId]?.response ?? null,
+                        response: null,
+                        transportError: persistedTransportError,
                         statusText: invalidRequestPresentation.title,
                         updatedAt: new Date().toISOString(),
                         testExecution: createPersistedTestExecution(preOnlyReport),
@@ -3618,6 +3694,7 @@ export default function App() {
                 ...previous,
                 [executingRequestId]: {
                     response: r,
+                    transportError: null,
                     statusText,
                     updatedAt: new Date().toISOString(),
                     testExecution: createPersistedTestExecution(fullReport),
@@ -3633,6 +3710,7 @@ export default function App() {
                 classifyTransportError(parsedTransportError),
                 parsedTransportError
             );
+            const persistedTransportError = createPersistedTransportErrorState(parsedTransportError);
             setRequestExecutionStates((previous) =>
                 finishRequestExecutionWithTransportError(previous, executingRequestId, parsedTransportError)
             );
@@ -3654,7 +3732,8 @@ export default function App() {
             setResponsesByRequestId((previous) => ({
                 ...previous,
                 [executingRequestId]: {
-                    response: previous[executingRequestId]?.response ?? null,
+                    response: null,
+                    transportError: persistedTransportError,
                     statusText,
                     updatedAt: new Date().toISOString(),
                     testExecution: createPersistedTestExecution(preOnlyReport),
@@ -3684,7 +3763,12 @@ export default function App() {
             setResponsesByRequestId((previous) => ({
                 ...previous,
                 [selectedRequestId]: {
-                    response: previous[selectedRequestId]?.response ?? null,
+                    response: null,
+                    transportError: createPersistedTransportErrorState({
+                        kind: "cancelled",
+                        message: "Request cancelled",
+                        durationMs: selectedRequestElapsedMs,
+                    }),
                     statusText,
                     updatedAt: new Date().toISOString(),
                     testExecution: previous[selectedRequestId]?.testExecution ?? null,
@@ -3975,7 +4059,11 @@ export default function App() {
                     setResponsesByRequestId((previous) => ({
                         ...previous,
                         [planItem.requestId]: {
-                            response: previous[planItem.requestId]?.response ?? null,
+                            response: null,
+                            transportError: createPersistedTransportErrorState({
+                                kind: "invalid_request",
+                                message: preparedRequest.message,
+                            }),
                             statusText,
                             updatedAt: new Date().toISOString(),
                             testExecution: createPersistedTestExecution(preOnlyReport),
@@ -4062,6 +4150,7 @@ export default function App() {
                         ...previous,
                         [planItem.requestId]: {
                             response,
+                            transportError: null,
                             statusText,
                             updatedAt: new Date().toISOString(),
                             testExecution: createPersistedTestExecution(combinedReport),
@@ -4125,7 +4214,13 @@ export default function App() {
                     setResponsesByRequestId((previous) => ({
                         ...previous,
                         [planItem.requestId]: {
-                            response: previous[planItem.requestId]?.response ?? null,
+                            response: null,
+                            transportError: createPersistedTransportErrorState({
+                                kind: parsed.code,
+                                message: parsed.message,
+                                detail: parsed.detail ?? undefined,
+                                durationMs: parsed.durationMs ?? undefined,
+                            }),
                             statusText,
                             updatedAt: new Date().toISOString(),
                             testExecution: createPersistedTestExecution(preOnlyReport),
@@ -5943,14 +6038,25 @@ export default function App() {
             <div
                 style={{
                     height: "calc(100vh - var(--pg-topbar-height))",
-                    padding: "8px 12px 10px",
+                    padding: "8px 12px 4px",
                     fontFamily: "system-ui",
                     display: "flex",
-                    gap: 0,
+                    flexDirection: "column",
+                    gap: 4,
                     overflow: "hidden",
                     boxSizing: "border-box",
                 }}
             >
+                <div
+                    style={{
+                        flex: 1,
+                        minHeight: 0,
+                        minWidth: 0,
+                        display: "flex",
+                        gap: 0,
+                        overflow: "hidden",
+                    }}
+                >
                 {/* Sidebar */}
                 <div
                     style={{
@@ -7468,12 +7574,15 @@ export default function App() {
                                 <div
                                     style={{
                                         minHeight: 0,
-                                        flex: 1,
-                                        overflow: "auto",
+                                        flex: "1 1 auto",
+                                        overflowY: "auto",
+                                        overflowX: "auto",
                                         display: "flex",
                                         flexDirection: "column",
                                         padding: 10,
                                         paddingTop: 8,
+                                        paddingBottom: 14,
+                                        boxSizing: "border-box",
                                     }}
                                 >
                                     <ResponsePanel
@@ -7517,6 +7626,10 @@ export default function App() {
                             <pre style={{ background: "var(--pg-surface-1)", color: "var(--pg-text-dim)", padding: 12 }}>None</pre>
                         </>
                     )}
+                </div>
+                </div>
+                <div style={applicationFooterStyle()}>
+                    {appVersion ? `v${appVersion}` : ""}
                 </div>
             </div>
 
@@ -9094,6 +9207,24 @@ function editorTabStyle(active: boolean): React.CSSProperties {
         boxShadow: active ? "inset 0 1px 0 rgba(255, 255, 255, 0.05)" : "none",
         fontWeight: active ? 700 : 600,
         transition: "border-color 130ms ease, background-color 130ms ease, color 130ms ease",
+    };
+}
+
+function applicationFooterStyle(): React.CSSProperties {
+    return {
+        height: 16,
+        minHeight: 16,
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        padding: "0 2px",
+        boxSizing: "border-box",
+        fontSize: 11,
+        lineHeight: "16px",
+        color: "var(--pg-text-muted)",
+        letterSpacing: 0.2,
+        userSelect: "none",
     };
 }
 

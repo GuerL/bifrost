@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
     cancelRequestExecution,
     classifyTransportError,
+    createPersistedTransportErrorState,
     emptyExecutionState,
+    executionStateFromPersistedTransportError,
     finishRequestExecutionWithResponse,
     finishRequestExecutionWithTransportError,
     isRequestRunning,
@@ -149,5 +151,100 @@ describe("request execution state", () => {
         expect(statusTextForExecutionState(emptyExecutionState(), 0, "No request sent yet.")).toBe(
             "No request sent yet."
         );
+    });
+
+    it("timeout result persists and restores with status badge and diagnostics", () => {
+        const persisted = createPersistedTransportErrorState(
+            {
+                kind: "request_timeout",
+                message: "Request timed out",
+                diagnostics: [
+                    { label: "Configured timeout", value: "60000 ms" },
+                    { label: "Elapsed time", value: "60002 ms" },
+                    { label: "Error chain", value: "Request\n└── Timeout\n    └── operation timed out" },
+                ],
+                durationMs: 60_002,
+            },
+            123
+        );
+        const restored = executionStateFromPersistedTransportError(persisted);
+
+        expect(restored).toMatchObject({
+            phase: "transport_error",
+            category: "request_timeout",
+            title: "Request timed out",
+            diagnostics: persisted.diagnostics,
+        });
+        expect(statusTextForExecutionState(restored, 0, "Idle")).toBe("⏱ Request timed out");
+    });
+
+    it("DNS failure persists and restores technical details for copy diagnostics", () => {
+        const persisted = createPersistedTransportErrorState(
+            {
+                kind: "dns",
+                message: "DNS resolution failed",
+                detail: "failed to lookup address information",
+                diagnostics: [
+                    { label: "Target URL", value: "https://api.example.com" },
+                    { label: "Failure phase", value: "DNS resolution" },
+                    { label: "Underlying error", value: "failed to lookup address information" },
+                    {
+                        label: "Error chain",
+                        value: "Request\n└── Connect\n    └── DNS\n        └── failed to lookup address information",
+                    },
+                ],
+            },
+            456
+        );
+        const restored = executionStateFromPersistedTransportError(persisted);
+
+        expect(restored).toMatchObject({
+            phase: "transport_error",
+            category: "dns",
+            title: "DNS resolution failed",
+            message: "The host name could not be resolved.",
+        });
+        expect(restored.phase === "transport_error" ? restored.diagnostics : []).toEqual(persisted.diagnostics);
+        expect(statusTextForExecutionState(restored, 0, "Idle")).toBe("❌ DNS failed");
+    });
+
+    it("a later success replaces a previous persisted error result", () => {
+        const errorState = executionStateFromPersistedTransportError(
+            createPersistedTransportErrorState({ kind: "dns", message: "DNS failed" }, 100)
+        );
+        const states = finishRequestExecutionWithResponse({ "req-a": errorState }, "req-a", response(200, 42), 200);
+
+        expect(states["req-a"]).toMatchObject({ phase: "success", response: { status: 200 } });
+        expect(statusTextForExecutionState(states["req-a"], 0, "Idle")).toBe("✅ 200 OK");
+    });
+
+    it("a later error replaces a previous persisted success result", () => {
+        const success = finishRequestExecutionWithResponse({}, "req-a", response(200, 42), 100);
+        const failed = finishRequestExecutionWithTransportError(
+            success,
+            "req-a",
+            { kind: "connection_refused", message: "connection refused" },
+            200
+        );
+
+        expect(failed["req-a"]).toMatchObject({
+            phase: "transport_error",
+            category: "connection_refused",
+            title: "Connection refused",
+        });
+    });
+
+    it("switching requests does not mix persisted transport errors between tabs", () => {
+        const states: RequestExecutionStateMap = {
+            "req-a": executionStateFromPersistedTransportError(
+                createPersistedTransportErrorState({ kind: "dns", message: "DNS failed" }, 100)
+            ),
+            "req-b": executionStateFromPersistedTransportError(
+                createPersistedTransportErrorState({ kind: "tls", message: "TLS failed" }, 200)
+            ),
+        };
+
+        expect(statusTextForExecutionState(states["req-a"], 0, "Idle")).toBe("❌ DNS failed");
+        expect(statusTextForExecutionState(states["req-b"], 0, "Idle")).toBe("🔒 TLS failed");
     });
 });

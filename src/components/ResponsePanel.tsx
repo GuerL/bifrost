@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getVersion } from "@tauri-apps/api/app";
 import type { HttpErrorDiagnosticDto, HttpResponseDto } from "../types.ts";
 import type { ScriptTestResult } from "../helpers/RequestScriptsRuntime.ts";
 import FindBar from "./FindBar.tsx";
@@ -98,7 +97,6 @@ export default function ResponsePanel({
     const [findQuery, setFindQuery] = useState("");
     const [findCaseSensitive, setFindCaseSensitive] = useState(false);
     const [activeMatchIndex, setActiveMatchIndex] = useState(-1);
-    const [appVersion, setAppVersion] = useState<string | null>(null);
     const copyResetTimerRef = useRef<number | null>(null);
     const findInputRef = useRef<HTMLInputElement | null>(null);
     const matchElementsRef = useRef<Array<HTMLSpanElement | null>>([]);
@@ -225,25 +223,6 @@ export default function ResponsePanel({
         };
     }, []);
 
-    useEffect(() => {
-        let cancelled = false;
-        void getVersion()
-            .then((version) => {
-                if (!cancelled) {
-                    setAppVersion(version);
-                }
-            })
-            .catch(() => {
-                if (!cancelled) {
-                    setAppVersion(null);
-                }
-            });
-
-        return () => {
-            cancelled = true;
-        };
-    }, []);
-
     const handleCopyBody = async () => {
         if (!bodyView.copyText) return;
         let copied = false;
@@ -349,41 +328,45 @@ export default function ResponsePanel({
             {activeTab === "body" && (
                 <>
                     {transportError && (
-                        <div style={transportErrorPanelStyle()}>
-                            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
-                                <div style={{ display: "grid", gap: 6 }}>
-                                    <div style={{ fontWeight: 700, color: "var(--pg-text)" }}>
-                                        {transportError.title}
+                        <div style={responseBodyContainerStyle()}>
+                            <div style={transportErrorPanelStyle()}>
+                                <div style={transportErrorContentStyle()}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
+                                        <div style={{ display: "grid", gap: 6 }}>
+                                            <div style={{ fontWeight: 700, color: "var(--pg-text)" }}>
+                                                {transportError.title}
+                                            </div>
+                                            <div style={{ color: "var(--pg-text-dim)", fontSize: 13 }}>
+                                                {transportError.message}
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => void copyDiagnosticsReport(transportError, requestMethod)}
+                                            style={copyDiagnosticsButtonStyle()}
+                                        >
+                                            Copy diagnostics
+                                        </button>
                                     </div>
-                                    <div style={{ color: "var(--pg-text-dim)", fontSize: 13 }}>
-                                        {transportError.message}
-                                    </div>
+                                    {(transportError.diagnostics?.length || transportError.detail) && (
+                                        <details style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
+                                            <summary style={{ cursor: "pointer" }}>Technical details</summary>
+                                            <div style={transportErrorDetailsGridStyle()}>
+                                                {(transportError.diagnostics?.length
+                                                    ? transportError.diagnostics
+                                                    : [{ label: "Underlying error", value: transportError.detail ?? "" }]
+                                                )
+                                                    .filter((row) => row.value.trim().length > 0)
+                                                    .map((row, index) => (
+                                                        <div key={`${row.label}-${index}`} style={transportErrorDetailRowStyle()}>
+                                                            <div style={transportErrorDetailLabelStyle()}>{row.label}</div>
+                                                            <div style={transportErrorDetailValueStyle()}>{row.value}</div>
+                                                        </div>
+                                                    ))}
+                                            </div>
+                                        </details>
+                                    )}
                                 </div>
-                                <button
-                                    onClick={() => void copyDiagnosticsReport(transportError, requestMethod)}
-                                    style={copyDiagnosticsButtonStyle()}
-                                >
-                                    Copy diagnostics
-                                </button>
                             </div>
-                            {(transportError.diagnostics?.length || transportError.detail) && (
-                                <details style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
-                                    <summary style={{ cursor: "pointer" }}>Technical details</summary>
-                                    <div style={transportErrorDetailsGridStyle()}>
-                                        {(transportError.diagnostics?.length
-                                            ? transportError.diagnostics
-                                            : [{ label: "Underlying error", value: transportError.detail ?? "" }]
-                                        )
-                                            .filter((row) => row.value.trim().length > 0)
-                                            .map((row, index) => (
-                                                <div key={`${row.label}-${index}`} style={transportErrorDetailRowStyle()}>
-                                                    <div style={transportErrorDetailLabelStyle()}>{row.label}</div>
-                                                    <div style={transportErrorDetailValueStyle()}>{row.value}</div>
-                                                </div>
-                                            ))}
-                                    </div>
-                                </details>
-                            )}
                         </div>
                     )}
                     {!transportError && findOpen && bodyMode === "raw" && (
@@ -461,11 +444,6 @@ export default function ResponsePanel({
                                         : bodyView.displayText}
                                 </pre>
                             )}
-                        </div>
-                    )}
-                    {appVersion && (
-                        <div style={responseVersionStyle()}>
-                            v{appVersion}
                         </div>
                     )}
                 </>
@@ -580,7 +558,7 @@ export default function ResponsePanel({
             )}
 
             {activeTab === "tests" && (
-                <div style={{ minHeight: 0, flex: 1, overflow: "auto" }}>
+                <div style={{ minHeight: 0, flex: 1, overflow: "visible" }}>
                     <ResponseTestsPanel
                         tests={scriptReport?.tests ?? []}
                         source={scriptReport?.source ?? "live"}
@@ -860,6 +838,7 @@ function responseBodyContainerStyle(): React.CSSProperties {
         flex: 1,
         display: "flex",
         position: "relative",
+        overflow: "hidden",
     };
 }
 
@@ -1049,17 +1028,6 @@ function responsePreviewFrameStyle(): React.CSSProperties {
     };
 }
 
-function responseVersionStyle(): React.CSSProperties {
-    return {
-        alignSelf: "flex-end",
-        marginTop: 2,
-        marginRight: 2,
-        fontSize: 11,
-        color: "var(--pg-text-muted)",
-        letterSpacing: 0.2,
-    };
-}
-
 function jsonTokenStyle(type: JsonTokenType): React.CSSProperties {
     if (type === "key") {
         return { color: "var(--pg-json-key)" };
@@ -1085,7 +1053,7 @@ function responsePanelStyle(): React.CSSProperties {
         minWidth: 0,
         minHeight: 0,
         flex: 1,
-        overflow: "auto",
+        overflow: "visible",
         borderRadius: 12,
         border: "1px solid var(--pg-border-soft)",
         background: "var(--pg-surface-alt)",
@@ -1153,13 +1121,32 @@ function scriptErrorStyle(): React.CSSProperties {
 
 function transportErrorPanelStyle(): React.CSSProperties {
     return {
+        width: "100%",
+        minWidth: 0,
+        minHeight: 0,
+        flex: 1,
         border: "1px solid rgba(239, 68, 68, 0.28)",
         borderRadius: 10,
         background: "rgba(239, 68, 68, 0.045)",
+        overflow: "hidden",
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+    };
+}
+
+function transportErrorContentStyle(): React.CSSProperties {
+    return {
+        minHeight: 0,
+        flex: 1,
+        overflowY: "auto",
+        overflowX: "auto",
         padding: 12,
+        paddingBottom: 16,
+        boxSizing: "border-box",
         display: "grid",
         gap: 8,
-        flexShrink: 0,
+        alignContent: "start",
     };
 }
 
