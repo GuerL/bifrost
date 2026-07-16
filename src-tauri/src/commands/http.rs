@@ -103,8 +103,8 @@ impl NetworkErrorKind {
             Self::ConnectionRefused => "Connection refused",
             Self::ConnectionTimeout => "Connection timeout",
             Self::RequestTimeout => "Request timeout",
-            Self::Tls => "TLS / certificate",
-            Self::Proxy => "Proxy transport",
+            Self::Tls => "TLS handshake",
+            Self::Proxy => "Proxy connection",
             Self::ProxyAuthentication => "Proxy authentication",
             Self::ConnectionReset => "Connection reset",
             Self::Connection => "Connection",
@@ -189,7 +189,7 @@ fn source_messages(error: &(dyn Error + 'static)) -> Vec<String> {
 
 fn error_chain_hierarchy(error: &(dyn Error + 'static), kind: NetworkErrorKind) -> String {
     let messages = source_messages(error);
-    let mut nodes = vec!["Reqwest".to_string()];
+    let mut nodes = vec!["Request".to_string()];
 
     match kind {
         NetworkErrorKind::Dns => {
@@ -401,7 +401,12 @@ fn build_transport_diagnostics(
         }
     }
 
-    rows.push(diagnostic("Reqwest error kind", reqwest_error_kind(e)));
+    if !matches!(
+        kind,
+        NetworkErrorKind::RequestTimeout | NetworkErrorKind::ConnectionTimeout
+    ) {
+        rows.push(diagnostic("Reqwest error kind", reqwest_error_kind(e)));
+    }
     rows.push(diagnostic("Error chain", error_chain_hierarchy(e, kind)));
     rows
 }
@@ -421,43 +426,45 @@ fn concise_underlying_error(message: &str) -> String {
 
 fn classify_reqwest_error_kind(e: &reqwest::Error, msg_lower: &str) -> NetworkErrorKind {
     let io_kind = io_error_kind(e);
+    let chain_text = source_messages(e).join(" ").to_lowercase();
+    let text = format!("{msg_lower} {chain_text}");
 
-    if msg_lower.contains("proxy authentication")
-        || msg_lower.contains("proxy auth")
-        || msg_lower.contains("407")
+    if text.contains("proxy authentication") || text.contains("proxy auth") || text.contains("407")
     {
         return NetworkErrorKind::ProxyAuthentication;
     }
-    if msg_lower.contains("proxy connect")
-        || msg_lower.contains("proxy error")
-        || msg_lower.contains("proxy tunnel")
+    if text.contains("proxy connect")
+        || text.contains("proxy error")
+        || text.contains("proxy tunnel")
     {
         return NetworkErrorKind::Proxy;
     }
-    if msg_lower.contains("invalid header")
-        || msg_lower.contains("header name")
-        || msg_lower.contains("header value")
+    if text.contains("invalid header")
+        || text.contains("header name")
+        || text.contains("header value")
     {
         return NetworkErrorKind::InvalidHeader;
     }
     if e.is_builder() {
-        if msg_lower.contains("url") {
+        if text.contains("url") {
             return NetworkErrorKind::InvalidUrl;
         }
         return NetworkErrorKind::InvalidRequest;
     }
 
-    if msg_lower.contains("dns")
-        || msg_lower.contains("failed to lookup address")
-        || msg_lower.contains("failed to lookup address information")
-        || msg_lower.contains("name or service not known")
-        || msg_lower.contains("nodename nor servname provided")
-        || msg_lower.contains("temporary failure in name resolution")
+    if text.contains("dns")
+        || text.contains("failed to lookup address")
+        || text.contains("failed to lookup address information")
+        || text.contains("name or service not known")
+        || text.contains("nodename nor servname provided")
+        || text.contains("temporary failure in name resolution")
+        || text.contains("no address associated with hostname")
+        || text.contains("could not resolve host")
     {
         return NetworkErrorKind::Dns;
     }
 
-    if io_kind == Some(io::ErrorKind::ConnectionRefused) || msg_lower.contains("connection refused")
+    if io_kind == Some(io::ErrorKind::ConnectionRefused) || text.contains("connection refused")
     {
         return NetworkErrorKind::ConnectionRefused;
     }
@@ -465,8 +472,8 @@ fn classify_reqwest_error_kind(e: &reqwest::Error, msg_lower: &str) -> NetworkEr
     if io_kind == Some(io::ErrorKind::TimedOut) || e.is_timeout() {
         if e.is_connect()
             || msg_lower.contains("tcp")
-            || msg_lower.contains("connect")
-            || msg_lower.contains("connecting")
+            || text.contains("connect")
+            || text.contains("connecting")
         {
             return NetworkErrorKind::ConnectionTimeout;
         }
@@ -474,25 +481,25 @@ fn classify_reqwest_error_kind(e: &reqwest::Error, msg_lower: &str) -> NetworkEr
     }
 
     if io_kind == Some(io::ErrorKind::ConnectionReset)
-        || msg_lower.contains("connection reset")
-        || msg_lower.contains("reset by peer")
+        || text.contains("connection reset")
+        || text.contains("reset by peer")
     {
         return NetworkErrorKind::ConnectionReset;
     }
 
-    if msg_lower.contains("tls")
-        || msg_lower.contains("certificate")
-        || msg_lower.contains("unknownissuer")
-        || msg_lower.contains("x509")
-        || msg_lower.contains("ssl")
+    if text.contains("tls")
+        || text.contains("certificate")
+        || text.contains("unknownissuer")
+        || text.contains("x509")
+        || text.contains("ssl")
     {
         return NetworkErrorKind::Tls;
     }
-    if e.is_redirect() || msg_lower.contains("redirect") {
+    if e.is_redirect() || text.contains("redirect") {
         return NetworkErrorKind::Redirect;
     }
     if e.is_connect() {
-        if msg_lower.contains("proxy") {
+        if text.contains("proxy") {
             return NetworkErrorKind::Proxy;
         }
         return NetworkErrorKind::Connection;
@@ -500,10 +507,10 @@ fn classify_reqwest_error_kind(e: &reqwest::Error, msg_lower: &str) -> NetworkEr
     if e.is_body() {
         return NetworkErrorKind::ResponseBody;
     }
-    if msg_lower.contains("http/2")
-        || msg_lower.contains("frame")
-        || msg_lower.contains("unexpected eof")
-        || msg_lower.contains("broken pipe")
+    if text.contains("http/2")
+        || text.contains("frame")
+        || text.contains("unexpected eof")
+        || text.contains("broken pipe")
     {
         return NetworkErrorKind::ResponseBody;
     }

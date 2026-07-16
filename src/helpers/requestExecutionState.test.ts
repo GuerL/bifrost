@@ -80,7 +80,7 @@ describe("request execution state", () => {
             title: "Request timed out",
             message: "The server did not respond within 5000 ms.",
         });
-        expect(statusTextForExecutionState(timedOut["req-a"], 0, "Idle")).toBe("❌ Request timed out");
+        expect(statusTextForExecutionState(timedOut["req-a"], 0, "Idle")).toBe("⏱ Request timed out");
     });
 
     it("classifies transport errors into friendly categories", () => {
@@ -102,7 +102,7 @@ describe("request execution state", () => {
 
         expect(states["req-a"]).toMatchObject({ phase: "http_error", response: { status: 500 } });
         expect(statusTextForExecutionState(states["req-a"], 0, "Idle")).toBe(
-            "❌ 500 Internal Server Error"
+            "❌ HTTP 500"
         );
     });
 

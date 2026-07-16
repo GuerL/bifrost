@@ -42,6 +42,7 @@ type HighlightSegment = {
 type ResponsePanelProps = {
     response: HttpResponseDto | null;
     statusText: string;
+    requestMethod?: string;
     transportError?: {
         title: string;
         message: string;
@@ -66,6 +67,7 @@ type ResponsePanelProps = {
 export default function ResponsePanel({
     response,
     statusText,
+    requestMethod,
     transportError,
     scriptReport,
     runtimeVariables,
@@ -348,11 +350,21 @@ export default function ResponsePanel({
                 <>
                     {transportError && (
                         <div style={transportErrorPanelStyle()}>
-                            <div style={{ fontWeight: 700, color: "var(--pg-text)" }}>
-                                {transportError.title}
-                            </div>
-                            <div style={{ color: "var(--pg-text-dim)", fontSize: 13 }}>
-                                {transportError.message}
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
+                                <div style={{ display: "grid", gap: 6 }}>
+                                    <div style={{ fontWeight: 700, color: "var(--pg-text)" }}>
+                                        {transportError.title}
+                                    </div>
+                                    <div style={{ color: "var(--pg-text-dim)", fontSize: 13 }}>
+                                        {transportError.message}
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => void copyDiagnosticsReport(transportError, requestMethod)}
+                                    style={copyDiagnosticsButtonStyle()}
+                                >
+                                    Copy diagnostics
+                                </button>
                             </div>
                             {(transportError.diagnostics?.length || transportError.detail) && (
                                 <details style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>
@@ -628,6 +640,63 @@ function formatTransportErrorBody(error: NonNullable<ResponsePanelProps["transpo
         canPreview: false,
         previewHtml: null,
     };
+}
+
+async function copyDiagnosticsReport(
+    error: NonNullable<ResponsePanelProps["transportError"]>,
+    requestMethod?: string
+) {
+    const diagnostics = error.diagnostics ?? [];
+    const valueFor = (label: string) =>
+        diagnostics.find((row) => row.label.toLowerCase() === label.toLowerCase())?.value;
+    const lines = [
+        "------------------------------------------------",
+        "",
+        "Network error",
+        "",
+        "Category:",
+        error.title,
+        "",
+        "URL:",
+        valueFor("Target URL") ?? "n/a",
+        "",
+        "Method:",
+        requestMethod?.toUpperCase() ?? "n/a",
+    ];
+
+    const preferredLabels = [
+        "Failure phase",
+        "Configured timeout",
+        "Elapsed time",
+        "Proxy",
+        "Authentication",
+        "TLS validation",
+        "Certificate",
+        "Host",
+        "Resolver",
+        "Underlying transport error",
+        "Underlying error",
+    ];
+
+    for (const label of preferredLabels) {
+        const value = valueFor(label);
+        if (!value) continue;
+        lines.push("", `${label}:`, value);
+    }
+
+    const errorChain = valueFor("Error chain");
+    if (errorChain) {
+        lines.push("", "Error chain:", "", errorChain);
+    }
+
+    lines.push("", "------------------------------------------------");
+
+    try {
+        await copyTextToClipboard(lines.join("\n"));
+        notifySuccess("Diagnostics copied");
+    } catch {
+        notifyError("Failed to copy diagnostics");
+    }
 }
 
 function isHtmlContent(contentType: string, body: string): boolean {
@@ -1084,12 +1153,23 @@ function scriptErrorStyle(): React.CSSProperties {
 
 function transportErrorPanelStyle(): React.CSSProperties {
     return {
-        border: "1px solid rgba(239, 68, 68, 0.38)",
+        border: "1px solid rgba(239, 68, 68, 0.28)",
         borderRadius: 10,
-        background: "rgba(239, 68, 68, 0.08)",
+        background: "rgba(239, 68, 68, 0.045)",
         padding: 12,
         display: "grid",
         gap: 8,
+        flexShrink: 0,
+    };
+}
+
+function copyDiagnosticsButtonStyle(): React.CSSProperties {
+    return {
+        ...buttonStyle(false),
+        height: 28,
+        minWidth: 118,
+        padding: "0 10px",
+        fontSize: 12,
         flexShrink: 0,
     };
 }

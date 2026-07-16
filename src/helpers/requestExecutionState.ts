@@ -211,7 +211,7 @@ export function statusTextForExecutionState(
     if (state.phase === "success") return `✅ ${state.response.status} ${httpStatusReason(state.response.status)}`;
     if (state.phase === "http_error") {
         const prefix = state.response.status >= 500 ? "❌" : "⚠";
-        return `${prefix} ${state.response.status} ${httpStatusReason(state.response.status)}`;
+        return `${prefix} HTTP ${state.response.status}`;
     }
     return statusBadgeForTransportError(state.category);
 }
@@ -225,7 +225,7 @@ function statusBadgeForTransportError(category: TransportErrorCategory): string 
         case "connection_timeout":
             return "❌ Connection timed out";
         case "request_timeout":
-            return "❌ Request timed out";
+            return "⏱ Request timed out";
         case "tls":
             return "🔒 TLS failed";
         case "proxy":

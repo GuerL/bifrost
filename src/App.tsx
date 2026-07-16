@@ -7479,6 +7479,7 @@ export default function App() {
                                     <ResponsePanel
                                         response={selectedTransportError ? null : resp}
                                         statusText={selectedResponseStatusText}
+                                        requestMethod={draft.method}
                                         transportError={selectedTransportError}
                                         scriptReport={selectedScriptReport}
                                         runtimeVariables={executionRuntimeActive ? executionRuntimeVariables : {}}
