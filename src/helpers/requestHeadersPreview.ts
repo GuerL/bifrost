@@ -4,6 +4,7 @@ const VARIABLE_PATTERN = /{{\s*([^{}]+?)\s*}}/g;
 
 export const CALCULATED_HEADER_VALUE = "<calculated when request is sent>";
 export const NOT_SET_HEADER_VALUE = "<not set>";
+export const OVERRIDDEN_HEADER_VALUE = "Overridden by custom header";
 export const GENERATED_HEADER_DISABLE_WARNING =
     "Disabling generated headers may cause server errors such as 400 Bad Request.";
 
@@ -15,7 +16,7 @@ type GeneratedHeaderMeta = {
 
 const GENERATED_HEADERS: GeneratedHeaderMeta[] = [
     { key: "host", label: "Host", note: "Derived from request URL" },
-    { key: "user-agent", label: "User-Agent", note: "Not set by default" },
+    { key: "user-agent", label: "User-Agent", note: "Bifrost runtime identifier" },
     { key: "accept", label: "Accept", note: "reqwest default" },
     { key: "accept-encoding", label: "Accept-Encoding", note: "Managed by HTTP client" },
     { key: "connection", label: "Connection", note: "Managed by HTTP client" },
@@ -47,6 +48,7 @@ export type GeneratedHeaderPreviewRow = {
 type BuildGeneratedHeadersPreviewArgs = {
     request: Request;
     variableValues?: Map<string, string>;
+    appVersion?: string | null;
 };
 
 export function generatedHeaderLabel(headerName: GeneratedHeaderName): string {
@@ -233,17 +235,23 @@ function inferContentType(request: Request): string {
 function inferGeneratedHeaderValue(
     key: GeneratedHeaderName,
     request: Request,
-    variableValues: Map<string, string>
+    variableValues: Map<string, string>,
+    appVersion?: string | null
 ): string {
     if (key === "host") return inferHost(request.url, variableValues);
     if (key === "content-length") return inferContentLength(request);
     if (key === "content-type") return inferContentType(request);
     if (key === "accept") return "*/*";
-    if (key === "user-agent") return NOT_SET_HEADER_VALUE;
+    if (key === "user-agent") return defaultUserAgentValue(appVersion);
     if (key === "accept-encoding") return CALCULATED_HEADER_VALUE;
     if (key === "connection") return CALCULATED_HEADER_VALUE;
     if (key === "cookie") return NOT_SET_HEADER_VALUE;
     return CALCULATED_HEADER_VALUE;
+}
+
+export function defaultUserAgentValue(appVersion?: string | null): string {
+    const version = appVersion?.trim();
+    return version ? `BifrostRuntime/${version}` : CALCULATED_HEADER_VALUE;
 }
 
 export function defaultGeneratedHeaderControls(): GeneratedHeaderControl[] {
@@ -292,17 +300,34 @@ export function disabledRequestHeaders(headers: KeyValue[]): KeyValue[] {
     return headers.filter((header) => !isHeaderEnabled(header));
 }
 
+function hasEnabledHeader(headers: KeyValue[], headerName: string): boolean {
+    return headers.some((header) => {
+        if (!isHeaderEnabled(header)) return false;
+        return header.key.trim().toLowerCase() === headerName;
+    });
+}
+
 export function buildGeneratedHeadersPreview({
     request,
     variableValues,
+    appVersion,
 }: BuildGeneratedHeadersPreviewArgs): GeneratedHeaderPreviewRow[] {
     const resolvedVariableValues = variableValues ?? new Map<string, string>();
     const enabledByKey = generatedHeaderControlMap(request);
+    const customUserAgentEnabled = hasEnabledHeader(request.headers, "user-agent");
 
     return GENERATED_HEADERS.map((item) => ({
         key: item.key,
         label: item.label,
-        value: inferGeneratedHeaderValue(item.key, request, resolvedVariableValues),
+        value:
+            item.key === "user-agent" && customUserAgentEnabled
+                ? OVERRIDDEN_HEADER_VALUE
+                : inferGeneratedHeaderValue(
+                      item.key,
+                      request,
+                      resolvedVariableValues,
+                      appVersion
+                  ),
         enabled: enabledByKey.get(item.key) !== false,
         note: item.note,
     }));

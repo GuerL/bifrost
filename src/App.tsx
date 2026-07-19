@@ -2176,8 +2176,9 @@ export default function App() {
         return generatedHeaderDisplayRows({
             request: draft,
             variableValues: runtimeVariableValues,
+            appVersion,
         });
-    }, [draft, runtimeVariableValues]);
+    }, [appVersion, draft, runtimeVariableValues]);
 
     useEffect(() => {
         let cancelled = false;
@@ -2210,10 +2211,11 @@ export default function App() {
         return buildRequestDebugInfo({
             request: draft,
             variableValues: runtimeVariableValues,
+            appVersion,
             proxyTransport: proxyResolutionInfo,
             generalSettings: appSettings.general,
         });
-    }, [appSettings.general, draft, runtimeVariableValues, proxyResolutionInfo]);
+    }, [appSettings.general, appVersion, draft, runtimeVariableValues, proxyResolutionInfo]);
 
     const requestDebugText = useMemo(() => {
         if (!requestDebugInfo) return "";
@@ -2240,6 +2242,7 @@ export default function App() {
         const preview = buildRequestDebugInfo({
             request: draft,
             variableValues: runtimeVariableValues,
+            appVersion,
             generalSettings: appSettings.general,
         });
 
@@ -2285,7 +2288,7 @@ export default function App() {
         return () => {
             cancelled = true;
         };
-    }, [draft, runtimeVariableValues, appSettings.general, appSettings.proxy]);
+    }, [appVersion, draft, runtimeVariableValues, appSettings.general, appSettings.proxy]);
 
     useEffect(() => {
         if (tab !== "debug" || !draft) {
@@ -2297,6 +2300,7 @@ export default function App() {
         const preview = buildRequestDebugInfo({
             request: draft,
             variableValues: runtimeVariableValues,
+            appVersion,
             generalSettings: appSettings.general,
         });
 
@@ -2335,7 +2339,7 @@ export default function App() {
         return () => {
             cancelled = true;
         };
-    }, [tab, draft, runtimeVariableValues, appSettings.general, appSettings.proxy]);
+    }, [appVersion, tab, draft, runtimeVariableValues, appSettings.general, appSettings.proxy]);
 
     const {
         beforeMountMonaco,
@@ -7300,7 +7304,7 @@ export default function App() {
                                         </div>
                                     )}
                                     <div style={{ display: "grid", gap: 4 }}>
-                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Enabled headers</div>
+                                        <div style={{ fontSize: 12, color: "var(--pg-text-muted)" }}>Final request</div>
                                         <pre
                                             style={{
                                                 margin: 0,
