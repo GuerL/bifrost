@@ -11,6 +11,7 @@ type MultipartBodyEditorProps = {
     resolveVariableStatus: (name: string) => VariableStatus;
     resolveVariableValue: (name: string) => string | undefined;
     variableSuggestions: string[];
+    disabled?: boolean;
 };
 
 async function openFileDialog(multiple: boolean): Promise<string[]> {
@@ -37,8 +38,10 @@ export default function MultipartBodyEditor({
     resolveVariableStatus,
     resolveVariableValue,
     variableSuggestions,
+    disabled = false,
 }: MultipartBodyEditorProps) {
     async function onAddFileRows() {
+        if (disabled) return;
         try {
             const selectedPaths = await openFileDialog(true);
             if (selectedPaths.length === 0) return;
@@ -50,6 +53,7 @@ export default function MultipartBodyEditor({
     }
 
     async function onPickRowFile(fieldId: string) {
+        if (disabled) return;
         const row = fields.find((entry) => entry.id === fieldId);
         if (!row || row.kind !== "file") return;
 
@@ -85,14 +89,15 @@ export default function MultipartBodyEditor({
                     resolveVariableStatus={resolveVariableStatus}
                     resolveVariableValue={resolveVariableValue}
                     variableSuggestions={variableSuggestions}
+                    disabled={disabled}
                 />
             ))}
 
             <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => onChange([...fields, createMultipartTextField()])}>
+                <button disabled={disabled} onClick={() => onChange([...fields, createMultipartTextField()])}>
                     + Add field
                 </button>
-                <button onClick={() => void onAddFileRows()}>+ Add file</button>
+                <button disabled={disabled} onClick={() => void onAddFileRows()}>+ Add file</button>
             </div>
         </div>
     );

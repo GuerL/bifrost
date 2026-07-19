@@ -23,6 +23,7 @@ type RequestBodyEditorProps = {
     editorPanelStyle: (height: number | string, minHeight?: number) => React.CSSProperties;
     onSubmitShortcut: () => void;
     fillHeight?: boolean;
+    readOnly?: boolean;
 };
 
 function languageFromContentType(contentType: string): string {
@@ -156,6 +157,7 @@ export default function RequestBodyEditor({
     editorPanelStyle,
     onSubmitShortcut,
     fillHeight = false,
+    readOnly = false,
 }: RequestBodyEditorProps) {
     const submitShortcutRef = useRef(onSubmitShortcut);
     const textDraftByRequestIdRef = useRef<Record<string, string>>({});
@@ -275,6 +277,7 @@ export default function RequestBodyEditor({
                 value={draft.body.type}
                 options={BODY_TYPE_OPTIONS}
                 ariaLabel="Request body type"
+                disabled={readOnly}
                 onValueChange={(nextValue) => {
                     applyBodyTypeSwitch(nextValue as Body["type"]);
                 }}
@@ -331,7 +334,7 @@ export default function RequestBodyEditor({
                                         });
                                     }
                                 }}
-                                options={editorOptions}
+                                options={{ ...editorOptions, readOnly }}
                             />
                         </div>
                     </div>
@@ -366,6 +369,7 @@ export default function RequestBodyEditor({
                             resolveVariableStatus={resolveVariableStatus}
                             resolveVariableValue={resolveVariableValue}
                             variableSuggestions={variableSuggestions}
+                            disabled={readOnly}
                         />
                         <div style={fillHeight ? { minHeight: 0, flex: 1 } : undefined}>
                             <div style={editorPanelStyle(fillHeight ? "100%" : "min(34vh, 320px)", fillHeight ? 160 : 180)}>
@@ -393,7 +397,7 @@ export default function RequestBodyEditor({
                                             },
                                         })
                                     }
-                                    options={editorOptions}
+                                    options={{ ...editorOptions, readOnly }}
                                 />
                             </div>
                         </div>
@@ -413,6 +417,7 @@ export default function RequestBodyEditor({
                     resolveVariableStatus={resolveVariableStatus}
                     resolveVariableValue={resolveVariableValue}
                     variableSuggestions={variableSuggestions}
+                    disabled={readOnly}
                 />
             )}
 
@@ -428,6 +433,7 @@ export default function RequestBodyEditor({
                     resolveVariableStatus={resolveVariableStatus}
                     resolveVariableValue={resolveVariableValue}
                     variableSuggestions={variableSuggestions}
+                    disabled={readOnly}
                 />
             )}
         </div>

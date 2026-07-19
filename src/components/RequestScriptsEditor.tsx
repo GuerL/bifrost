@@ -21,6 +21,7 @@ type RequestScriptsEditorProps = {
     onSubmitShortcut: () => void;
     revealLocation?: ScriptRevealLocation | null;
     fillHeight?: boolean;
+    readOnly?: boolean;
 };
 
 export default function RequestScriptsEditor({
@@ -34,6 +35,7 @@ export default function RequestScriptsEditor({
     onSubmitShortcut,
     revealLocation,
     fillHeight = false,
+    readOnly = false,
 }: RequestScriptsEditorProps) {
     const [activePanel, setActivePanel] = useState<"pre" | "post">("pre");
     const showingPre = activePanel === "pre";
@@ -178,7 +180,7 @@ bf.env.set("lastAccessToken", response?.token ?? "");`}
                                     post_response: showingPre ? scripts.post_response : value ?? "",
                                 })
                             }
-                            options={editorOptions}
+                            options={{ ...editorOptions, readOnly }}
                         />
                     </div>
                 </div>

@@ -731,3 +731,9 @@ button.pg-app-select-trigger:hover:not(:disabled) {
   background: rgba(var(--pg-primary-rgb), 0.16);
   border-left: 2px solid var(--pg-primary);
 }
+
+@keyframes pg-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

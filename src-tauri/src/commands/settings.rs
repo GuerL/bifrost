@@ -103,6 +103,10 @@ pub struct AboutRuntimeInfo {
 }
 
 impl ResolvedProxyTransport {
+    pub(crate) fn credentials_configured(&self) -> bool {
+        self.credentials_configured
+    }
+
     fn direct(detail: Option<String>) -> Self {
         Self {
             info: ProxyResolutionInfo {
@@ -254,19 +258,18 @@ pub(crate) fn resolve_effective_proxy_transport(
     } else {
         None
     };
-    let environment_proxy_source = if proxy_settings.use_system_proxy
-        && proxy_settings.respect_environment_variables
-    {
-        load_system_proxy_environment_fallback_source(
-            &proxy_settings,
-            system_proxy.as_ref(),
-            macos_system_configuration.as_ref(),
-        )
-    } else if proxy_settings.respect_environment_variables {
-        load_environment_proxy_source(&proxy_settings)
-    } else {
-        empty_environment_proxy_source()
-    };
+    let environment_proxy_source =
+        if proxy_settings.use_system_proxy && proxy_settings.respect_environment_variables {
+            load_system_proxy_environment_fallback_source(
+                &proxy_settings,
+                system_proxy.as_ref(),
+                macos_system_configuration.as_ref(),
+            )
+        } else if proxy_settings.respect_environment_variables {
+            load_environment_proxy_source(&proxy_settings)
+        } else {
+            empty_environment_proxy_source()
+        };
 
     let mut resolved = resolve_proxy_from_sources(
         url,
@@ -579,18 +582,14 @@ fn diagnostics_detected_source_label(
     }
 }
 
-fn diagnostics_pac_support_label(
-    resolved: &ResolvedProxyTransport,
-) -> Option<&'static str> {
+fn diagnostics_pac_support_label(resolved: &ResolvedProxyTransport) -> Option<&'static str> {
     match resolved.system_fallback_reason {
         Some(SystemProxyFallbackReason::PacUnsupported) => Some("not implemented"),
         None => None,
     }
 }
 
-fn diagnostics_fallback_source_label(
-    resolved: &ResolvedProxyTransport,
-) -> Option<&'static str> {
+fn diagnostics_fallback_source_label(resolved: &ResolvedProxyTransport) -> Option<&'static str> {
     match resolved.system_fallback_reason {
         Some(SystemProxyFallbackReason::PacUnsupported) => resolved
             .environment_origin
@@ -891,11 +890,7 @@ fn format_proxy_diagnostics_log_lines(report: &ProxyDiagnosticsInfo) -> Vec<Stri
     ));
     lines.push(format!(
         "pac_support={}",
-        report
-            .resolution
-            .pac_support
-            .as_deref()
-            .unwrap_or("none")
+        report.resolution.pac_support.as_deref().unwrap_or("none")
     ));
     lines.push(format!(
         "fallback_source={}",
@@ -1141,10 +1136,9 @@ fn load_environment_proxy_config_from_process() -> Option<ProxyConfig> {
 }
 
 fn load_environment_proxy_source(proxy_settings: &ProxySettings) -> EnvironmentProxySource {
-    let manual_snapshots =
-        capture_proxy_environment_variable_snapshots_from_manual_settings(
-            &proxy_settings.manual_environment,
-        );
+    let manual_snapshots = capture_proxy_environment_variable_snapshots_from_manual_settings(
+        &proxy_settings.manual_environment,
+    );
     let process_snapshots = capture_proxy_environment_variable_snapshots_from_process();
     let login_shell_snapshots = capture_proxy_environment_variable_snapshots_from_login_shell();
 
@@ -1168,7 +1162,10 @@ fn build_system_proxy_environment_fallback_source_from_snapshots(
 }
 
 fn build_environment_proxy_source_from_snapshot_sets(
-    snapshot_sets: &[(EnvironmentProxyOrigin, Vec<ProxyEnvironmentVariableSnapshot>)],
+    snapshot_sets: &[(
+        EnvironmentProxyOrigin,
+        Vec<ProxyEnvironmentVariableSnapshot>,
+    )],
 ) -> EnvironmentProxySource {
     let mut merged_pairs = Vec::new();
     let mut origin = None;
@@ -1824,9 +1821,7 @@ mod tests {
                 _ => None,
             }),
         );
-        let config = source
-            .config
-            .expect("system fallback proxy should exist");
+        let config = source.config.expect("system fallback proxy should exist");
 
         assert_eq!(
             config.proxies.get("http").map(String::as_str),
@@ -1880,10 +1875,7 @@ mod tests {
     fn no_proxy_suffix_patterns_bypass_local_domains() {
         let source = build_environment_proxy_source_from_pairs(
             [
-                (
-                    "all_proxy".to_string(),
-                    "http://127.0.0.1:3128".to_string(),
-                ),
+                ("all_proxy".to_string(), "http://127.0.0.1:3128".to_string()),
                 ("no_proxy".to_string(), ".local,localhost".to_string()),
             ],
             Some(EnvironmentProxyOrigin::LoginShell),
@@ -1929,7 +1921,10 @@ mod tests {
             ),
             "PAC"
         );
-        assert_eq!(diagnostics_pac_support_label(&resolved), Some("not implemented"));
+        assert_eq!(
+            diagnostics_pac_support_label(&resolved),
+            Some("not implemented")
+        );
         assert_eq!(
             diagnostics_fallback_source_label(&resolved),
             Some("Login Shell Environment")

@@ -6,6 +6,7 @@ import {
     useRef,
     useState,
 } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { isPending } from "./helpers/HttpHelper";
 import Editor from "@monaco-editor/react";
@@ -95,6 +96,23 @@ import {
     setFullDraftInMap,
 } from "./helpers/requestExecutionSnapshot.ts";
 import {
+    cancelRequestExecution,
+    createPersistedTransportErrorState,
+    emptyExecutionState,
+    executionStateFromPersistedTransportError,
+    finishRequestExecutionWithResponse,
+    finishRequestExecutionWithTransportError,
+    formatElapsedSeconds,
+    isRequestRunning,
+    startRequestExecution,
+    statusTextForExecutionState,
+    transportErrorPresentation,
+    classifyTransportError,
+    type TransportErrorCategory,
+    type PersistedTransportErrorState,
+    type RequestExecutionStateMap,
+} from "./helpers/requestExecutionState.ts";
+import {
     defaultGeneratedHeaderControls,
     GENERATED_HEADER_DISABLE_WARNING,
     generatedHeaderControlsWithDefaults,
@@ -122,6 +140,7 @@ import type {
     CollectionMeta,
     Environment,
     GeneratedHeaderName,
+    HttpErrorDiagnosticDto,
     HttpResponseDto,
     ImportPostmanResult,
     ImportPortableResult,
@@ -294,10 +313,13 @@ type PersistedTabsState = Record<string, PersistedTabsEntry>;
 
 type PersistedResponseEntry = {
     response: HttpResponseDto | null;
+    transportError: PersistedTransportError | null;
     statusText: string;
     updatedAt: string;
     testExecution: PersistedTestExecution | null;
 };
+
+type PersistedTransportError = PersistedTransportErrorState;
 
 type PersistedResponsesCollection = Record<string, PersistedResponseEntry>;
 type PersistedResponsesState = Record<string, PersistedResponsesCollection>;
@@ -479,18 +501,35 @@ function dynamicVariablePreview(name: string): string | undefined {
     return DYNAMIC_VARIABLE_PREVIEWS[normalizeDynamicVariableKey(name)];
 }
 
-function parseHttpError(error: unknown): { kind: string; message: string; detail?: string; durationMs?: number } {
+function parseHttpError(error: unknown): {
+    kind: string;
+    message: string;
+    detail?: string;
+    diagnostics?: HttpErrorDiagnosticDto[];
+    durationMs?: number;
+} {
     const source = error as {
         kind?: unknown;
         message?: unknown;
         detail?: unknown;
+        diagnostics?: unknown;
         duration_ms?: unknown;
     };
+    const diagnostics = Array.isArray(source?.diagnostics)
+        ? source.diagnostics
+            .map((entry) => {
+                const row = entry as { label?: unknown; value?: unknown };
+                if (typeof row.label !== "string" || typeof row.value !== "string") return null;
+                return { label: row.label, value: row.value };
+            })
+            .filter((entry): entry is HttpErrorDiagnosticDto => entry !== null)
+        : undefined;
 
     return {
         kind: typeof source?.kind === "string" ? source.kind : "unknown",
         message: typeof source?.message === "string" ? source.message : String(error),
         detail: typeof source?.detail === "string" ? source.detail : undefined,
+        diagnostics,
         durationMs: typeof source?.duration_ms === "number" ? source.duration_ms : undefined,
     };
 }
@@ -498,9 +537,14 @@ function parseHttpError(error: unknown): { kind: string; message: string; detail
 function httpErrorKindLabel(kind: string): string {
     const normalized = kind.trim().toLowerCase();
     if (normalized === "dns") return "DNS error";
-    if (normalized === "connect") return "Connection error";
-    if (normalized === "timeout") return "Timeout";
+    if (normalized === "connect" || normalized === "connection") return "Connection error";
+    if (normalized === "connection_refused") return "Connection refused";
+    if (normalized === "connection_timeout") return "Connection timed out";
+    if (normalized === "request_timeout" || normalized === "timeout") return "Request timed out";
+    if (normalized === "connection_reset") return "Connection reset";
     if (normalized === "tls" || normalized === "tls_config") return "TLS error";
+    if (normalized === "proxy") return "Proxy error";
+    if (normalized === "proxy_auth") return "Proxy authentication error";
     if (normalized === "invalid_header") return "Invalid header";
     if (normalized === "protocol") return "Protocol error";
     if (normalized === "invalid_url") return "Invalid URL";
@@ -919,6 +963,42 @@ function sanitizeHttpResponse(input: unknown): HttpResponseDto | null {
     };
 }
 
+function sanitizeHttpErrorDiagnostics(input: unknown): HttpErrorDiagnosticDto[] {
+    if (!Array.isArray(input)) return [];
+    return input
+        .map((entry) => {
+            const row = entry as { label?: unknown; value?: unknown };
+            if (typeof row.label !== "string" || typeof row.value !== "string") {
+                return null;
+            }
+            return { label: row.label, value: row.value };
+        })
+        .filter((entry): entry is HttpErrorDiagnosticDto => entry !== null);
+}
+
+function sanitizePersistedTransportError(input: unknown): PersistedTransportError | null {
+    if (!input || typeof input !== "object") return null;
+    const source = input as Record<string, unknown>;
+    if (
+        typeof source.category !== "string" ||
+        typeof source.title !== "string" ||
+        typeof source.message !== "string" ||
+        typeof source.completedAt !== "number"
+    ) {
+        return null;
+    }
+
+    return {
+        category: source.category as TransportErrorCategory,
+        title: source.title,
+        message: source.message,
+        detail: typeof source.detail === "string" ? source.detail : undefined,
+        diagnostics: sanitizeHttpErrorDiagnostics(source.diagnostics),
+        durationMs: typeof source.durationMs === "number" ? source.durationMs : undefined,
+        completedAt: source.completedAt,
+    };
+}
+
 function sanitizeResponseEntry(entry: unknown): PersistedResponseEntry | null {
     if (!entry || typeof entry !== "object") return null;
     const source = entry as Record<string, unknown>;
@@ -930,6 +1010,7 @@ function sanitizeResponseEntry(entry: unknown): PersistedResponseEntry | null {
 
     return {
         response: sanitizeHttpResponse(source.response),
+        transportError: sanitizePersistedTransportError(source.transportError),
         statusText: normalizeStatusTextWithTestExecution(source.statusText, testExecution),
         updatedAt: source.updatedAt,
         testExecution,
@@ -1011,6 +1092,7 @@ export default function App() {
     const { resolvedTheme, theme, systemTheme, setTheme } = useTheme();
     const [collections, setCollections] = useState<CollectionMeta[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
+    const [appVersion, setAppVersion] = useState<string | null>(null);
     const [activeEnvironmentId, setActiveEnvironmentId] = useState<string | null>(null);
     const [current, setCurrent] = useState<CollectionLoaded | null>(null);
     const [status, setStatus] = useState<string>("");
@@ -1030,7 +1112,9 @@ export default function App() {
     const [responseTab, setResponseTab] = useState<ResponseTabId>("body");
     const [scriptRevealLocation, setScriptRevealLocation] = useState<ScriptRevealLocation | null>(null);
     const [draftsById, setDraftsById] = useState<Record<string, Request>>({});
-    const [pending, setPending] = useState(false);
+    const [, setPending] = useState(false);
+    const [requestExecutionStates, setRequestExecutionStates] = useState<RequestExecutionStateMap>({});
+    const [executionClockMs, setExecutionClockMs] = useState(() => Date.now());
     const [editorText, setEditorText] = useState("");
     const [tab, setTab] = useState<"headers" | "query" | "body" | "auth" | "tls" | "scripts" | "debug" | "json">(
         "headers"
@@ -1165,7 +1249,15 @@ export default function App() {
     const collectionRunCancelRef = useRef(false);
     const collectionRunActiveRequestIdRef = useRef<string | null>(null);
     const collectionRunPending = runnerRun?.status === "running";
-    const executionRuntimeActive = pending || collectionRunPending;
+    const selectedExecutionState = selectedRequestId
+        ? requestExecutionStates[selectedRequestId] ?? emptyExecutionState()
+        : emptyExecutionState();
+    const selectedRequestIsRunning = selectedExecutionState.phase === "running";
+    const selectedRequestElapsedMs =
+        selectedExecutionState.phase === "running"
+            ? executionClockMs - selectedExecutionState.startedAt
+            : 0;
+    const executionRuntimeActive = selectedRequestIsRunning || collectionRunPending;
     const {
         dividerHeightPx: responsePanelDividerHeightPx,
         requestHeightPx: requestPanelHeightPx,
@@ -1352,6 +1444,38 @@ export default function App() {
         if (Object.keys(executionRuntimeVariables).length === 0) return;
         setExecutionRuntimeVariables({});
     }, [executionRuntimeActive, executionRuntimeVariables]);
+
+    useEffect(() => {
+        let cancelled = false;
+        void getVersion()
+            .then((version) => {
+                if (!cancelled) {
+                    setAppVersion(version);
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setAppVersion(null);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        const hasRunningRequest = Object.values(requestExecutionStates).some(
+            (entry) => entry.phase === "running"
+        );
+        if (!hasRunningRequest) return;
+
+        setExecutionClockMs(Date.now());
+        const intervalId = window.setInterval(() => {
+            setExecutionClockMs(Date.now());
+        }, 100);
+        return () => window.clearInterval(intervalId);
+    }, [requestExecutionStates]);
 
     useEffect(() => {
         writeBooleanPreference(
@@ -1905,14 +2029,33 @@ export default function App() {
         if (collectionRunPending && runnerStatus) {
             return runnerStatus;
         }
-        if (pending) return "Sending...";
-        return persistedStatus ?? runnerStatus ?? (status || "No request sent yet.");
-    }, [selectedRequestId, pending, responsesByRequestId, status, latestRunnerExecutionByRequestId, collectionRunPending]);
+        return statusTextForExecutionState(
+            selectedExecutionState,
+            selectedRequestElapsedMs,
+            persistedStatus ?? runnerStatus ?? (status || "No request sent yet.")
+        );
+    }, [
+        selectedRequestId,
+        responsesByRequestId,
+        status,
+        latestRunnerExecutionByRequestId,
+        collectionRunPending,
+        selectedExecutionState,
+        selectedRequestElapsedMs,
+    ]);
 
     const selectedScriptReport = useMemo(() => {
         if (!selectedRequestId) return null;
         return scriptReportsByRequestId[selectedRequestId] ?? null;
     }, [selectedRequestId, scriptReportsByRequestId]);
+    const selectedTransportError = selectedExecutionState.phase === "transport_error"
+        ? {
+            title: selectedExecutionState.title,
+            message: selectedExecutionState.message,
+            detail: selectedExecutionState.detail,
+            diagnostics: selectedExecutionState.diagnostics,
+        }
+        : null;
     const selectedResponseDurationText = useMemo(() => {
         if (!resp) return "n/a";
         if (!Number.isFinite(resp.duration_ms)) return "n/a";
@@ -1931,9 +2074,21 @@ export default function App() {
             : `Tests: ${summary.passed}/${summary.total} passed`;
     }, [selectedScriptReport]);
     const selectedResponseHeaderSummaryText = useMemo(() => {
+        if (selectedExecutionState.phase === "running") {
+            return `Running • ${formatElapsedSeconds(selectedRequestElapsedMs)} · previous response visible`;
+        }
+        if (selectedExecutionState.phase === "transport_error") {
+            return `${selectedExecutionState.title} · ${selectedResponseTestsSummaryText.replace(/^Tests:\s*/i, "tests ")}`;
+        }
+        if (!resp) {
+            return `No response yet · ${selectedResponseTestsSummaryText.replace(/^Tests:\s*/i, "tests ")}`;
+        }
         const testsSummary = selectedResponseTestsSummaryText.replace(/^Tests:\s*/i, "tests ");
         return `Status ${selectedResponseCodeText} in ${selectedResponseDurationText} · ${testsSummary}`;
     }, [
+        selectedExecutionState,
+        selectedRequestElapsedMs,
+        resp,
         selectedResponseCodeText,
         selectedResponseDurationText,
         selectedResponseTestsSummaryText,
@@ -2484,6 +2639,15 @@ export default function App() {
         ) as PersistedResponsesCollection;
 
         setResponsesByRequestId(filtered);
+        setRequestExecutionStates(() => {
+            const next: RequestExecutionStateMap = {};
+            for (const [requestId, entry] of Object.entries(filtered)) {
+                if (entry.transportError) {
+                    next[requestId] = executionStateFromPersistedTransportError(entry.transportError);
+                }
+            }
+            return next;
+        });
         const restoredScriptReports =
             restorePersistedScriptReports(filtered) as Record<string, RequestScriptExecutionReport>;
         setScriptReportsByRequestId(restoredScriptReports);
@@ -2938,6 +3102,7 @@ export default function App() {
     const updateDraft = useCallback(
         (patch: Partial<Request>) => {
             if (!selectedRequestId || !draft) return;
+            if (isRequestRunning(requestExecutionStates, selectedRequestId)) return;
 
             const { nextDraft, nextDraftsById } = applyDraftPatch({
                 requestId: selectedRequestId,
@@ -2953,12 +3118,13 @@ export default function App() {
                 [selectedRequestId]: nextDraft,
             }));
         },
-        [selectedRequestId, draft]
+        [selectedRequestId, draft, requestExecutionStates]
     );
 
     const setFullDraft = useCallback(
         (next: Request) => {
             if (!selectedRequestId) return;
+            if (isRequestRunning(requestExecutionStates, selectedRequestId)) return;
 
             draftsByIdRef.current = setFullDraftInMap(
                 selectedRequestId,
@@ -2971,7 +3137,7 @@ export default function App() {
                 [selectedRequestId]: next,
             }));
         },
-        [selectedRequestId]
+        [selectedRequestId, requestExecutionStates]
     );
 
     const setGeneratedHeaderEnabled = useCallback(
@@ -3380,6 +3546,7 @@ export default function App() {
     async function sendSelected() {
         if (collectionRunPending) return;
         if (!selectedRequestId) return;
+        if (isRequestRunning(requestExecutionStates, selectedRequestId)) return;
 
         const req = resolveRequestForExecution(selectedRequestId);
 
@@ -3392,12 +3559,16 @@ export default function App() {
             return;
         }
 
-        setResp(null);
+        const executingRequestId = selectedRequestId;
         setPending(true);
-        setStatus("Sending...");
+        setExecutionClockMs(Date.now());
+        setRequestExecutionStates((previous) =>
+            startRequestExecution(previous, executingRequestId)
+        );
+        setStatus("Sending request...");
         setScriptReportsByRequestId((previous) => ({
             ...previous,
-            [selectedRequestId]: createScriptExecutionReport({
+            [executingRequestId]: createScriptExecutionReport({
                 preRequestError: null,
                 postResponseError: null,
                 tests: [],
@@ -3428,10 +3599,20 @@ export default function App() {
                 const environmentPersistError = await persistScriptEnvironmentMutations(
                     scriptEnvironmentMutations
                 );
-                const environmentErrorSuffix = environmentPersistError
-                    ? " • environment save issue"
-                    : "";
-                const statusText = `❌ ${preparedRequest.message}${environmentErrorSuffix}`;
+                const invalidRequestError = {
+                    kind: "invalid_request",
+                    message: environmentPersistError
+                        ? `${preparedRequest.message} Environment save issue.`
+                        : preparedRequest.message,
+                };
+                const invalidRequestPresentation = transportErrorPresentation(
+                    classifyTransportError(invalidRequestError),
+                    invalidRequestError
+                );
+                const persistedTransportError = createPersistedTransportErrorState(invalidRequestError);
+                setRequestExecutionStates((previous) =>
+                    finishRequestExecutionWithTransportError(previous, executingRequestId, invalidRequestError)
+                );
                 const preOnlyReport = createScriptExecutionReport({
                     preRequestError: preScript.scriptError,
                     postResponseError: null,
@@ -3439,14 +3620,15 @@ export default function App() {
                 });
                 setScriptReportsByRequestId((previous) => ({
                     ...previous,
-                    [selectedRequestId]: preOnlyReport,
+                    [executingRequestId]: preOnlyReport,
                 }));
-                setStatus(statusText);
+                setStatus(invalidRequestPresentation.title);
                 setResponsesByRequestId((previous) => ({
                     ...previous,
-                    [selectedRequestId]: {
-                        response: previous[selectedRequestId]?.response ?? null,
-                        statusText,
+                    [executingRequestId]: {
+                        response: null,
+                        transportError: persistedTransportError,
+                        statusText: invalidRequestPresentation.title,
                         updatedAt: new Date().toISOString(),
                         testExecution: createPersistedTestExecution(preOnlyReport),
                     },
@@ -3457,7 +3639,7 @@ export default function App() {
             const executableRequest = preparedRequest.request;
 
             const r = await invoke<HttpResponseDto>("send_request", {
-                requestId: selectedRequestId,
+                requestId: executingRequestId,
                 req: executableRequest,
                 environmentId: activeEnvironmentId,
                 extraVariables: runtimeVariables,
@@ -3482,7 +3664,7 @@ export default function App() {
             });
             setScriptReportsByRequestId((previous) => ({
                 ...previous,
-                [selectedRequestId]: fullReport,
+                [executingRequestId]: fullReport,
             }));
 
             const environmentPersistError = await persistScriptEnvironmentMutations(
@@ -3503,12 +3685,16 @@ export default function App() {
             const statusText = isHttpFailure
                 ? `❌ HTTP ${r.status} in ${r.duration_ms}ms${scriptErrorSuffix}${scriptTestsSuffix}${environmentErrorSuffix}`
                 : `✅ ${r.status} in ${r.duration_ms}ms${scriptErrorSuffix}${scriptTestsSuffix}${environmentErrorSuffix}`;
+            setRequestExecutionStates((previous) =>
+                finishRequestExecutionWithResponse(previous, executingRequestId, r)
+            );
             setResp(r);
             setStatus(statusText);
             setResponsesByRequestId((previous) => ({
                 ...previous,
-                [selectedRequestId]: {
+                [executingRequestId]: {
                     response: r,
+                    transportError: null,
                     statusText,
                     updatedAt: new Date().toISOString(),
                     testExecution: createPersistedTestExecution(fullReport),
@@ -3518,8 +3704,16 @@ export default function App() {
             const environmentPersistError = await persistScriptEnvironmentMutations(
                 scriptEnvironmentMutations
             );
-            const { kind, message, detail, durationMs } = parseHttpError(e);
-            const kindLabel = httpErrorKindLabel(kind);
+            const { kind, message, detail, diagnostics, durationMs } = parseHttpError(e);
+            const parsedTransportError = { kind, message, detail, diagnostics, durationMs };
+            const transportPresentation = transportErrorPresentation(
+                classifyTransportError(parsedTransportError),
+                parsedTransportError
+            );
+            const persistedTransportError = createPersistedTransportErrorState(parsedTransportError);
+            setRequestExecutionStates((previous) =>
+                finishRequestExecutionWithTransportError(previous, executingRequestId, parsedTransportError)
+            );
             const preOnlyReport = createScriptExecutionReport({
                 preRequestError: preScriptError,
                 postResponseError: null,
@@ -3527,27 +3721,26 @@ export default function App() {
             });
             setScriptReportsByRequestId((previous) => ({
                 ...previous,
-                [selectedRequestId]: preOnlyReport,
+                [executingRequestId]: preOnlyReport,
             }));
             const scriptSuffix = preScriptError ? ` • script issue` : "";
             const environmentErrorSuffix = environmentPersistError
                 ? " • environment save issue"
                 : "";
-            const detailSuffix =
-                detail && detail.length <= 180 ? ` • ${detail}` : "";
-            const statusText = `❌ ${kindLabel} (${kind}): ${message}${durationMs != null ? ` (${durationMs}ms)` : ""}${scriptSuffix}${environmentErrorSuffix}${detailSuffix}`;
+            const statusText = `${transportPresentation.title}${durationMs != null ? ` • ${durationMs} ms` : ""}${scriptSuffix}${environmentErrorSuffix}`;
             setStatus(statusText);
             setResponsesByRequestId((previous) => ({
                 ...previous,
-                [selectedRequestId]: {
-                    response: previous[selectedRequestId]?.response ?? null,
+                [executingRequestId]: {
+                    response: null,
+                    transportError: persistedTransportError,
                     statusText,
                     updatedAt: new Date().toISOString(),
                     testExecution: createPersistedTestExecution(preOnlyReport),
                 },
             }));
         } finally {
-            const p = await isPending(selectedRequestId).catch(() => false);
+            const p = await isPending(executingRequestId).catch(() => false);
             setPending(p);
             if (!p) {
                 setExecutionRuntimeVariables({});
@@ -3558,15 +3751,24 @@ export default function App() {
     async function cancel() {
         if (collectionRunPending) return;
         if (!selectedRequestId) return;
+        if (!selectedRequestIsRunning) return;
 
         try {
             await invoke("cancel_request", { requestId: selectedRequestId });
-            const statusText = "⛔ Cancel requested";
+            setRequestExecutionStates((previous) =>
+                cancelRequestExecution(previous, selectedRequestId, selectedRequestElapsedMs)
+            );
+            const statusText = "Request cancelled";
             setStatus(statusText);
             setResponsesByRequestId((previous) => ({
                 ...previous,
                 [selectedRequestId]: {
-                    response: previous[selectedRequestId]?.response ?? null,
+                    response: null,
+                    transportError: createPersistedTransportErrorState({
+                        kind: "cancelled",
+                        message: "Request cancelled",
+                        durationMs: selectedRequestElapsedMs,
+                    }),
                     statusText,
                     updatedAt: new Date().toISOString(),
                     testExecution: previous[selectedRequestId]?.testExecution ?? null,
@@ -3857,7 +4059,11 @@ export default function App() {
                     setResponsesByRequestId((previous) => ({
                         ...previous,
                         [planItem.requestId]: {
-                            response: previous[planItem.requestId]?.response ?? null,
+                            response: null,
+                            transportError: createPersistedTransportErrorState({
+                                kind: "invalid_request",
+                                message: preparedRequest.message,
+                            }),
                             statusText,
                             updatedAt: new Date().toISOString(),
                             testExecution: createPersistedTestExecution(preOnlyReport),
@@ -3944,6 +4150,7 @@ export default function App() {
                         ...previous,
                         [planItem.requestId]: {
                             response,
+                            transportError: null,
                             statusText,
                             updatedAt: new Date().toISOString(),
                             testExecution: createPersistedTestExecution(combinedReport),
@@ -4007,7 +4214,13 @@ export default function App() {
                     setResponsesByRequestId((previous) => ({
                         ...previous,
                         [planItem.requestId]: {
-                            response: previous[planItem.requestId]?.response ?? null,
+                            response: null,
+                            transportError: createPersistedTransportErrorState({
+                                kind: parsed.code,
+                                message: parsed.message,
+                                detail: parsed.detail ?? undefined,
+                                durationMs: parsed.durationMs ?? undefined,
+                            }),
                             statusText,
                             updatedAt: new Date().toISOString(),
                             testExecution: createPersistedTestExecution(preOnlyReport),
@@ -5825,14 +6038,25 @@ export default function App() {
             <div
                 style={{
                     height: "calc(100vh - var(--pg-topbar-height))",
-                    padding: "8px 12px 10px",
+                    padding: "8px 12px 4px",
                     fontFamily: "system-ui",
                     display: "flex",
-                    gap: 0,
+                    flexDirection: "column",
+                    gap: 4,
                     overflow: "hidden",
                     boxSizing: "border-box",
                 }}
             >
+                <div
+                    style={{
+                        flex: 1,
+                        minHeight: 0,
+                        minWidth: 0,
+                        display: "flex",
+                        gap: 0,
+                        overflow: "hidden",
+                    }}
+                >
                 {/* Sidebar */}
                 <div
                     style={{
@@ -6301,6 +6525,7 @@ export default function App() {
                         >
                             {openTabs.map((openTab) => {
                                 const active = openTab.requestId === selectedRequestId;
+                                const tabIsRunning = requestExecutionStates[openTab.requestId]?.phase === "running";
                                 const showDropBefore =
                                     openTabDropIndicator?.requestId === openTab.requestId &&
                                     openTabDropIndicator.position === "before";
@@ -6353,6 +6578,7 @@ export default function App() {
                                                 userSelect: "none",
                                             }}
                                         >
+                                            {tabIsRunning && <span style={tabSpinnerStyle()} aria-hidden />}
                                             {openTab.method.toUpperCase()} {openTab.name}
                                             {openTab.hasLocalDraft ? " ●" : ""}
                                         </button>
@@ -6397,6 +6623,7 @@ export default function App() {
                                         options={REQUEST_METHOD_OPTIONS}
                                         ariaLabel="Request method"
                                         style={{ minWidth: 108, flexShrink: 0 }}
+                                        disabled={selectedRequestIsRunning}
                                         onValueChange={(nextValue) =>
                                             updateDraft({ method: nextValue as Request["method"] })
                                         }
@@ -6410,30 +6637,38 @@ export default function App() {
                                         resolveVariableValue={resolveVariableValue}
                                         variableSuggestions={variableSuggestions}
                                         containerStyle={{ flex: 1, minWidth: 0 }}
+                                        disabled={selectedRequestIsRunning}
                                     />
 
-                                    <button
-                                        onClick={triggerSendFromUi}
-                                        disabled={!selectedRequestId || pending || collectionRunPending}
-                                        style={{
-                                            ...primaryButtonStyle(!selectedRequestId || pending || collectionRunPending),
-                                            minWidth: 76,
-                                            paddingInline: 14,
-                                        }}
-                                    >
-                                        Send
-                                    </button>
-
-                                    <button
-                                        onClick={cancel}
-                                        disabled={!selectedRequestId || !pending || collectionRunPending}
-                                        style={{
-                                            ...buttonStyle(!selectedRequestId || !pending || collectionRunPending),
-                                            minWidth: 82,
-                                        }}
-                                    >
-                                        Cancel
-                                    </button>
+                                    {selectedRequestIsRunning ? (
+                                        <button
+                                            onClick={cancel}
+                                            disabled={!selectedRequestId || collectionRunPending}
+                                            style={{
+                                                ...buttonStyle(!selectedRequestId || collectionRunPending),
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                gap: 7,
+                                                minWidth: 96,
+                                            }}
+                                        >
+                                            <span style={inlineSpinnerStyle()} aria-hidden />
+                                            Cancel
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={triggerSendFromUi}
+                                            disabled={!selectedRequestId || collectionRunPending}
+                                            style={{
+                                                ...primaryButtonStyle(!selectedRequestId || collectionRunPending),
+                                                minWidth: 76,
+                                                paddingInline: 14,
+                                            }}
+                                        >
+                                            Send
+                                        </button>
+                                    )}
                                 </div>
 
                             </div>
@@ -6552,6 +6787,7 @@ export default function App() {
                                             variableSuggestions={variableSuggestions}
                                             showEnabledToggle
                                             enabledToggleTitle="Disabled custom headers are kept but not sent."
+                                            disabled={selectedRequestIsRunning}
                                         />
                                     </div>
 
@@ -6610,6 +6846,7 @@ export default function App() {
                                                     <input
                                                         type="checkbox"
                                                         checked={row.enabled}
+                                                        disabled={selectedRequestIsRunning}
                                                         onChange={(event) =>
                                                             setGeneratedHeaderEnabled(
                                                                 row.key,
@@ -6658,6 +6895,7 @@ export default function App() {
                                     resolveVariableStatus={resolveVariableStatus}
                                     resolveVariableValue={resolveVariableValue}
                                     variableSuggestions={variableSuggestions}
+                                    disabled={selectedRequestIsRunning}
                                 />
                             )}
 
@@ -6679,6 +6917,7 @@ export default function App() {
                                         editorPanelStyle={editorPanelStyle}
                                         onSubmitShortcut={triggerSendFromUi}
                                         fillHeight
+                                        readOnly={selectedRequestIsRunning}
                                     />
                                 </div>
                             )}
@@ -6710,6 +6949,7 @@ export default function App() {
                                                             auth: buildDefaultAuth(nextValue as RequestAuth["type"]),
                                                         })
                                                     }
+                                                    disabled={selectedRequestIsRunning}
                                                 />
                                             </div>
 
@@ -6729,6 +6969,7 @@ export default function App() {
                                                         resolveVariableStatus={resolveVariableStatus}
                                                         resolveVariableValue={resolveVariableValue}
                                                         variableSuggestions={variableSuggestions}
+                                                        disabled={selectedRequestIsRunning}
                                                     />
                                                 </div>
                                             )}
@@ -6754,6 +6995,7 @@ export default function App() {
                                                             resolveVariableStatus={resolveVariableStatus}
                                                             resolveVariableValue={resolveVariableValue}
                                                             variableSuggestions={variableSuggestions}
+                                                            disabled={selectedRequestIsRunning}
                                                         />
                                                     </div>
                                                     <div style={{ display: "grid", gap: 6 }}>
@@ -6775,6 +7017,7 @@ export default function App() {
                                                             resolveVariableStatus={resolveVariableStatus}
                                                             resolveVariableValue={resolveVariableValue}
                                                             variableSuggestions={variableSuggestions}
+                                                            disabled={selectedRequestIsRunning}
                                                         />
                                                     </div>
                                                 </>
@@ -6801,6 +7044,7 @@ export default function App() {
                                                                     },
                                                                 })
                                                             }
+                                                            disabled={selectedRequestIsRunning}
                                                         />
                                                     </div>
 
@@ -6824,6 +7068,7 @@ export default function App() {
                                                             resolveVariableStatus={resolveVariableStatus}
                                                             resolveVariableValue={resolveVariableValue}
                                                             variableSuggestions={variableSuggestions}
+                                                            disabled={selectedRequestIsRunning}
                                                         />
                                                     </div>
 
@@ -6847,6 +7092,7 @@ export default function App() {
                                                             resolveVariableStatus={resolveVariableStatus}
                                                             resolveVariableValue={resolveVariableValue}
                                                             variableSuggestions={variableSuggestions}
+                                                            disabled={selectedRequestIsRunning}
                                                         />
                                                     </div>
                                                 </>
@@ -6878,6 +7124,7 @@ export default function App() {
                                                 <input
                                                     type="checkbox"
                                                     checked={tls.allow_invalid_certificates === true}
+                                                    disabled={selectedRequestIsRunning}
                                                     onChange={(event) =>
                                                         updateDraft({
                                                             tls: {
@@ -6913,6 +7160,7 @@ export default function App() {
                                                     resolveVariableStatus={resolveVariableStatus}
                                                     resolveVariableValue={resolveVariableValue}
                                                     variableSuggestions={variableSuggestions}
+                                                    disabled={selectedRequestIsRunning}
                                                 />
                                             </div>
                                             <div style={{ display: "grid", gap: 6 }}>
@@ -6939,6 +7187,7 @@ export default function App() {
                                                     resolveVariableStatus={resolveVariableStatus}
                                                     resolveVariableValue={resolveVariableValue}
                                                     variableSuggestions={variableSuggestions}
+                                                    disabled={selectedRequestIsRunning}
                                                 />
                                             </div>
                                         </div>
@@ -6958,6 +7207,7 @@ export default function App() {
                                         onSubmitShortcut={triggerSendFromUi}
                                         revealLocation={scriptRevealLocation}
                                         fillHeight
+                                        readOnly={selectedRequestIsRunning}
                                     />
                                 </div>
                             )}
@@ -7311,27 +7561,35 @@ export default function App() {
                                             </button>
                                         </div>
                                     </div>
-                                    <span
-                                        style={responsePanelSummaryTextStyle()}
-                                        title={selectedResponseHeaderSummaryText}
-                                    >
-                                        {selectedResponseHeaderSummaryText}
-                                    </span>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                                        {selectedRequestIsRunning && <span style={inlineSpinnerStyle()} aria-hidden />}
+                                        <span
+                                            style={responsePanelSummaryTextStyle()}
+                                            title={selectedResponseHeaderSummaryText}
+                                        >
+                                            {selectedResponseHeaderSummaryText}
+                                        </span>
+                                    </div>
                                 </div>
                                 <div
                                     style={{
                                         minHeight: 0,
-                                        flex: 1,
-                                        overflow: "auto",
+                                        flex: "1 1 auto",
+                                        overflowY: "auto",
+                                        overflowX: "auto",
                                         display: "flex",
                                         flexDirection: "column",
                                         padding: 10,
                                         paddingTop: 8,
+                                        paddingBottom: 14,
+                                        boxSizing: "border-box",
                                     }}
                                 >
                                     <ResponsePanel
-                                        response={resp}
+                                        response={selectedTransportError ? null : resp}
                                         statusText={selectedResponseStatusText}
+                                        requestMethod={draft.method}
+                                        transportError={selectedTransportError}
                                         scriptReport={selectedScriptReport}
                                         runtimeVariables={executionRuntimeActive ? executionRuntimeVariables : {}}
                                         onClearRuntimeVariables={() => setExecutionRuntimeVariables({})}
@@ -7368,6 +7626,10 @@ export default function App() {
                             <pre style={{ background: "var(--pg-surface-1)", color: "var(--pg-text-dim)", padding: 12 }}>None</pre>
                         </>
                     )}
+                </div>
+                </div>
+                <div style={applicationFooterStyle()}>
+                    {appVersion ? `v${appVersion}` : ""}
                 </div>
             </div>
 
@@ -8685,7 +8947,7 @@ function responsePanelSummaryTextStyle(): React.CSSProperties {
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
-        maxWidth: "46%",
+        maxWidth: "100%",
         textAlign: "right",
         minWidth: 0,
         padding: "5px 9px",
@@ -8948,6 +9210,24 @@ function editorTabStyle(active: boolean): React.CSSProperties {
     };
 }
 
+function applicationFooterStyle(): React.CSSProperties {
+    return {
+        height: 16,
+        minHeight: 16,
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        padding: "0 2px",
+        boxSizing: "border-box",
+        fontSize: 11,
+        lineHeight: "16px",
+        color: "var(--pg-text-muted)",
+        letterSpacing: 0.2,
+        userSelect: "none",
+    };
+}
+
 function draftTabContainerStyle(active: boolean): React.CSSProperties {
     return {
         display: "flex",
@@ -8963,6 +9243,9 @@ function draftTabContainerStyle(active: boolean): React.CSSProperties {
 
 function draftTabButtonStyle(active: boolean): React.CSSProperties {
     return {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 7,
         border: "none",
         background: "transparent",
         color: active ? "var(--pg-text)" : "var(--pg-text-dim)",
@@ -8977,6 +9260,27 @@ function draftTabButtonStyle(active: boolean): React.CSSProperties {
         textOverflow: "ellipsis",
         boxShadow: "none",
         borderRadius: 0,
+    };
+}
+
+function inlineSpinnerStyle(): React.CSSProperties {
+    return {
+        width: 13,
+        height: 13,
+        borderRadius: "50%",
+        border: "2px solid rgba(var(--pg-primary-rgb), 0.22)",
+        borderTopColor: "var(--pg-primary)",
+        animation: "pg-spin 0.8s linear infinite",
+        flexShrink: 0,
+    };
+}
+
+function tabSpinnerStyle(): React.CSSProperties {
+    return {
+        ...inlineSpinnerStyle(),
+        width: 10,
+        height: 10,
+        borderWidth: 1.5,
     };
 }
 

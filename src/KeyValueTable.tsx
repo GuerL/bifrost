@@ -9,6 +9,7 @@ type KeyValueTableProps = {
     variableSuggestions?: string[];
     showEnabledToggle?: boolean;
     enabledToggleTitle?: string;
+    disabled?: boolean;
 };
 
 export default function KeyValueTable({
@@ -19,6 +20,7 @@ export default function KeyValueTable({
     variableSuggestions,
     showEnabledToggle,
     enabledToggleTitle,
+    disabled = false,
 }: KeyValueTableProps) {
     return (
         <div style={{ display: "grid", gap: 8 }}>
@@ -37,6 +39,7 @@ export default function KeyValueTable({
                             <input
                                 type="checkbox"
                                 checked={kv.enabled !== false}
+                                disabled={disabled}
                                 onChange={(event) => {
                                     const next = rows.slice();
                                     next[i] = { ...kv, enabled: event.target.checked };
@@ -57,6 +60,7 @@ export default function KeyValueTable({
                         resolveVariableValue={resolveVariableValue}
                         variableSuggestions={variableSuggestions}
                         containerStyle={{ flex: 1 }}
+                        disabled={disabled}
                     />
                     <VariableInput
                         placeholder="value"
@@ -70,6 +74,7 @@ export default function KeyValueTable({
                         resolveVariableValue={resolveVariableValue}
                         variableSuggestions={variableSuggestions}
                         containerStyle={{ flex: 1 }}
+                        disabled={disabled}
                     />
                     <button
                         onClick={() => {
@@ -77,8 +82,9 @@ export default function KeyValueTable({
                             next.splice(i, 1);
                             onChange(next);
                         }}
+                        disabled={disabled}
                         style={{
-                            ...buttonStyle(false),
+                            ...buttonStyle(disabled),
                             width: 30,
                             minWidth: 30,
                             padding: 0,
@@ -93,6 +99,7 @@ export default function KeyValueTable({
                 </div>
             ))}
             <button
+                disabled={disabled}
                 onClick={() =>
                     onChange([
                         ...rows,
@@ -104,7 +111,7 @@ export default function KeyValueTable({
                     ])
                 }
                 style={{
-                    ...buttonStyle(false),
+                    ...buttonStyle(disabled),
                     width: "fit-content",
                     paddingInline: 12,
                 }}
