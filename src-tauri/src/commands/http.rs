@@ -464,8 +464,7 @@ fn classify_reqwest_error_kind(e: &reqwest::Error, msg_lower: &str) -> NetworkEr
         return NetworkErrorKind::Dns;
     }
 
-    if io_kind == Some(io::ErrorKind::ConnectionRefused) || text.contains("connection refused")
-    {
+    if io_kind == Some(io::ErrorKind::ConnectionRefused) || text.contains("connection refused") {
         return NetworkErrorKind::ConnectionRefused;
     }
 
@@ -1018,6 +1017,15 @@ fn should_auto_set_generated_content_type(req: &Request, content_type: &str) -> 
     is_generated_header_enabled(req, "content-type")
 }
 
+fn default_user_agent_value() -> String {
+    format!("BifrostRuntime/{}", env!("CARGO_PKG_VERSION"))
+}
+
+fn should_auto_set_generated_user_agent(req: &Request) -> bool {
+    !has_enabled_header(&req.headers, "user-agent")
+        && is_generated_header_enabled(req, "user-agent")
+}
+
 fn apply_auth_to_request(req: &mut Request) {
     let auth = req.auth.clone();
     match auth {
@@ -1388,6 +1396,10 @@ pub async fn do_send_request(
         builder = builder.header(header_name, h.value.clone());
     }
 
+    if should_auto_set_generated_user_agent(&req) {
+        builder = builder.header("User-Agent", default_user_agent_value());
+    }
+
     // query params
     if !req.query.is_empty() {
         let pairs: Vec<(String, String)> = req
@@ -1645,6 +1657,88 @@ mod tests {
         let request = build_request();
         assert!(is_generated_header_enabled(&request, "content-type"));
         assert!(is_generated_header_enabled(&request, "host"));
+    }
+
+    #[test]
+    fn no_custom_user_agent_sends_generated_user_agent() {
+        let request = build_request();
+
+        assert!(should_auto_set_generated_user_agent(&request));
+        assert_eq!(
+            default_user_agent_value(),
+            format!("BifrostRuntime/{}", env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
+    fn custom_user_agent_prevents_generated_user_agent() {
+        let mut request = build_request();
+        request.headers = vec![KeyValue {
+            key: "User-Agent".to_string(),
+            value: "MyCustomClient".to_string(),
+            enabled: true,
+        }];
+
+        assert!(should_send_explicit_header(&request.headers[0], false));
+        assert!(!should_auto_set_generated_user_agent(&request));
+    }
+
+    #[test]
+    fn generated_enabled_and_custom_user_agent_uses_custom_only() {
+        let mut request = build_request();
+        request.generated_headers = vec![crate::model::collection::GeneratedHeaderControl {
+            key: "user-agent".to_string(),
+            enabled: true,
+        }];
+        request.headers = vec![KeyValue {
+            key: "User-Agent".to_string(),
+            value: "MyCustomClient".to_string(),
+            enabled: true,
+        }];
+
+        assert!(should_send_explicit_header(&request.headers[0], false));
+        assert!(!should_auto_set_generated_user_agent(&request));
+    }
+
+    #[test]
+    fn generated_disabled_and_custom_user_agent_still_sends_custom() {
+        let mut request = build_request();
+        request.generated_headers = vec![crate::model::collection::GeneratedHeaderControl {
+            key: "user-agent".to_string(),
+            enabled: false,
+        }];
+        request.headers = vec![KeyValue {
+            key: "User-Agent".to_string(),
+            value: "MyCustomClient".to_string(),
+            enabled: true,
+        }];
+
+        assert!(should_send_explicit_header(&request.headers[0], false));
+        assert!(!should_auto_set_generated_user_agent(&request));
+    }
+
+    #[test]
+    fn generated_disabled_without_custom_user_agent_sends_no_user_agent() {
+        let mut request = build_request();
+        request.generated_headers = vec![crate::model::collection::GeneratedHeaderControl {
+            key: "user-agent".to_string(),
+            enabled: false,
+        }];
+
+        assert!(!should_auto_set_generated_user_agent(&request));
+    }
+
+    #[test]
+    fn custom_user_agent_override_is_case_insensitive() {
+        let mut request = build_request();
+        request.headers = vec![KeyValue {
+            key: "user-agent".to_string(),
+            value: "MyCustomClient".to_string(),
+            enabled: true,
+        }];
+
+        assert!(has_enabled_header(&request.headers, "User-Agent"));
+        assert!(!should_auto_set_generated_user_agent(&request));
     }
 
     #[test]

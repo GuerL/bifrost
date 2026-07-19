@@ -249,6 +249,7 @@ function describeContentLengthMode(
 export function buildRequestDebugInfo(args: {
     request: Request;
     variableValues?: Map<string, string>;
+    appVersion?: string | null;
     proxyTransport?: ProxyResolutionInfo | null;
     generalSettings?: GeneralSettings;
 }): RequestDebugInfo {
@@ -257,6 +258,7 @@ export function buildRequestDebugInfo(args: {
     const generatedRows = buildGeneratedHeadersPreview({
         request: args.request,
         variableValues,
+        appVersion: args.appVersion,
     });
     const generatedEnabled = generatedHeaderControlMap(args.request);
     const requestTls = args.request.tls ?? {};
@@ -310,7 +312,31 @@ export function buildRequestDebugText(info: RequestDebugInfo): string {
         lines.push(`Unresolved variables: ${info.unresolvedVariables.join(", ")}`);
     }
     lines.push("");
-    lines.push("Enabled headers:");
+    lines.push("Generated headers:");
+    const generatedHeaders = info.enabledHeaders.filter(
+        (header) => header.source === "generated"
+    );
+    if (generatedHeaders.length === 0) {
+        lines.push("(none)");
+    } else {
+        for (const header of generatedHeaders) {
+            lines.push(`${header.key}: ${header.value}`);
+        }
+    }
+
+    lines.push("");
+    lines.push("Custom headers:");
+    const customHeaders = info.enabledHeaders.filter((header) => header.source === "custom");
+    if (customHeaders.length === 0) {
+        lines.push("(none)");
+    } else {
+        for (const header of customHeaders) {
+            lines.push(`${header.key}: ${header.value}`);
+        }
+    }
+
+    lines.push("");
+    lines.push("Final request:");
     if (info.enabledHeaders.length === 0) {
         lines.push("(none)");
     } else {
@@ -365,6 +391,7 @@ export function generatedHeaderEnabled(
 export function generatedHeaderDisplayRows(args: {
     request: Request;
     variableValues?: Map<string, string>;
+    appVersion?: string | null;
 }): Array<{ key: GeneratedHeaderName; label: string; value: string; enabled: boolean; note: string }> {
     const rows = buildGeneratedHeadersPreview(args);
     return GENERATED_HEADER_ORDER.map((key) => {

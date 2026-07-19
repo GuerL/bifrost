@@ -7,7 +7,7 @@ import {
     disabledRequestHeaders,
     enabledRequestHeaders,
     generatedHeaderControlMap,
-    NOT_SET_HEADER_VALUE,
+    OVERRIDDEN_HEADER_VALUE,
 } from "./requestHeadersPreview.ts";
 
 function buildRequest(overrides: Partial<Request> = {}): Request {
@@ -46,7 +46,27 @@ describe("buildGeneratedHeadersPreview", () => {
 
         expect(rowValue(rows, "host")).toBe("api.example.com");
         expect(rowValue(rows, "accept")).toBe("*/*");
-        expect(rowValue(rows, "user-agent")).toBe(NOT_SET_HEADER_VALUE);
+        expect(rowValue(rows, "user-agent")).toBe(CALCULATED_HEADER_VALUE);
+    });
+
+    it("shows default user-agent from the application version", () => {
+        const rows = buildGeneratedHeadersPreview({
+            request: buildRequest(),
+            appVersion: "1.13.0",
+        });
+
+        expect(rowValue(rows, "user-agent")).toBe("BifrostRuntime/1.13.0");
+    });
+
+    it("shows generated user-agent as overridden by an enabled custom header", () => {
+        const rows = buildGeneratedHeadersPreview({
+            request: buildRequest({
+                headers: [{ key: "user-agent", value: "MyCustomClient", enabled: true }],
+            }),
+            appVersion: "1.13.0",
+        });
+
+        expect(rowValue(rows, "user-agent")).toBe(OVERRIDDEN_HEADER_VALUE);
     });
 
     it("calculates content length and content type", () => {

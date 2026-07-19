@@ -62,10 +62,35 @@ describe("buildRequestDebugInfo", () => {
     it("includes enabled generated headers in enabled list", () => {
         const info = buildRequestDebugInfo({
             request: buildRequest(),
+            appVersion: "1.13.0",
         });
 
         expect(info.enabledHeaders.some((header) => header.key === "Host")).toBe(true);
         expect(info.enabledHeaders.some((header) => header.key === "Accept")).toBe(true);
+        expect(info.enabledHeaders).toContainEqual({
+            key: "User-Agent",
+            value: "BifrostRuntime/1.13.0",
+            source: "generated",
+        });
+    });
+
+    it("uses custom user-agent as the final value case-insensitively", () => {
+        const info = buildRequestDebugInfo({
+            request: buildRequest({
+                headers: [{ key: "user-agent", value: "MyCustomClient", enabled: true }],
+            }),
+            appVersion: "1.13.0",
+        });
+
+        expect(
+            info.enabledHeaders.filter((header) => header.key.toLowerCase() === "user-agent")
+        ).toEqual([
+            {
+                key: "user-agent",
+                value: "MyCustomClient",
+                source: "custom",
+            },
+        ]);
     });
 
     it("describes content-type generation from body type", () => {
@@ -116,7 +141,9 @@ describe("buildRequestDebugText", () => {
 
         expect(text).toContain("Bifrost request debug");
         expect(text).toContain("Method: POST");
-        expect(text).toContain("Enabled headers:");
+        expect(text).toContain("Generated headers:");
+        expect(text).toContain("Custom headers:");
+        expect(text).toContain("Final request:");
         expect(text).toContain("Content-Type: application/json");
         expect(text).toContain("Disabled headers:");
         expect(text).toContain("Host");
