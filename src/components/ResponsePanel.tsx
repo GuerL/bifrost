@@ -93,11 +93,13 @@ export default function ResponsePanel({
     const [copyState, setCopyState] = useState<CopyState>("idle");
     const [bodyMode, setBodyMode] = useState<BodyMode>("raw");
     const [bodyControlsHovered, setBodyControlsHovered] = useState(false);
+    const [copyButtonVisible, setCopyButtonVisible] = useState(false);
     const [findOpen, setFindOpen] = useState(false);
     const [findQuery, setFindQuery] = useState("");
     const [findCaseSensitive, setFindCaseSensitive] = useState(false);
     const [activeMatchIndex, setActiveMatchIndex] = useState(-1);
     const copyResetTimerRef = useRef<number | null>(null);
+    const copyHideTimerRef = useRef<number | null>(null);
     const findInputRef = useRef<HTMLInputElement | null>(null);
     const matchElementsRef = useRef<Array<HTMLSpanElement | null>>([]);
 
@@ -220,7 +222,30 @@ export default function ResponsePanel({
             if (copyResetTimerRef.current !== null) {
                 window.clearTimeout(copyResetTimerRef.current);
             }
+            if (copyHideTimerRef.current !== null) {
+                window.clearTimeout(copyHideTimerRef.current);
+            }
         };
+    }, []);
+
+    const showBodyActions = useCallback(() => {
+        if (copyHideTimerRef.current !== null) {
+            window.clearTimeout(copyHideTimerRef.current);
+            copyHideTimerRef.current = null;
+        }
+        setBodyControlsHovered(true);
+        setCopyButtonVisible(true);
+    }, []);
+
+    const hideBodyActions = useCallback(() => {
+        setBodyControlsHovered(false);
+        if (copyHideTimerRef.current !== null) {
+            window.clearTimeout(copyHideTimerRef.current);
+        }
+        copyHideTimerRef.current = window.setTimeout(() => {
+            setCopyButtonVisible(false);
+            copyHideTimerRef.current = null;
+        }, 120);
     }, []);
 
     const handleCopyBody = async () => {
@@ -377,12 +402,16 @@ export default function ResponsePanel({
                         <div
                             className="pg-response-body-container"
                             style={responseBodyContainerStyle()}
-                            onMouseEnter={() => setBodyControlsHovered(true)}
-                            onMouseLeave={() => setBodyControlsHovered(false)}
+                            onMouseEnter={showBodyActions}
+                            onMouseLeave={hideBodyActions}
                         >
                             {bodyView.copyText && (
                                 <button
-                                    className={`pg-response-copy-button pg-response-copy-button-${copyState}`}
+                                    className={[
+                                        "pg-response-copy-button",
+                                        copyButtonVisible ? "pg-response-copy-button-visible" : "",
+                                        `pg-response-copy-button-${copyState}`,
+                                    ].filter(Boolean).join(" ")}
                                     onClick={() => void handleCopyBody()}
                                     style={copyBodyButtonStyle(copyState)}
                                     title={copyButtonTitle(copyState)}
@@ -904,6 +933,7 @@ function copyBodyButtonStyle(copyState: CopyState): React.CSSProperties {
         justifyContent: "center",
         boxShadow: "0 8px 18px rgba(2, 6, 23, 0.18)",
         cursor: "pointer",
+        transition: "opacity 220ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1), filter 220ms ease",
     };
 
     if (copyState === "copied") {
