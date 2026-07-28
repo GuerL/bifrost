@@ -189,6 +189,42 @@ body {
   -webkit-app-region: no-drag;
 }
 
+.pg-response-copy-button {
+  opacity: 0;
+  transform: translateY(-2px);
+  pointer-events: none;
+  transition:
+    opacity 170ms ease-out,
+    transform 170ms ease-out,
+    background-color 140ms ease-out,
+    border-color 140ms ease-out,
+    color 140ms ease-out;
+}
+
+.pg-response-body-container:hover .pg-response-copy-button,
+.pg-response-body-container:focus-within .pg-response-copy-button,
+.pg-response-copy-button:hover,
+.pg-response-copy-button:focus,
+.pg-response-copy-button:focus-visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.pg-response-copy-button:hover,
+.pg-response-copy-button:focus-visible {
+  background: var(--pg-control-bg-hover) !important;
+  border-color: var(--pg-tab-active-border) !important;
+  color: var(--pg-text) !important;
+}
+
+.pg-response-copy-button-copied,
+.pg-response-copy-button-error {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--pg-scrollbar-thumb) var(--pg-scrollbar-track);

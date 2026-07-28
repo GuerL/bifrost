@@ -229,7 +229,7 @@ export default function ResponsePanel({
         try {
             await copyTextToClipboard(bodyView.copyText);
             copied = true;
-            notifySuccess("Copied to clipboard");
+            notifySuccess("Response copied");
         } catch {
             notifyError("Failed to copy");
         }
@@ -290,17 +290,6 @@ export default function ResponsePanel({
                     <button onClick={() => onTabChange("tests")} style={responseTabStyle(activeTab === "tests")}>
                         Tests
                     </button>
-                    {activeTab === "body" && (
-                        <button
-                            onClick={() => void handleCopyBody()}
-                            disabled={!bodyView.copyText}
-                            style={copyBodyButtonStyle(!bodyView.copyText, copyState)}
-                            title={copyButtonTitle(copyState)}
-                            aria-label={copyButtonTitle(copyState)}
-                        >
-                            <CopyStatusIcon state={copyState} />
-                        </button>
-                    )}
                 </div>
             )}
 
@@ -386,12 +375,24 @@ export default function ResponsePanel({
                     )}
                     {!transportError && (
                         <div
+                            className="pg-response-body-container"
                             style={responseBodyContainerStyle()}
                             onMouseEnter={() => setBodyControlsHovered(true)}
                             onMouseLeave={() => setBodyControlsHovered(false)}
                         >
+                            {bodyView.copyText && (
+                                <button
+                                    className={`pg-response-copy-button pg-response-copy-button-${copyState}`}
+                                    onClick={() => void handleCopyBody()}
+                                    style={copyBodyButtonStyle(copyState)}
+                                    title={copyButtonTitle(copyState)}
+                                    aria-label="Copy response"
+                                >
+                                    <CopyStatusIcon state={copyState} />
+                                </button>
+                            )}
                             {bodyView.canPreview && (
-                                <div style={bodyModeControlsStyle(bodyControlsHovered)}>
+                                <div style={bodyModeControlsStyle(bodyControlsHovered, !!bodyView.copyText)}>
                                     <button
                                         onClick={() => setBodyMode("raw")}
                                         style={bodyModeButtonStyle(bodyMode === "raw")}
@@ -842,11 +843,11 @@ function responseBodyContainerStyle(): React.CSSProperties {
     };
 }
 
-function bodyModeControlsStyle(visible: boolean): React.CSSProperties {
+function bodyModeControlsStyle(visible: boolean, hasCopyButton: boolean): React.CSSProperties {
     return {
         position: "absolute",
         top: 10,
-        right: 10,
+        right: hasCopyButton ? 50 : 10,
         zIndex: 4,
         display: "flex",
         gap: 6,
@@ -888,26 +889,22 @@ function findMatchStyle(active: boolean): React.CSSProperties {
     };
 }
 
-function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSSProperties {
+function copyBodyButtonStyle(copyState: CopyState): React.CSSProperties {
     const baseStyle: React.CSSProperties = {
+        position: "absolute",
+        top: 12,
+        right: 12,
+        zIndex: 6,
         width: 30,
         height: 30,
-        marginLeft: "auto",
         padding: 0,
         borderRadius: 8,
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        boxShadow: "none",
+        boxShadow: "0 8px 18px rgba(2, 6, 23, 0.18)",
+        cursor: "pointer",
     };
-
-    if (disabled) {
-        return {
-            ...buttonStyle(true),
-            ...baseStyle,
-            cursor: "not-allowed",
-        };
-    }
 
     if (copyState === "copied") {
         return {
@@ -932,13 +929,16 @@ function copyBodyButtonStyle(disabled: boolean, copyState: CopyState): React.CSS
     return {
         ...buttonStyle(false),
         ...baseStyle,
+        border: "1px solid var(--pg-border-soft)",
+        background: "var(--pg-surface-overlay)",
+        color: "var(--pg-text-muted)",
     };
 }
 
 function copyButtonTitle(copyState: CopyState): string {
-    if (copyState === "copied") return "Body copied";
+    if (copyState === "copied") return "Response copied";
     if (copyState === "error") return "Copy failed";
-    return "Copy body";
+    return "Copy response";
 }
 
 function CopyStatusIcon({ state }: { state: CopyState }) {
