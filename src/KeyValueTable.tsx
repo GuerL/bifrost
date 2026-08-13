@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
 import { buttonStyle } from "./helpers/UiStyles.ts";
 
 type KeyValueRow = { key: string; value: string; enabled?: boolean };
+const DRAG_DOT_COUNT = 6;
 
 type KeyValueTableProps = {
     rows: KeyValueRow[];
@@ -47,6 +48,96 @@ function updateRow(rows: KeyValueRow[], index: number, patch: Partial<KeyValueRo
     ];
 }
 
+function dragHandleStyle(params: {
+    canDrag: boolean;
+    isActive: boolean;
+    isPlaceholder: boolean;
+    isHovering: boolean;
+}): CSSProperties {
+    const interactive = params.canDrag && !params.isPlaceholder;
+    return {
+        width: 24,
+        height: 30,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: params.isActive || params.isHovering ? "var(--pg-text)" : "var(--pg-text-muted)",
+        cursor: interactive ? (params.isActive ? "grabbing" : "grab") : "default",
+        userSelect: "none",
+        borderRadius: 7,
+        background:
+            params.isActive || params.isHovering
+                ? "rgba(var(--pg-primary-rgb), 0.14)"
+                : "transparent",
+        transition: "background 140ms ease, color 140ms ease, transform 140ms ease",
+        transform: params.isActive ? "scale(1.03)" : "scale(1)",
+    };
+}
+
+function DragGrip() {
+    return (
+        <span
+            aria-hidden
+            style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, 3px)",
+                gap: 3,
+            }}
+        >
+            {Array.from({ length: DRAG_DOT_COUNT }, (_, index) => (
+                <span
+                    key={index}
+                    style={{
+                        width: 3,
+                        height: 3,
+                        borderRadius: 999,
+                        background: "currentColor",
+                    }}
+                />
+            ))}
+        </span>
+    );
+}
+
+function InsertionMarker({ position }: { position: "top" | "bottom" }) {
+    return (
+        <div
+            aria-hidden
+            style={{
+                position: "absolute",
+                left: 4,
+                right: 4,
+                [position]: -4,
+                height: 8,
+                pointerEvents: "none",
+                display: "flex",
+                alignItems: "center",
+                zIndex: 1,
+            }}
+        >
+            <span
+                style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: 999,
+                    background: "var(--pg-primary)",
+                    boxShadow: "0 0 0 2px rgba(var(--pg-primary-rgb), 0.18)",
+                    flexShrink: 0,
+                }}
+            />
+            <span
+                style={{
+                    height: 2,
+                    borderRadius: 999,
+                    background: "var(--pg-primary)",
+                    boxShadow: "0 0 10px rgba(var(--pg-primary-rgb), 0.34)",
+                    flex: 1,
+                }}
+            />
+        </div>
+    );
+}
+
 export default function KeyValueTable({
     rows,
     onChange,
@@ -61,6 +152,7 @@ export default function KeyValueTable({
 }: KeyValueTableProps) {
     const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
     const [dragInsertIndex, setDragInsertIndex] = useState<number | null>(null);
+    const [hoveredDragIndex, setHoveredDragIndex] = useState<number | null>(null);
     const rowElementsRef = useRef<Array<HTMLDivElement | null>>([]);
     const renderedRows = visibleRows(rows, showTrailingEmptyRow);
     const canDrag = !!showDragHandle && !disabled;
@@ -128,6 +220,10 @@ export default function KeyValueTable({
             {renderedRows.map((kv, i) => {
                 const isPlaceholder = i >= rows.length;
                 const rowDisabled = kv.enabled === false;
+                const rowDragging = draggingIndex === i;
+                const showTopInsertLine = dragInsertIndex === i && draggingIndex !== null;
+                const showBottomInsertLine =
+                    dragInsertIndex === rows.length && i === rows.length - 1;
 
                 return (
                     <div
@@ -136,50 +232,53 @@ export default function KeyValueTable({
                             rowElementsRef.current[i] = isPlaceholder ? null : element;
                         }}
                         style={{
+                            position: "relative",
                             display: "grid",
                             gridTemplateColumns: `${showDragHandle ? "24px " : ""}${showEnabledToggle ? "28px " : ""}minmax(0, 1fr) minmax(0, 1fr) 30px`,
                             gap: 8,
                             alignItems: "center",
                             opacity: rowDisabled ? 0.68 : 1,
-                            borderTop:
-                                dragInsertIndex === i && draggingIndex !== null
-                                    ? "2px solid var(--pg-primary)"
-                                    : "2px solid transparent",
-                            borderBottom:
-                                dragInsertIndex === rows.length && i === rows.length - 1
-                                    ? "2px solid var(--pg-primary)"
-                                    : "2px solid transparent",
-                            transform: draggingIndex === i ? "scale(0.995)" : "scale(1)",
+                            padding: "2px 0",
+                            borderRadius: 8,
+                            background: rowDragging
+                                ? "rgba(var(--pg-primary-rgb), 0.08)"
+                                : "transparent",
+                            outline: rowDragging
+                                ? "1px solid rgba(var(--pg-primary-rgb), 0.24)"
+                                : "1px solid transparent",
+                            transform: rowDragging ? "translateY(-1px)" : "translateY(0)",
                             transition:
-                                "opacity 140ms ease, transform 140ms ease, background 140ms ease, border-color 140ms ease",
+                                "opacity 140ms ease, transform 140ms ease, background 140ms ease, outline-color 140ms ease",
                         }}
                     >
+                        {showTopInsertLine && <InsertionMarker position="top" />}
+                        {showBottomInsertLine && <InsertionMarker position="bottom" />}
                         {showDragHandle && (
                             <div
-                                style={{
-                                    width: 24,
-                                    height: 28,
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    color: "var(--pg-text-muted)",
-                                    cursor:
-                                        canDrag && !isPlaceholder
-                                            ? draggingIndex === i
-                                                ? "grabbing"
-                                                : "grab"
-                                            : "default",
-                                    userSelect: "none",
+                                role="button"
+                                aria-label="Drag to reorder"
+                                style={dragHandleStyle({
+                                    canDrag,
+                                    isActive: rowDragging,
+                                    isPlaceholder,
+                                    isHovering: hoveredDragIndex === i,
+                                })}
+                                onPointerEnter={() => setHoveredDragIndex(i)}
+                                onPointerLeave={() => {
+                                    if (hoveredDragIndex === i) {
+                                        setHoveredDragIndex(null);
+                                    }
                                 }}
                                 onPointerDown={(event) => {
                                     if (!canDrag || isPlaceholder || event.button !== 0) return;
                                     event.preventDefault();
+                                    event.currentTarget.setPointerCapture(event.pointerId);
                                     setDraggingIndex(i);
                                     setDragInsertIndex(i);
                                 }}
                                 title="Drag to reorder"
                             >
-                                ⠿
+                                <DragGrip />
                             </div>
                         )}
                         {showEnabledToggle && (
