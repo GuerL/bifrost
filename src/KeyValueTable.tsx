@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import VariableInput, { type VariableStatus } from "./VariableInput.tsx";
 import { buttonStyle } from "./helpers/UiStyles.ts";
 
@@ -60,9 +60,68 @@ export default function KeyValueTable({
     disabled = false,
 }: KeyValueTableProps) {
     const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
-    const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+    const [dragInsertIndex, setDragInsertIndex] = useState<number | null>(null);
+    const rowElementsRef = useRef<Array<HTMLDivElement | null>>([]);
     const renderedRows = visibleRows(rows, showTrailingEmptyRow);
     const canDrag = !!showDragHandle && !disabled;
+
+    function insertionIndexFromPointer(clientY: number): number {
+        const rowElements = rowElementsRef.current.slice(0, rows.length);
+        for (const [index, element] of rowElements.entries()) {
+            if (!element) continue;
+            const rect = element.getBoundingClientRect();
+            if (clientY < rect.top + rect.height / 2) {
+                return index;
+            }
+        }
+        return rows.length;
+    }
+
+    useEffect(() => {
+        if (draggingIndex === null) return;
+        const sourceIndex = draggingIndex;
+
+        const previousCursor = document.body.style.cursor;
+        const previousUserSelect = document.body.style.userSelect;
+        document.body.style.cursor = "grabbing";
+        document.body.style.userSelect = "none";
+
+        function onPointerMove(event: PointerEvent) {
+            setDragInsertIndex(insertionIndexFromPointer(event.clientY));
+        }
+
+        function onPointerUp(event: PointerEvent) {
+            const nextInsertIndex = insertionIndexFromPointer(event.clientY);
+            setDraggingIndex(null);
+            setDragInsertIndex(null);
+
+            if (
+                sourceIndex < 0 ||
+                sourceIndex >= rows.length ||
+                nextInsertIndex === sourceIndex ||
+                nextInsertIndex === sourceIndex + 1
+            ) {
+                return;
+            }
+
+            const next = rows.slice();
+            const [moved] = next.splice(sourceIndex, 1);
+            const adjustedInsertIndex =
+                sourceIndex < nextInsertIndex ? nextInsertIndex - 1 : nextInsertIndex;
+            next.splice(Math.max(0, Math.min(adjustedInsertIndex, next.length)), 0, moved);
+            onChange(next);
+        }
+
+        window.addEventListener("pointermove", onPointerMove);
+        window.addEventListener("pointerup", onPointerUp);
+
+        return () => {
+            window.removeEventListener("pointermove", onPointerMove);
+            window.removeEventListener("pointerup", onPointerUp);
+            document.body.style.cursor = previousCursor;
+            document.body.style.userSelect = previousUserSelect;
+        };
+    }, [draggingIndex, onChange, rows]);
 
     return (
         <div style={{ display: "grid", gap: 8 }}>
@@ -73,43 +132,8 @@ export default function KeyValueTable({
                 return (
                     <div
                         key={i}
-                        draggable={canDrag && !isPlaceholder}
-                        onDragStart={(event) => {
-                            if (!canDrag || isPlaceholder) return;
-                            setDraggingIndex(i);
-                            event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData("application/x-bifrost-row-index", String(i));
-                        }}
-                        onDragOver={(event) => {
-                            if (!canDrag || isPlaceholder) return;
-                            event.preventDefault();
-                            setDragOverIndex(i);
-                            event.dataTransfer.dropEffect = "move";
-                        }}
-                        onDragLeave={() => {
-                            if (dragOverIndex === i) {
-                                setDragOverIndex(null);
-                            }
-                        }}
-                        onDrop={(event) => {
-                            if (!canDrag || isPlaceholder) return;
-                            event.preventDefault();
-                            setDragOverIndex(null);
-                            setDraggingIndex(null);
-                            const from = Number(
-                                event.dataTransfer.getData("application/x-bifrost-row-index")
-                            );
-                            if (!Number.isInteger(from) || from === i || from < 0 || from >= rows.length) {
-                                return;
-                            }
-                            const next = rows.slice();
-                            const [moved] = next.splice(from, 1);
-                            next.splice(i, 0, moved);
-                            onChange(next);
-                        }}
-                        onDragEnd={() => {
-                            setDraggingIndex(null);
-                            setDragOverIndex(null);
+                        ref={(element) => {
+                            rowElementsRef.current[i] = isPlaceholder ? null : element;
                         }}
                         style={{
                             display: "grid",
@@ -118,7 +142,11 @@ export default function KeyValueTable({
                             alignItems: "center",
                             opacity: rowDisabled ? 0.68 : 1,
                             borderTop:
-                                dragOverIndex === i && draggingIndex !== null && draggingIndex !== i
+                                dragInsertIndex === i && draggingIndex !== null
+                                    ? "2px solid var(--pg-primary)"
+                                    : "2px solid transparent",
+                            borderBottom:
+                                dragInsertIndex === rows.length && i === rows.length - 1
                                     ? "2px solid var(--pg-primary)"
                                     : "2px solid transparent",
                             transform: draggingIndex === i ? "scale(0.995)" : "scale(1)",
@@ -142,6 +170,12 @@ export default function KeyValueTable({
                                                 : "grab"
                                             : "default",
                                     userSelect: "none",
+                                }}
+                                onPointerDown={(event) => {
+                                    if (!canDrag || isPlaceholder || event.button !== 0) return;
+                                    event.preventDefault();
+                                    setDraggingIndex(i);
+                                    setDragInsertIndex(i);
                                 }}
                                 title="Drag to reorder"
                             >
