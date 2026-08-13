@@ -1,3 +1,5 @@
+import { buildUrlWithQueryParams } from "./queryParams.ts";
+
 type CurlKeyValue = {
     key: string;
     value: string;
@@ -130,21 +132,7 @@ function buildUrlWithQuery(url: string, query: CurlKeyValue[]): string {
         throw new Error("Request URL is empty.");
     }
 
-    const activeQuery = query.filter((entry) => {
-        if (!isEnabled(entry)) return false;
-        return entry.key.trim().length > 0;
-    });
-    if (activeQuery.length === 0) {
-        return trimmedUrl;
-    }
-
-    const separator = !trimmedUrl.includes("?")
-        ? "?"
-        : trimmedUrl.endsWith("?") || trimmedUrl.endsWith("&")
-            ? ""
-            : "&";
-    const queryText = activeQuery.map((entry) => `${entry.key}=${entry.value}`).join("&");
-    return `${trimmedUrl}${separator}${queryText}`;
+    return buildUrlWithQueryParams(trimmedUrl, query);
 }
 
 function buildBody(body: CurlBodyLike | undefined): BodyBuildResult {

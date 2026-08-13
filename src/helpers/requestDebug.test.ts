@@ -119,6 +119,21 @@ describe("buildRequestDebugInfo", () => {
 
         expect(info.contentTypeMode).toContain("multipart boundary");
     });
+
+    it("uses the final effective query URL", () => {
+        const info = buildRequestDebugInfo({
+            request: buildRequest({
+                url: "https://api.example.com/v1/login?stale=1",
+                query: [
+                    { key: "foo", value: "1", enabled: true },
+                    { key: "debug", value: "true", enabled: false },
+                    { key: "foo", value: "2", enabled: true },
+                ],
+            }),
+        });
+
+        expect(info.resolvedUrl).toBe("https://api.example.com/v1/login?foo=1&foo=2");
+    });
 });
 
 describe("buildRequestDebugText", () => {

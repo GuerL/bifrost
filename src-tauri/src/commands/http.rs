@@ -948,17 +948,29 @@ fn upsert_header(headers: &mut Vec<KeyValue>, key: &str, value: String) {
 }
 
 fn upsert_query(query: &mut Vec<KeyValue>, key: &str, value: String) {
-    if let Some(entry) = query.iter_mut().find(|param| param.key == key) {
-        entry.value = value;
-        entry.enabled = true;
-        return;
-    }
-
     query.push(KeyValue {
         key: key.to_string(),
         value,
         enabled: true,
     });
+}
+
+fn apply_query_params_to_url(mut url: reqwest::Url, query: &[KeyValue]) -> reqwest::Url {
+    if query.is_empty() {
+        return url;
+    }
+
+    url.set_query(None);
+    {
+        let mut pairs = url.query_pairs_mut();
+        for param in query {
+            if !param.enabled || param.key.trim().is_empty() {
+                continue;
+            }
+            pairs.append_pair(&param.key, &param.value);
+        }
+    }
+    url
 }
 
 fn has_enabled_header(headers: &[KeyValue], key: &str) -> bool {
@@ -1333,6 +1345,7 @@ pub async fn do_send_request(
     // 1) validate URL early
     let url = reqwest::Url::parse(&req.url)
         .map_err(|e| err("invalid_url", "Invalid URL", Some(e.to_string()), None))?;
+    let url = apply_query_params_to_url(url, &req.query);
     let url_for_diagnostics = url.clone();
     let app_settings = load_app_settings_value(app).map_err(|error| {
         err(
@@ -1398,17 +1411,6 @@ pub async fn do_send_request(
 
     if should_auto_set_generated_user_agent(&req) {
         builder = builder.header("User-Agent", default_user_agent_value());
-    }
-
-    // query params
-    if !req.query.is_empty() {
-        let pairs: Vec<(String, String)> = req
-            .query
-            .iter()
-            .filter(|kv| kv.enabled && !kv.key.trim().is_empty())
-            .map(|kv| (kv.key.clone(), kv.value.clone()))
-            .collect();
-        builder = builder.query(&pairs);
     }
 
     builder = match &req.auth {
@@ -1657,6 +1659,44 @@ mod tests {
         let request = build_request();
         assert!(is_generated_header_enabled(&request, "content-type"));
         assert!(is_generated_header_enabled(&request, "host"));
+    }
+
+    #[test]
+    fn query_params_replace_url_query_in_order() {
+        let url = reqwest::Url::parse("https://example.com/api?stale=1").unwrap();
+        let final_url = apply_query_params_to_url(
+            url,
+            &[
+                KeyValue {
+                    key: "propositions".to_string(),
+                    value: "INSTANT".to_string(),
+                    enabled: true,
+                },
+                KeyValue {
+                    key: "propositions".to_string(),
+                    value: "FASTTRACK".to_string(),
+                    enabled: true,
+                },
+                KeyValue {
+                    key: "debug".to_string(),
+                    value: "true".to_string(),
+                    enabled: false,
+                },
+            ],
+        );
+
+        assert_eq!(
+            final_url.as_str(),
+            "https://example.com/api?propositions=INSTANT&propositions=FASTTRACK"
+        );
+    }
+
+    #[test]
+    fn empty_query_model_keeps_url_query_for_legacy_requests() {
+        let url = reqwest::Url::parse("https://example.com/api?foo=1").unwrap();
+        let final_url = apply_query_params_to_url(url, &[]);
+
+        assert_eq!(final_url.as_str(), "https://example.com/api?foo=1");
     }
 
     #[test]
