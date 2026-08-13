@@ -14,6 +14,7 @@ import {
     generatedHeaderControlMap,
     generatedHeaderLabel,
 } from "./requestHeadersPreview.ts";
+import { effectiveRequestUrl } from "./queryParams.ts";
 
 const VARIABLE_PATTERN = /{{\s*([^{}]+?)\s*}}/g;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
@@ -254,7 +255,7 @@ export function buildRequestDebugInfo(args: {
     generalSettings?: GeneralSettings;
 }): RequestDebugInfo {
     const variableValues = args.variableValues ?? new Map<string, string>();
-    const resolvedUrl = resolveKnownVariables(args.request.url, variableValues);
+    const resolvedUrl = resolveKnownVariables(effectiveRequestUrl(args.request), variableValues);
     const generatedRows = buildGeneratedHeadersPreview({
         request: args.request,
         variableValues,

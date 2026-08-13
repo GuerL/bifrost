@@ -55,6 +55,10 @@ import {
     prepareRequestForExecution,
 } from "./helpers/requestBodyUtils.ts";
 import {
+    buildUrlWithQueryParams,
+    reconcileUrlQueryWithParams,
+} from "./helpers/queryParams.ts";
+import {
     getRunnerSelectedRequestsForCollection,
     loadRunnerSelectedRequests,
     saveRunnerSelectedRequests,
@@ -383,7 +387,7 @@ const REQUEST_AUTH_TYPE_OPTIONS = [
 ];
 const REQUEST_API_KEY_LOCATION_OPTIONS = [
     { value: "header", label: "Header" },
-    { value: "query", label: "Query" },
+    { value: "query", label: "Params" },
 ];
 const OPENAPI_SUPPORTED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 const PG_TO_BF_DEBUG_PREFIX = "[pg->bf migration]";
@@ -3156,6 +3160,20 @@ export default function App() {
         },
         [draft, updateDraft]
     );
+
+    useEffect(() => {
+        if (!draft || selectedRequestIsRunning) return;
+        if (draft.query.length === 0) {
+            const queryFromUrl = reconcileUrlQueryWithParams([], draft.url);
+            if (queryFromUrl.length > 0) {
+                updateDraft({ query: queryFromUrl });
+                return;
+            }
+        }
+        const effectiveUrl = buildUrlWithQueryParams(draft.url, draft.query);
+        if (effectiveUrl === draft.url) return;
+        updateDraft({ url: effectiveUrl });
+    }, [draft, selectedRequestIsRunning, updateDraft]);
 
     const copyRequestDebugInfo = useCallback(async () => {
         if (!requestDebugText) {
@@ -6636,7 +6654,12 @@ export default function App() {
                                     <VariableInput
                                         placeholder="URL"
                                         value={draft.url}
-                                        onChange={(nextUrl) => updateDraft({ url: nextUrl })}
+                                        onChange={(nextUrl) =>
+                                            updateDraft({
+                                                url: nextUrl,
+                                                query: reconcileUrlQueryWithParams(draft.query, nextUrl),
+                                            })
+                                        }
                                         resolveVariableStatus={resolveVariableStatus}
                                         resolveVariableValue={resolveVariableValue}
                                         variableSuggestions={variableSuggestions}
@@ -6716,7 +6739,7 @@ export default function App() {
                                                 onClick={() => setTab("query")}
                                                 style={editorTabStyle(tab === "query")}
                                             >
-                                                Query
+                                                Params
                                             </button>
                                             <button
                                                 onClick={() => setTab("body")}
@@ -6895,10 +6918,19 @@ export default function App() {
                             {tab === "query" && (
                                 <KeyValueTable
                                     rows={draft.query}
-                                    onChange={(next) => updateDraft({ query: next })}
+                                    onChange={(next) =>
+                                        updateDraft({
+                                            query: next,
+                                            url: buildUrlWithQueryParams(draft.url, next),
+                                        })
+                                    }
                                     resolveVariableStatus={resolveVariableStatus}
                                     resolveVariableValue={resolveVariableValue}
                                     variableSuggestions={variableSuggestions}
+                                    showEnabledToggle
+                                    enabledToggleTitle="Disabled params are kept but not included in the URL."
+                                    showDragHandle
+                                    showTrailingEmptyRow
                                     disabled={selectedRequestIsRunning}
                                 />
                             )}
