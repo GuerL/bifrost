@@ -21,7 +21,7 @@ use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, FilePath};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -32,43 +32,121 @@ pub fn is_pending(registry: State<'_, RequestRegistry>, request_id: String) -> b
 }
 
 #[tauri::command]
-pub fn save_response_body_to_file(
+pub async fn save_response_body_to_file(
     app: AppHandle,
     store: State<'_, ResponseBodyStore>,
     body_id: String,
     suggested_filename: String,
 ) -> Result<bool, String> {
     let total_start = Instant::now();
+    save_response_diagnostics(&total_start, "command entered");
+    save_response_diagnostics(
+        &total_start,
+        format!(
+            "dialog options resolved title=\"Save response\" suggested_filename=\"{}\" default_directory=<none> full_default_path=<none>",
+            suggested_filename
+        ),
+    );
+
+    let metadata_start = Instant::now();
+    let body_size = stored_response_body_size(&store, &body_id)?;
+    save_response_diagnostics(
+        &total_start,
+        format!(
+            "body metadata resolved body_id={} bytes={} metadata_lookup_ms={}",
+            body_id,
+            body_size,
+            duration_ms(metadata_start.elapsed())
+        ),
+    );
+    save_response_diagnostics(
+        &total_start,
+        "opening native dialog via tauri-plugin-dialog save_file callback",
+    );
+
     let dialog_start = Instant::now();
-    let path = app
-        .dialog()
-        .file()
-        .set_title("Save response")
-        .set_file_name(suggested_filename)
-        .blocking_save_file();
+    let path = open_native_save_dialog(app, suggested_filename).await?;
     let dialog_duration = dialog_start.elapsed();
+    save_response_diagnostics(
+        &total_start,
+        format!(
+            "native dialog returned dialog_wait_ms={}",
+            duration_ms(dialog_duration)
+        ),
+    );
     let Some(path) = path else {
-        response_diagnostics_log(format!(
-            "save cancelled body_id={body_id} dialog_wait_ms={} total_ms={}",
-            duration_ms(dialog_duration),
-            duration_ms(total_start.elapsed())
-        ));
+        save_response_diagnostics(&total_start, "command completed cancelled=true");
         return Ok(false);
     };
+    save_response_diagnostics(&total_start, "destination selected");
     let path = path
         .into_path()
         .map_err(|error| format!("Failed to resolve selected save path: {error}"))?;
+    save_response_diagnostics(
+        &total_start,
+        format!("destination path resolved path=\"{}\"", path.display()),
+    );
 
+    save_response_diagnostics(&total_start, "body store access/write starting");
     let write_result = write_stored_response_body_to_file(&store, &body_id, &path)?;
-    response_diagnostics_log(format!(
-        "save completed body_id={body_id} bytes={} lookup_ms={} write_ms={} dialog_wait_ms={} total_ms={}",
-        write_result.bytes,
-        duration_ms(write_result.lookup_duration),
-        duration_ms(write_result.write_duration),
-        duration_ms(dialog_duration),
-        duration_ms(total_start.elapsed())
-    ));
+    save_response_diagnostics(
+        &total_start,
+        format!(
+            "filesystem write completed bytes={} lookup_ms={} write_ms={}",
+            write_result.bytes,
+            duration_ms(write_result.lookup_duration),
+            duration_ms(write_result.write_duration)
+        ),
+    );
+    save_response_diagnostics(&total_start, "command completed cancelled=false");
     Ok(true)
+}
+
+#[tauri::command]
+pub async fn open_test_save_dialog(
+    app: AppHandle,
+    suggested_filename: Option<String>,
+) -> Result<bool, String> {
+    let total_start = Instant::now();
+    let suggested_filename = suggested_filename.unwrap_or_else(|| "test.txt".to_string());
+    save_response_diagnostics(
+        &total_start,
+        format!(
+            "[TestSaveDialog] command entered suggested_filename=\"{}\" default_directory=<none> full_default_path=<none>",
+            suggested_filename
+        ),
+    );
+    let dialog_start = Instant::now();
+    let path = open_native_save_dialog(app, suggested_filename).await?;
+    save_response_diagnostics(
+        &total_start,
+        format!(
+            "[TestSaveDialog] native dialog returned dialog_wait_ms={}",
+            duration_ms(dialog_start.elapsed())
+        ),
+    );
+    Ok(path.is_some())
+}
+
+async fn open_native_save_dialog(
+    app: AppHandle,
+    suggested_filename: String,
+) -> Result<Option<FilePath>, String> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    app.dialog()
+        .file()
+        .set_title("Save response")
+        .set_file_name(suggested_filename)
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+
+    tauri::async_runtime::spawn_blocking(move || {
+        rx.recv()
+            .map_err(|error| format!("Failed to receive native save dialog result: {error}"))
+    })
+    .await
+    .map_err(|error| format!("Failed to wait for native save dialog result: {error}"))?
 }
 
 struct StoredResponseWriteTiming {
@@ -101,6 +179,17 @@ fn write_stored_response_body_to_file(
         lookup_duration,
         write_duration: write_start.elapsed(),
     })
+}
+
+fn stored_response_body_size(store: &ResponseBodyStore, body_id: &str) -> Result<usize, String> {
+    let bodies = store
+        .bodies
+        .lock()
+        .map_err(|_| "Response body store is unavailable".to_string())?;
+    let body = bodies.get(body_id).ok_or_else(|| {
+        "The response body is no longer available. Send the request again to save it.".to_string()
+    })?;
+    Ok(body.bytes.len())
 }
 
 fn store_response_body(
@@ -141,6 +230,14 @@ fn response_diagnostics_log(message: impl AsRef<str>) {
     if response_diagnostics_enabled() {
         eprintln!("[bifrost-response-diagnostics] {}", message.as_ref());
     }
+}
+
+fn save_response_diagnostics(start: &Instant, message: impl AsRef<str>) {
+    response_diagnostics_log(format!(
+        "[SaveResponse] {} +{}ms",
+        message.as_ref(),
+        duration_ms(start.elapsed())
+    ));
 }
 
 fn duration_ms(duration: Duration) -> u128 {

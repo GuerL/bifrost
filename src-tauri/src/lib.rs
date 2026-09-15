@@ -49,6 +49,7 @@ pub fn run() {
             commands::settings::get_proxy_diagnostics,
             commands::http::send_request,
             commands::http::save_response_body_to_file,
+            commands::http::open_test_save_dialog,
             commands::http::is_pending,
             commands::http::cancel_request,
             commands::collection::create_folder,
