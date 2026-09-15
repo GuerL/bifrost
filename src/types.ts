@@ -96,7 +96,20 @@ export type HttpResponseDto = {
     status: number;
     headers: { key: string; value: string }[];
     body_text: string;
+    body?: HttpResponseBodyDto;
     duration_ms: number;
+};
+
+export type HttpResponseBodyDto = {
+    kind: "text" | "binary";
+    body_id: string;
+    size: number;
+    filename: string;
+    mime_type?: string | null;
+    content_disposition?: string | null;
+    downloadable: boolean;
+    available: boolean;
+    description: string;
 };
 
 export type HttpErrorDiagnosticDto = {

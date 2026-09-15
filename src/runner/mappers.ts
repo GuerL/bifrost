@@ -62,8 +62,17 @@ export function toResponseSnapshot(response: HttpResponseDto): RunnerResponseSna
     return {
         status: response.status,
         headers: response.headers,
-        bodyText: bodyTruncated ? bodyText.slice(0, MAX_RESPONSE_BODY_CHARS) : bodyText,
+        bodyText:
+            response.body?.kind === "binary"
+                ? null
+                : bodyTruncated
+                  ? bodyText.slice(0, MAX_RESPONSE_BODY_CHARS)
+                  : bodyText,
         bodyTruncated,
+        bodyKind: response.body?.kind,
+        filename: response.body?.filename,
+        size: response.body?.size,
+        mimeType: response.body?.mime_type,
         durationMs: response.duration_ms,
     };
 }

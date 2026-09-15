@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { HttpErrorDiagnosticDto, HttpResponseDto } from "../types.ts";
 import type { ScriptTestResult } from "../helpers/RequestScriptsRuntime.ts";
 import FindBar from "./FindBar.tsx";
@@ -10,6 +11,7 @@ import { buttonStyle } from "../helpers/UiStyles.ts";
 export type ResponseTabId = "body" | "cookies" | "headers" | "runtime" | "tests";
 
 type CopyState = "idle" | "copied" | "error";
+type SaveState = "idle" | "saving";
 type BodyMode = "raw" | "preview";
 
 type CookieItem = {
@@ -86,11 +88,14 @@ export default function ResponsePanel({
         [bodyView.displayText, bodyView.isJson]
     );
     const cookies = useMemo(() => extractCookies(response), [response]);
+    const isBinaryResponse = response?.body?.kind === "binary";
+    const canSaveResponse = !!response?.body?.body_id && response.body.available && response.body.downloadable;
     const hasScriptErrors = !!scriptReport && (
         !!scriptReport.preRequestError ||
         !!scriptReport.postResponseError
     );
     const [copyState, setCopyState] = useState<CopyState>("idle");
+    const [saveState, setSaveState] = useState<SaveState>("idle");
     const [bodyMode, setBodyMode] = useState<BodyMode>("raw");
     const [bodyControlsHovered, setBodyControlsHovered] = useState(false);
     const [copyButtonVisible, setCopyButtonVisible] = useState(false);
@@ -188,7 +193,8 @@ export default function ResponsePanel({
                 (event.ctrlKey || event.metaKey) &&
                 event.key.toLowerCase() === "f" &&
                 activeTab === "body" &&
-                bodyMode === "raw"
+                bodyMode === "raw" &&
+                !isBinaryResponse
             ) {
                 event.preventDefault();
                 setFindOpen(true);
@@ -215,7 +221,7 @@ export default function ResponsePanel({
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [activeTab, bodyMode, findOpen, moveToNextMatch, moveToPreviousMatch]);
+    }, [activeTab, bodyMode, findOpen, isBinaryResponse, moveToNextMatch, moveToPreviousMatch]);
 
     useEffect(() => {
         return () => {
@@ -266,6 +272,28 @@ export default function ResponsePanel({
             setCopyState("idle");
             copyResetTimerRef.current = null;
         }, 1600);
+    };
+
+    const handleSaveResponse = async () => {
+        if (!response?.body?.body_id || !response.body.available) {
+            notifyError("Response body is no longer available");
+            return;
+        }
+
+        try {
+            setSaveState("saving");
+            const saved = await invoke<boolean>("save_response_body_to_file", {
+                bodyId: response.body.body_id,
+                suggestedFilename: response.body.filename || "response",
+            });
+            if (saved) {
+                notifySuccess("Response saved");
+            }
+        } catch {
+            notifyError("Failed to save response");
+        } finally {
+            setSaveState("idle");
+        }
     };
 
     return (
@@ -383,7 +411,7 @@ export default function ResponsePanel({
                             </div>
                         </div>
                     )}
-                    {!transportError && findOpen && bodyMode === "raw" && (
+                    {!transportError && findOpen && bodyMode === "raw" && !isBinaryResponse && (
                         <FindBar
                             inputRef={findInputRef}
                             query={findQuery}
@@ -405,7 +433,7 @@ export default function ResponsePanel({
                             onMouseEnter={showBodyActions}
                             onMouseLeave={hideBodyActions}
                         >
-                            {bodyView.copyText && (
+                            {bodyView.copyText && !isBinaryResponse && (
                                 <button
                                     className={[
                                         "pg-response-copy-button",
@@ -420,8 +448,18 @@ export default function ResponsePanel({
                                     <CopyStatusIcon state={copyState} />
                                 </button>
                             )}
+                            {canSaveResponse && (
+                                <button
+                                    onClick={() => void handleSaveResponse()}
+                                    disabled={saveState === "saving"}
+                                    style={saveResponseButtonStyle(!!bodyView.copyText && !isBinaryResponse)}
+                                    title="Save response"
+                                >
+                                    {saveState === "saving" ? "Saving..." : "Save response"}
+                                </button>
+                            )}
                             {bodyView.canPreview && (
-                                <div style={bodyModeControlsStyle(bodyControlsHovered, !!bodyView.copyText)}>
+                                <div style={bodyModeControlsStyle(bodyControlsHovered, !!bodyView.copyText || canSaveResponse)}>
                                     <button
                                         onClick={() => setBodyMode("raw")}
                                         style={bodyModeButtonStyle(bodyMode === "raw")}
@@ -436,7 +474,9 @@ export default function ResponsePanel({
                                     </button>
                                 </div>
                             )}
-                            {bodyMode === "preview" && bodyView.canPreview ? (
+                            {isBinaryResponse ? (
+                                <FileResponseState response={response!} onSave={handleSaveResponse} saving={saveState === "saving"} />
+                            ) : bodyMode === "preview" && bodyView.canPreview ? (
                                 <div style={responsePreviewWrapStyle()}>
                                     <iframe
                                         title="Response preview"
@@ -604,6 +644,9 @@ function formatResponseBody(response: HttpResponseDto | null): ResponseBodyView 
     if (!response) {
         return { displayText: "No response yet.", copyText: "", isJson: false, canPreview: false, previewHtml: null };
     }
+    if (response.body?.kind === "binary") {
+        return { displayText: "", copyText: "", isJson: false, canPreview: false, previewHtml: null };
+    }
     if (!response.body_text) {
         return { displayText: "(empty body)", copyText: "", isJson: false, canPreview: false, previewHtml: null };
     }
@@ -637,6 +680,77 @@ function formatResponseBody(response: HttpResponseDto | null): ResponseBodyView 
     } catch {
         return { displayText: raw, copyText: raw, isJson: false, canPreview: false, previewHtml: null };
     }
+}
+
+function FileResponseState({
+    response,
+    onSave,
+    saving,
+}: {
+    response: HttpResponseDto;
+    onSave: () => Promise<void> | void;
+    saving: boolean;
+}) {
+    const body = response.body;
+    if (!body) return null;
+    const rows = [
+        ["Filename", body.filename],
+        ["MIME type", body.mime_type ?? "Unknown"],
+        ["Size", formatBytes(body.size)],
+        ["Content-Disposition", body.content_disposition ?? "None"],
+        ["HTTP status", String(response.status)],
+        ["Duration", `${response.duration_ms} ms`],
+    ];
+
+    return (
+        <div style={fileResponseStateStyle()}>
+            <div style={{ display: "grid", gap: 4 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--pg-text-muted)", textTransform: "uppercase" }}>
+                    File response
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 750, color: "var(--pg-text)", wordBreak: "break-word" }}>
+                    {body.filename}
+                </div>
+                <div style={{ color: "var(--pg-text-dim)", fontSize: 13 }}>
+                    {body.description} · {formatBytes(body.size)}
+                </div>
+            </div>
+
+            <div style={fileResponseMetadataStyle()}>
+                {rows.map(([label, value]) => (
+                    <div key={label} style={fileResponseMetadataRowStyle()}>
+                        <div style={{ color: "var(--pg-text-muted)" }}>{label}</div>
+                        <div style={{ color: "var(--pg-text-dim)", wordBreak: "break-word", fontFamily: "monospace" }}>
+                            {value}
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {body.available && body.downloadable ? (
+                <button onClick={() => void onSave()} disabled={saving} style={fileResponsePrimaryButtonStyle()}>
+                    {saving ? "Saving..." : "Save response"}
+                </button>
+            ) : (
+                <div style={{ color: "var(--pg-text-muted)", fontSize: 13 }}>
+                    The raw response bytes are no longer available. Send the request again to save this file.
+                </div>
+            )}
+        </div>
+    );
+}
+
+function formatBytes(size: number): string {
+    if (!Number.isFinite(size) || size < 0) return "Unknown size";
+    if (size < 1024) return `${size} B`;
+    const units = ["KB", "MB", "GB", "TB"];
+    let value = size / 1024;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+    }
+    return `${value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${units[unitIndex]}`;
 }
 
 function formatTransportErrorBody(error: NonNullable<ResponsePanelProps["transportError"]>): ResponseBodyView {
@@ -876,7 +990,7 @@ function bodyModeControlsStyle(visible: boolean, hasCopyButton: boolean): React.
     return {
         position: "absolute",
         top: 10,
-        right: hasCopyButton ? 50 : 10,
+        right: hasCopyButton ? 168 : 10,
         zIndex: 4,
         display: "flex",
         gap: 6,
@@ -884,6 +998,26 @@ function bodyModeControlsStyle(visible: boolean, hasCopyButton: boolean): React.
         transform: visible ? "translateY(0)" : "translateY(-4px)",
         pointerEvents: visible ? "auto" : "none",
         transition: "opacity 120ms ease, transform 120ms ease",
+    };
+}
+
+function saveResponseButtonStyle(hasCopyButton: boolean): React.CSSProperties {
+    return {
+        ...buttonStyle(false),
+        position: "absolute",
+        top: 12,
+        right: hasCopyButton ? 50 : 12,
+        zIndex: 6,
+        height: 30,
+        padding: "0 10px",
+        borderRadius: 8,
+        border: "1px solid var(--pg-border-soft)",
+        background: "var(--pg-surface-overlay)",
+        color: "var(--pg-text-muted)",
+        cursor: "pointer",
+        fontSize: 12,
+        fontWeight: 650,
+        boxShadow: "0 8px 18px rgba(2, 6, 23, 0.18)",
     };
 }
 
@@ -969,6 +1103,53 @@ function copyButtonTitle(copyState: CopyState): string {
     if (copyState === "copied") return "Response copied";
     if (copyState === "error") return "Copy failed";
     return "Copy response";
+}
+
+function fileResponseStateStyle(): React.CSSProperties {
+    return {
+        width: "100%",
+        minWidth: 0,
+        minHeight: 0,
+        flex: 1,
+        borderRadius: 12,
+        border: "1px solid var(--pg-border-soft)",
+        background: "var(--pg-surface-1)",
+        padding: "56px 18px 18px",
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        gap: 18,
+        overflow: "auto",
+    };
+}
+
+function fileResponseMetadataStyle(): React.CSSProperties {
+    return {
+        display: "grid",
+        gridTemplateColumns: "minmax(130px, 180px) minmax(0, 1fr)",
+        gap: "8px 12px",
+        fontSize: 12,
+        maxWidth: 760,
+    };
+}
+
+function fileResponseMetadataRowStyle(): React.CSSProperties {
+    return {
+        display: "contents",
+    };
+}
+
+function fileResponsePrimaryButtonStyle(): React.CSSProperties {
+    return {
+        ...buttonStyle(true),
+        width: "fit-content",
+        minWidth: 128,
+        height: 34,
+        padding: "0 14px",
+        borderRadius: 8,
+        cursor: "pointer",
+        fontWeight: 700,
+    };
 }
 
 function CopyStatusIcon({ state }: { state: CopyState }) {
