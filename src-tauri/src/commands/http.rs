@@ -19,7 +19,7 @@ use std::error::Error;
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio_util::sync::CancellationToken;
@@ -38,28 +38,51 @@ pub fn save_response_body_to_file(
     body_id: String,
     suggested_filename: String,
 ) -> Result<bool, String> {
+    let total_start = Instant::now();
+    let dialog_start = Instant::now();
     let path = app
         .dialog()
         .file()
         .set_title("Save response")
         .set_file_name(suggested_filename)
         .blocking_save_file();
+    let dialog_duration = dialog_start.elapsed();
     let Some(path) = path else {
+        response_diagnostics_log(format!(
+            "save cancelled body_id={body_id} dialog_wait_ms={} total_ms={}",
+            duration_ms(dialog_duration),
+            duration_ms(total_start.elapsed())
+        ));
         return Ok(false);
     };
     let path = path
         .into_path()
         .map_err(|error| format!("Failed to resolve selected save path: {error}"))?;
 
-    write_stored_response_body_to_file(&store, &body_id, &path)?;
+    let write_result = write_stored_response_body_to_file(&store, &body_id, &path)?;
+    response_diagnostics_log(format!(
+        "save completed body_id={body_id} bytes={} lookup_ms={} write_ms={} dialog_wait_ms={} total_ms={}",
+        write_result.bytes,
+        duration_ms(write_result.lookup_duration),
+        duration_ms(write_result.write_duration),
+        duration_ms(dialog_duration),
+        duration_ms(total_start.elapsed())
+    ));
     Ok(true)
+}
+
+struct StoredResponseWriteTiming {
+    bytes: usize,
+    lookup_duration: Duration,
+    write_duration: Duration,
 }
 
 fn write_stored_response_body_to_file(
     store: &ResponseBodyStore,
     body_id: &str,
     path: impl AsRef<Path>,
-) -> Result<(), String> {
+) -> Result<StoredResponseWriteTiming, String> {
+    let lookup_start = Instant::now();
     let bodies = store
         .bodies
         .lock()
@@ -67,8 +90,17 @@ fn write_stored_response_body_to_file(
     let body = bodies.get(body_id).ok_or_else(|| {
         "The response body is no longer available. Send the request again to save it.".to_string()
     })?;
+    let lookup_duration = lookup_start.elapsed();
+    let bytes = body.bytes.len();
 
-    fs::write(path, &body.bytes).map_err(|error| format!("Failed to save response body: {error}"))
+    let write_start = Instant::now();
+    fs::write(path, &body.bytes)
+        .map_err(|error| format!("Failed to save response body: {error}"))?;
+    Ok(StoredResponseWriteTiming {
+        bytes,
+        lookup_duration,
+        write_duration: write_start.elapsed(),
+    })
 }
 
 fn store_response_body(
@@ -94,6 +126,25 @@ fn store_response_body(
     }
     bodies.insert(body_id, StoredResponseBody { bytes });
     Ok(())
+}
+
+fn response_diagnostics_enabled() -> bool {
+    std::env::var("BIFROST_RESPONSE_DIAGNOSTICS")
+        .map(|value| {
+            let value = value.trim();
+            value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+fn response_diagnostics_log(message: impl AsRef<str>) {
+    if response_diagnostics_enabled() {
+        eprintln!("[bifrost-response-diagnostics] {}", message.as_ref());
+    }
+}
+
+fn duration_ms(duration: Duration) -> u128 {
+    duration.as_millis()
 }
 
 fn err(
@@ -1886,7 +1937,8 @@ pub async fn do_send_request(
         };
         map_reqwest_error(e, Some(d), &ctx)
     })?;
-    let duration_ms = start.elapsed().as_millis();
+    let displayed_duration_ms = start.elapsed().as_millis();
+    let headers_received_duration = start.elapsed();
 
     let status = resp.status().as_u16();
 
@@ -1899,6 +1951,7 @@ pub async fn do_send_request(
         });
     }
 
+    let body_read_start = Instant::now();
     let body_bytes = resp.bytes().await.map_err(|e| {
         let d = start.elapsed().as_millis();
         let ctx = TransportErrorContext {
@@ -1910,20 +1963,28 @@ pub async fn do_send_request(
         };
         map_reqwest_error(e, Some(d), &ctx)
     })?;
+    let body_read_duration = body_read_start.elapsed();
+    let bytes_to_vec_start = Instant::now();
     let body_bytes = body_bytes.to_vec();
+    let bytes_to_vec_duration = bytes_to_vec_start.elapsed();
     let body_id = Uuid::new_v4().to_string();
+    let classify_start = Instant::now();
     let body = build_response_body_dto(
         body_id.clone(),
         body_bytes.len() as u64,
         &headers_out,
         &url_for_diagnostics,
     );
+    let classify_duration = classify_start.elapsed();
+    let text_decode_start = Instant::now();
     let body_text = if body.kind == HttpResponseBodyKind::Text {
         String::from_utf8_lossy(&body_bytes).into_owned()
     } else {
         String::new()
     };
+    let text_decode_duration = text_decode_start.elapsed();
 
+    let store_start = Instant::now();
     store_response_body(body_store, &req.id, body_id, body_bytes).map_err(|message| {
         err(
             "response_body",
@@ -1932,13 +1993,31 @@ pub async fn do_send_request(
             Some(start.elapsed().as_millis()),
         )
     })?;
+    let store_duration = store_start.elapsed();
+
+    response_diagnostics_log(format!(
+        "response received request_id={} status={} kind={:?} bytes={} displayed_duration_ms={} headers_ms={} body_read_ms={} bytes_to_vec_ms={} classify_ms={} text_decode_ms={} store_ms={} total_response_ms={} ipc_body_text_bytes={} ipc_raw_bytes=false",
+        req.id,
+        status,
+        body.kind,
+        body.size,
+        displayed_duration_ms,
+        duration_ms(headers_received_duration),
+        duration_ms(body_read_duration),
+        duration_ms(bytes_to_vec_duration),
+        duration_ms(classify_duration),
+        duration_ms(text_decode_duration),
+        duration_ms(store_duration),
+        duration_ms(start.elapsed()),
+        body_text.len()
+    ));
 
     Ok(HttpResponseDto {
         status,
         headers: headers_out,
         body_text,
         body,
-        duration_ms,
+        duration_ms: displayed_duration_ms,
     })
 }
 
@@ -2243,6 +2322,125 @@ mod tests {
         let bodies = store.bodies.lock().unwrap();
         assert!(!bodies.contains_key("old"));
         assert_eq!(bodies.get("new").unwrap().bytes, vec![2]);
+    }
+
+    #[test]
+    #[ignore]
+    fn diagnostic_binary_response_pipeline_timings() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        println!(
+            "size_bytes,headers_ms,body_read_ms,http_total_ms,metadata_ipc_json_bytes,metadata_serialize_us,save_ipc_json_bytes,save_ipc_serialize_us,store_ms,fs_write_ms,total_save_without_dialog_ms,raw_bytes_cross_ipc"
+        );
+
+        for size in [10 * 1024, 1024 * 1024, 10 * 1024 * 1024, 100 * 1024 * 1024] {
+            let bytes = deterministic_bytes(size);
+            let url = spawn_one_response_server(bytes.clone(), "application/octet-stream");
+            let client = reqwest::Client::new();
+            let request_start = Instant::now();
+            let response = runtime
+                .block_on(async { client.get(url.clone()).send().await })
+                .unwrap();
+            let headers_ms = request_start.elapsed();
+            let headers = response
+                .headers()
+                .iter()
+                .map(|(key, value)| KeyValue {
+                    key: key.to_string(),
+                    value: value.to_str().unwrap_or("").to_string(),
+                    enabled: true,
+                })
+                .collect::<Vec<_>>();
+            let body_read_start = Instant::now();
+            let response_bytes = runtime.block_on(async { response.bytes().await }).unwrap();
+            let body_read_ms = body_read_start.elapsed();
+            let body_bytes = response_bytes.to_vec();
+            let body_id = Uuid::new_v4().to_string();
+            let body = build_response_body_dto(
+                body_id.clone(),
+                body_bytes.len() as u64,
+                &headers,
+                &reqwest::Url::parse(&url).unwrap(),
+            );
+            let response_dto = HttpResponseDto {
+                status: 200,
+                headers,
+                body_text: String::new(),
+                body,
+                duration_ms: duration_ms(headers_ms),
+            };
+            let metadata_serialize_start = Instant::now();
+            let metadata_json = serde_json::to_vec(&response_dto).unwrap();
+            let metadata_serialize_us = metadata_serialize_start.elapsed().as_micros();
+
+            let save_payload = serde_json::json!({
+                "bodyId": body_id,
+                "suggestedFilename": response_dto.body.filename,
+            });
+            let save_ipc_serialize_start = Instant::now();
+            let save_ipc_json = serde_json::to_vec(&save_payload).unwrap();
+            let save_ipc_serialize_us = save_ipc_serialize_start.elapsed().as_micros();
+
+            let store = ResponseBodyStore::default();
+            let store_start = Instant::now();
+            store_response_body(
+                &store,
+                "diagnostic-request",
+                response_dto.body.body_id.clone(),
+                body_bytes,
+            )
+            .unwrap();
+            let store_ms = store_start.elapsed();
+
+            let path =
+                std::env::temp_dir().join(format!("bifrost-diagnostic-{}.bin", Uuid::new_v4()));
+            let save_start = Instant::now();
+            let write_timing =
+                write_stored_response_body_to_file(&store, &response_dto.body.body_id, &path)
+                    .unwrap();
+            let total_save_without_dialog_ms = save_start.elapsed();
+            let _ = fs::remove_file(path);
+
+            println!(
+                "{},{},{},{},{},{},{},{},{},{},{},false",
+                size,
+                duration_ms(headers_ms),
+                duration_ms(body_read_ms),
+                duration_ms(request_start.elapsed()),
+                metadata_json.len(),
+                metadata_serialize_us,
+                save_ipc_json.len(),
+                save_ipc_serialize_us,
+                duration_ms(store_ms),
+                duration_ms(write_timing.write_duration),
+                duration_ms(total_save_without_dialog_ms),
+            );
+        }
+    }
+
+    fn deterministic_bytes(size: usize) -> Vec<u8> {
+        (0..size).map(|index| (index % 251) as u8).collect()
+    }
+
+    fn spawn_one_response_server(bytes: Vec<u8>, content_type: &str) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let content_type = content_type.to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = std::io::Read::read(&mut stream, &mut request);
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Disposition: attachment; filename=\"diagnostic.bin\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                bytes.len()
+            );
+            std::io::Write::write_all(&mut stream, headers.as_bytes()).unwrap();
+            for chunk in bytes.chunks(64 * 1024) {
+                std::io::Write::write_all(&mut stream, chunk).unwrap();
+            }
+            std::io::Write::flush(&mut stream).unwrap();
+        });
+
+        format!("http://{address}/diagnostic.bin")
     }
 
     #[test]

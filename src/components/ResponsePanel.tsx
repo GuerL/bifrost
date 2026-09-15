@@ -281,10 +281,28 @@ export default function ResponsePanel({
         }
 
         try {
+            const totalStart = performance.now();
+            responseDiagnosticsLog("save click", {
+                kind: response.body.kind,
+                bodyId: response.body.body_id,
+                filename: response.body.filename,
+                byteSize: response.body.size,
+                mimeType: response.body.mime_type,
+                bodyTextBytes: new TextEncoder().encode(response.body_text).byteLength,
+                rawBytesInFrontend: false,
+                ipcPayload: "metadata only: bodyId + suggestedFilename",
+            });
             setSaveState("saving");
+            const invokeStart = performance.now();
             const saved = await invoke<boolean>("save_response_body_to_file", {
                 bodyId: response.body.body_id,
                 suggestedFilename: response.body.filename || "response",
+            });
+            const invokeMs = performance.now() - invokeStart;
+            responseDiagnosticsLog("save invoke completed", {
+                saved,
+                invokeTotalMs: Math.round(invokeMs),
+                totalSaveActionMs: Math.round(performance.now() - totalStart),
             });
             if (saved) {
                 notifySuccess("Response saved");
@@ -751,6 +769,21 @@ function formatBytes(size: number): string {
         unitIndex += 1;
     }
     return `${value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${units[unitIndex]}`;
+}
+
+function responseDiagnosticsEnabled(): boolean {
+    if (typeof window === "undefined") return false;
+    try {
+        const value = window.localStorage.getItem("bifrost.responseDiagnostics") ?? "";
+        return ["1", "true", "yes"].includes(value.trim().toLowerCase());
+    } catch {
+        return false;
+    }
+}
+
+function responseDiagnosticsLog(message: string, details: Record<string, unknown>) {
+    if (!responseDiagnosticsEnabled()) return;
+    console.info("[bifrost-response-diagnostics]", message, details);
 }
 
 function formatTransportErrorBody(error: NonNullable<ResponsePanelProps["transportError"]>): ResponseBodyView {
