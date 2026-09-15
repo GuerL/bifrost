@@ -987,11 +987,44 @@ function sanitizeHttpResponse(input: unknown): HttpResponseDto | null {
         )
         .map((item) => ({ key: item.key, value: item.value }));
 
+    const body = sanitizeHttpResponseBody(source.body);
+
     return {
         status: source.status,
         headers,
         body_text: source.body_text,
+        ...(body ? { body } : {}),
         duration_ms: source.duration_ms,
+    };
+}
+
+function sanitizeHttpResponseBody(input: unknown): HttpResponseDto["body"] | null {
+    if (!input || typeof input !== "object") return null;
+    const source = input as Record<string, unknown>;
+    if (source.kind !== "text" && source.kind !== "binary") {
+        return null;
+    }
+    if (
+        typeof source.body_id !== "string" ||
+        typeof source.size !== "number" ||
+        typeof source.filename !== "string" ||
+        typeof source.downloadable !== "boolean" ||
+        typeof source.available !== "boolean" ||
+        typeof source.description !== "string"
+    ) {
+        return null;
+    }
+
+    return {
+        kind: source.kind,
+        body_id: source.body_id,
+        size: source.size,
+        filename: source.filename,
+        mime_type: typeof source.mime_type === "string" ? source.mime_type : null,
+        content_disposition: typeof source.content_disposition === "string" ? source.content_disposition : null,
+        downloadable: source.downloadable,
+        available: source.available,
+        description: source.description,
     };
 }
 
@@ -1077,10 +1110,39 @@ function readPersistedResponsesState(): PersistedResponsesState {
 function writePersistedResponsesState(state: PersistedResponsesState) {
     if (typeof window === "undefined") return;
     try {
-        window.localStorage.setItem(RESPONSES_STORAGE_KEY, JSON.stringify(state));
+        window.localStorage.setItem(RESPONSES_STORAGE_KEY, JSON.stringify(stripVolatileResponseBodies(state)));
     } catch {
         // ignore storage write failures
     }
+}
+
+function stripVolatileResponseBodies(state: PersistedResponsesState): PersistedResponsesState {
+    const next: PersistedResponsesState = {};
+    for (const [collectionId, collection] of Object.entries(state)) {
+        next[collectionId] = {};
+        for (const [requestId, entry] of Object.entries(collection)) {
+            next[collectionId][requestId] = {
+                ...entry,
+                response: stripVolatileResponseBody(entry.response),
+            };
+        }
+    }
+    return next;
+}
+
+function stripVolatileResponseBody(response: HttpResponseDto | null): HttpResponseDto | null {
+    if (!response?.body) return response;
+    if (response.body.kind !== "binary") return response;
+    return {
+        ...response,
+        body_text: "",
+        body: {
+            ...response.body,
+            body_id: "",
+            available: false,
+            downloadable: false,
+        },
+    };
 }
 
 function safeFileName(value: string): string {

@@ -27,6 +27,10 @@ export type RunnerResponseSnapshot = {
     headers: { key: string; value: string }[];
     bodyText: string | null;
     bodyTruncated: boolean;
+    bodyKind?: "text" | "binary";
+    filename?: string;
+    size?: number;
+    mimeType?: string | null;
     durationMs: number;
 };
 

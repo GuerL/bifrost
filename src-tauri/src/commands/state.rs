@@ -12,3 +12,14 @@ pub struct RunningRequest {
 pub struct RequestRegistry {
     pub running: Mutex<HashMap<String, RunningRequest>>,
 }
+
+#[derive(Clone)]
+pub struct StoredResponseBody {
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Default)]
+pub struct ResponseBodyStore {
+    pub bodies: Mutex<HashMap<String, StoredResponseBody>>,
+    pub request_body_ids: Mutex<HashMap<String, String>>,
+}

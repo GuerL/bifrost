@@ -3,18 +3,25 @@ use crate::commands::settings::{
     apply_reqwest_proxy_configuration, load_app_settings_value, resolve_effective_proxy_transport,
     ResolvedProxyTransport,
 };
-use crate::commands::state::{RequestRegistry, RunningRequest};
+use crate::commands::state::{
+    RequestRegistry, ResponseBodyStore, RunningRequest, StoredResponseBody,
+};
 use crate::model::collection::{
     Auth, AuthLocation, Body, HttpMethod, KeyValue, MultipartField, Request, RequestTls,
 };
-use crate::model::http::{HttpErrorDiagnosticDto, HttpErrorDto, HttpResponseDto};
+use crate::model::http::{
+    HttpErrorDiagnosticDto, HttpErrorDto, HttpResponseBodyDto, HttpResponseBodyKind,
+    HttpResponseDto,
+};
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::fs;
 use std::io;
 use std::path::Path;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
+use tauri_plugin_dialog::{DialogExt, FilePath};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -22,6 +29,219 @@ use uuid::Uuid;
 pub fn is_pending(registry: State<'_, RequestRegistry>, request_id: String) -> bool {
     let map = registry.running.lock().unwrap();
     map.contains_key(&request_id)
+}
+
+#[tauri::command]
+pub async fn save_response_body_to_file(
+    app: AppHandle,
+    store: State<'_, ResponseBodyStore>,
+    body_id: String,
+    suggested_filename: String,
+) -> Result<bool, String> {
+    let total_start = Instant::now();
+    save_response_diagnostics(&total_start, "command entered");
+    save_response_diagnostics(
+        &total_start,
+        format!(
+            "dialog options resolved title=\"Save response\" suggested_filename=\"{}\" default_directory=<none> full_default_path=<none>",
+            suggested_filename
+        ),
+    );
+
+    let metadata_start = Instant::now();
+    let body_size = stored_response_body_size(&store, &body_id)?;
+    save_response_diagnostics(
+        &total_start,
+        format!(
+            "body metadata resolved body_id={} bytes={} metadata_lookup_ms={}",
+            body_id,
+            body_size,
+            duration_ms(metadata_start.elapsed())
+        ),
+    );
+    save_response_diagnostics(
+        &total_start,
+        "opening native dialog via tauri-plugin-dialog save_file callback",
+    );
+
+    let dialog_start = Instant::now();
+    let path = open_native_save_dialog(app, suggested_filename).await?;
+    let dialog_duration = dialog_start.elapsed();
+    save_response_diagnostics(
+        &total_start,
+        format!(
+            "native dialog returned dialog_wait_ms={}",
+            duration_ms(dialog_duration)
+        ),
+    );
+    let Some(path) = path else {
+        save_response_diagnostics(&total_start, "command completed cancelled=true");
+        return Ok(false);
+    };
+    save_response_diagnostics(&total_start, "destination selected");
+    let path = path
+        .into_path()
+        .map_err(|error| format!("Failed to resolve selected save path: {error}"))?;
+    save_response_diagnostics(
+        &total_start,
+        format!("destination path resolved path=\"{}\"", path.display()),
+    );
+
+    save_response_diagnostics(&total_start, "body store access/write starting");
+    let write_result = write_stored_response_body_to_file(&store, &body_id, &path)?;
+    save_response_diagnostics(
+        &total_start,
+        format!(
+            "filesystem write completed bytes={} lookup_ms={} write_ms={}",
+            write_result.bytes,
+            duration_ms(write_result.lookup_duration),
+            duration_ms(write_result.write_duration)
+        ),
+    );
+    save_response_diagnostics(&total_start, "command completed cancelled=false");
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn open_test_save_dialog(
+    app: AppHandle,
+    suggested_filename: Option<String>,
+) -> Result<bool, String> {
+    let total_start = Instant::now();
+    let suggested_filename = suggested_filename.unwrap_or_else(|| "test.txt".to_string());
+    save_response_diagnostics(
+        &total_start,
+        format!(
+            "[TestSaveDialog] command entered suggested_filename=\"{}\" default_directory=<none> full_default_path=<none>",
+            suggested_filename
+        ),
+    );
+    let dialog_start = Instant::now();
+    let path = open_native_save_dialog(app, suggested_filename).await?;
+    save_response_diagnostics(
+        &total_start,
+        format!(
+            "[TestSaveDialog] native dialog returned dialog_wait_ms={}",
+            duration_ms(dialog_start.elapsed())
+        ),
+    );
+    Ok(path.is_some())
+}
+
+async fn open_native_save_dialog(
+    app: AppHandle,
+    suggested_filename: String,
+) -> Result<Option<FilePath>, String> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    app.dialog()
+        .file()
+        .set_title("Save response")
+        .set_file_name(suggested_filename)
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+
+    tauri::async_runtime::spawn_blocking(move || {
+        rx.recv()
+            .map_err(|error| format!("Failed to receive native save dialog result: {error}"))
+    })
+    .await
+    .map_err(|error| format!("Failed to wait for native save dialog result: {error}"))?
+}
+
+struct StoredResponseWriteTiming {
+    bytes: usize,
+    lookup_duration: Duration,
+    write_duration: Duration,
+}
+
+fn write_stored_response_body_to_file(
+    store: &ResponseBodyStore,
+    body_id: &str,
+    path: impl AsRef<Path>,
+) -> Result<StoredResponseWriteTiming, String> {
+    let lookup_start = Instant::now();
+    let bodies = store
+        .bodies
+        .lock()
+        .map_err(|_| "Response body store is unavailable".to_string())?;
+    let body = bodies.get(body_id).ok_or_else(|| {
+        "The response body is no longer available. Send the request again to save it.".to_string()
+    })?;
+    let lookup_duration = lookup_start.elapsed();
+    let bytes = body.bytes.len();
+
+    let write_start = Instant::now();
+    fs::write(path, &body.bytes)
+        .map_err(|error| format!("Failed to save response body: {error}"))?;
+    Ok(StoredResponseWriteTiming {
+        bytes,
+        lookup_duration,
+        write_duration: write_start.elapsed(),
+    })
+}
+
+fn stored_response_body_size(store: &ResponseBodyStore, body_id: &str) -> Result<usize, String> {
+    let bodies = store
+        .bodies
+        .lock()
+        .map_err(|_| "Response body store is unavailable".to_string())?;
+    let body = bodies.get(body_id).ok_or_else(|| {
+        "The response body is no longer available. Send the request again to save it.".to_string()
+    })?;
+    Ok(body.bytes.len())
+}
+
+fn store_response_body(
+    store: &ResponseBodyStore,
+    request_id: &str,
+    body_id: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    let old_body_id = {
+        let mut request_body_ids = store
+            .request_body_ids
+            .lock()
+            .map_err(|_| "Response body store is unavailable".to_string())?;
+        request_body_ids.insert(request_id.to_string(), body_id.clone())
+    };
+
+    let mut bodies = store
+        .bodies
+        .lock()
+        .map_err(|_| "Response body store is unavailable".to_string())?;
+    if let Some(old_body_id) = old_body_id {
+        bodies.remove(&old_body_id);
+    }
+    bodies.insert(body_id, StoredResponseBody { bytes });
+    Ok(())
+}
+
+fn response_diagnostics_enabled() -> bool {
+    std::env::var("BIFROST_RESPONSE_DIAGNOSTICS")
+        .map(|value| {
+            let value = value.trim();
+            value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+fn response_diagnostics_log(message: impl AsRef<str>) {
+    if response_diagnostics_enabled() {
+        eprintln!("[bifrost-response-diagnostics] {}", message.as_ref());
+    }
+}
+
+fn save_response_diagnostics(start: &Instant, message: impl AsRef<str>) {
+    response_diagnostics_log(format!(
+        "[SaveResponse] {} +{}ms",
+        message.as_ref(),
+        duration_ms(start.elapsed())
+    ));
+}
+
+fn duration_ms(duration: Duration) -> u128 {
+    duration.as_millis()
 }
 
 fn err(
@@ -692,6 +912,337 @@ fn map_reqwest_error(
     )
 }
 
+fn header_value(headers: &[KeyValue], name: &str) -> Option<String> {
+    headers
+        .iter()
+        .find(|header| header.key.eq_ignore_ascii_case(name))
+        .map(|header| header.value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn content_type_base(content_type: Option<&str>) -> Option<String> {
+    content_type
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+}
+
+fn is_textual_content_type(content_type: Option<&str>) -> bool {
+    let Some(base) = content_type_base(content_type) else {
+        return true;
+    };
+
+    base.starts_with("text/")
+        || base == "application/json"
+        || base.ends_with("+json")
+        || base == "application/xml"
+        || base.ends_with("+xml")
+        || base == "application/xhtml+xml"
+        || base == "application/javascript"
+        || base == "application/ecmascript"
+        || base == "application/x-javascript"
+        || base == "application/graphql"
+        || base == "application/x-www-form-urlencoded"
+        || base == "application/yaml"
+        || base == "application/x-yaml"
+}
+
+fn is_binary_content_type(content_type: Option<&str>) -> bool {
+    let Some(base) = content_type_base(content_type) else {
+        return false;
+    };
+
+    base == "application/octet-stream"
+        || base == "application/pdf"
+        || base == "application/zip"
+        || base == "application/x-zip-compressed"
+        || base == "application/gzip"
+        || base == "application/x-gzip"
+        || base == "application/x-tar"
+        || base == "application/x-7z-compressed"
+        || base == "application/x-rar-compressed"
+        || base == "application/vnd.rar"
+        || base == "application/x-bzip2"
+        || base.starts_with("image/")
+        || base.starts_with("audio/")
+        || base.starts_with("video/")
+        || base.starts_with("font/")
+        || base.starts_with("application/font-")
+        || base.starts_with("application/vnd.")
+}
+
+fn is_attachment_disposition(content_disposition: Option<&str>) -> bool {
+    content_disposition
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("attachment"))
+}
+
+fn split_content_disposition_params(value: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut escaped = false;
+
+    for ch in value.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && in_quotes {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            in_quotes = !in_quotes;
+            current.push(ch);
+            continue;
+        }
+        if ch == ';' && !in_quotes {
+            parts.push(current.trim().to_string());
+            current.clear();
+            continue;
+        }
+        current.push(ch);
+    }
+
+    if !current.trim().is_empty() {
+        parts.push(current.trim().to_string());
+    }
+
+    parts
+}
+
+fn unquote_header_value(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() < 2 || !trimmed.starts_with('"') || !trimmed.ends_with('"') {
+        return trimmed.to_string();
+    }
+
+    let mut out = String::new();
+    let mut escaped = false;
+    for ch in trimmed[1..trimmed.len() - 1].chars() {
+        if escaped {
+            out.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn percent_decode_utf8(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return None;
+            }
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).ok()?;
+            let byte = u8::from_str_radix(hex, 16).ok()?;
+            decoded.push(byte);
+            index += 3;
+            continue;
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8(decoded).ok()
+}
+
+fn decode_rfc5987_filename(value: &str) -> Option<String> {
+    let unquoted = unquote_header_value(value);
+    let mut parts = unquoted.splitn(3, '\'');
+    let charset = parts.next()?.trim();
+    let _language = parts.next()?;
+    let encoded = parts.next()?;
+
+    if !charset.eq_ignore_ascii_case("utf-8") {
+        return None;
+    }
+
+    percent_decode_utf8(encoded)
+}
+
+fn content_disposition_filename(content_disposition: Option<&str>) -> Option<String> {
+    let value = content_disposition?;
+    let params = split_content_disposition_params(value);
+    let mut filename = None;
+
+    for param in params.iter().skip(1) {
+        let Some((key, value)) = param.split_once('=') else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case("filename*") {
+            if let Some(decoded) = decode_rfc5987_filename(value.trim()) {
+                return Some(decoded);
+            }
+        } else if key.trim().eq_ignore_ascii_case("filename") && filename.is_none() {
+            filename = Some(unquote_header_value(value));
+        }
+    }
+
+    filename
+}
+
+fn sanitize_response_filename(value: &str) -> Option<String> {
+    let normalized = value.replace('\\', "/");
+    let basename = normalized
+        .split('/')
+        .next_back()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('.');
+    let sanitized = basename
+        .chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '-',
+            ch if ch.is_control() => '-',
+            ch => ch,
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let sanitized = sanitized.trim().trim_matches('.').to_string();
+    if sanitized.is_empty() {
+        None
+    } else {
+        Some(sanitized)
+    }
+}
+
+fn extension_for_content_type(content_type: Option<&str>) -> Option<&'static str> {
+    match content_type_base(content_type).as_deref()? {
+        "application/json" => Some("json"),
+        "application/xml" | "text/xml" => Some("xml"),
+        "text/html" | "application/xhtml+xml" => Some("html"),
+        "text/plain" => Some("txt"),
+        "text/css" => Some("css"),
+        "application/javascript" | "application/ecmascript" | "application/x-javascript" => {
+            Some("js")
+        }
+        "application/pdf" => Some("pdf"),
+        "application/zip" | "application/x-zip-compressed" => Some("zip"),
+        "application/gzip" | "application/x-gzip" => Some("gz"),
+        "application/x-tar" => Some("tar"),
+        "application/x-7z-compressed" => Some("7z"),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => Some("xlsx"),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => Some("docx"),
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some("pptx"),
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        "image/svg+xml" => Some("svg"),
+        "audio/mpeg" => Some("mp3"),
+        "video/mp4" => Some("mp4"),
+        "font/woff" => Some("woff"),
+        "font/woff2" => Some("woff2"),
+        "application/octet-stream" => Some("bin"),
+        _ => None,
+    }
+}
+
+fn has_file_extension(filename: &str) -> bool {
+    filename.rsplit_once('.').is_some_and(|(_, ext)| {
+        !ext.trim().is_empty() && ext.chars().all(|ch| ch.is_ascii_alphanumeric())
+    })
+}
+
+fn append_extension_if_missing(filename: String, content_type: Option<&str>) -> String {
+    if has_file_extension(&filename) {
+        return filename;
+    }
+    match extension_for_content_type(content_type) {
+        Some(ext) => format!("{filename}.{ext}"),
+        None => filename,
+    }
+}
+
+fn filename_from_url(url: &reqwest::Url) -> Option<String> {
+    url.path_segments()?
+        .filter(|segment| {
+            let trimmed = segment.trim();
+            !trimmed.is_empty() && trimmed != "." && trimmed != ".."
+        })
+        .next_back()
+        .and_then(|segment| percent_decode_utf8(segment).or_else(|| Some(segment.to_string())))
+        .and_then(|segment| sanitize_response_filename(&segment))
+}
+
+fn suggested_response_filename(
+    content_disposition: Option<&str>,
+    content_type: Option<&str>,
+    url: &reqwest::Url,
+) -> String {
+    let filename = content_disposition_filename(content_disposition)
+        .and_then(|name| sanitize_response_filename(&name))
+        .or_else(|| filename_from_url(url))
+        .unwrap_or_else(|| "response".to_string());
+
+    append_extension_if_missing(filename, content_type)
+}
+
+fn describe_content_type(content_type: Option<&str>) -> String {
+    match content_type_base(content_type).as_deref() {
+        Some("application/pdf") => "PDF document".to_string(),
+        Some("application/zip") | Some("application/x-zip-compressed") => "ZIP archive".to_string(),
+        Some("application/octet-stream") => "Binary data".to_string(),
+        Some(value) if value.starts_with("image/") => "Image".to_string(),
+        Some(value) if value.starts_with("audio/") => "Audio".to_string(),
+        Some(value) if value.starts_with("video/") => "Video".to_string(),
+        Some(value) if value.starts_with("font/") => "Font".to_string(),
+        Some(value) if is_textual_content_type(Some(value)) => "Text response".to_string(),
+        Some(value) => value.to_string(),
+        None => "Response body".to_string(),
+    }
+}
+
+fn build_response_body_dto(
+    body_id: String,
+    size: u64,
+    headers: &[KeyValue],
+    url: &reqwest::Url,
+) -> HttpResponseBodyDto {
+    let content_type = header_value(headers, "content-type");
+    let content_disposition = header_value(headers, "content-disposition");
+    let attachment = is_attachment_disposition(content_disposition.as_deref());
+    let kind = if attachment || is_binary_content_type(content_type.as_deref()) {
+        HttpResponseBodyKind::Binary
+    } else if is_textual_content_type(content_type.as_deref()) {
+        HttpResponseBodyKind::Text
+    } else {
+        HttpResponseBodyKind::Binary
+    };
+    let filename =
+        suggested_response_filename(content_disposition.as_deref(), content_type.as_deref(), url);
+    let description = describe_content_type(content_type.as_deref());
+
+    HttpResponseBodyDto {
+        kind,
+        body_id,
+        size,
+        filename,
+        mime_type: content_type,
+        content_disposition,
+        downloadable: true,
+        available: true,
+        description,
+    }
+}
+
 fn replace_vars_in_text(
     input: &str,
     vars: &HashMap<String, String>,
@@ -1338,6 +1889,7 @@ fn build_multipart_form(
 
 pub async fn do_send_request(
     app: &AppHandle,
+    body_store: &ResponseBodyStore,
     mut req: Request,
 ) -> Result<HttpResponseDto, HttpErrorDto> {
     apply_auth_to_request(&mut req);
@@ -1482,7 +2034,8 @@ pub async fn do_send_request(
         };
         map_reqwest_error(e, Some(d), &ctx)
     })?;
-    let duration_ms = start.elapsed().as_millis();
+    let displayed_duration_ms = start.elapsed().as_millis();
+    let headers_received_duration = start.elapsed();
 
     let status = resp.status().as_u16();
 
@@ -1495,7 +2048,8 @@ pub async fn do_send_request(
         });
     }
 
-    let body_text = resp.text().await.map_err(|e| {
+    let body_read_start = Instant::now();
+    let body_bytes = resp.bytes().await.map_err(|e| {
         let d = start.elapsed().as_millis();
         let ctx = TransportErrorContext {
             target_url: &url_for_diagnostics,
@@ -1506,12 +2060,61 @@ pub async fn do_send_request(
         };
         map_reqwest_error(e, Some(d), &ctx)
     })?;
+    let body_read_duration = body_read_start.elapsed();
+    let bytes_to_vec_start = Instant::now();
+    let body_bytes = body_bytes.to_vec();
+    let bytes_to_vec_duration = bytes_to_vec_start.elapsed();
+    let body_id = Uuid::new_v4().to_string();
+    let classify_start = Instant::now();
+    let body = build_response_body_dto(
+        body_id.clone(),
+        body_bytes.len() as u64,
+        &headers_out,
+        &url_for_diagnostics,
+    );
+    let classify_duration = classify_start.elapsed();
+    let text_decode_start = Instant::now();
+    let body_text = if body.kind == HttpResponseBodyKind::Text {
+        String::from_utf8_lossy(&body_bytes).into_owned()
+    } else {
+        String::new()
+    };
+    let text_decode_duration = text_decode_start.elapsed();
+
+    let store_start = Instant::now();
+    store_response_body(body_store, &req.id, body_id, body_bytes).map_err(|message| {
+        err(
+            "response_body",
+            message,
+            None,
+            Some(start.elapsed().as_millis()),
+        )
+    })?;
+    let store_duration = store_start.elapsed();
+
+    response_diagnostics_log(format!(
+        "response received request_id={} status={} kind={:?} bytes={} displayed_duration_ms={} headers_ms={} body_read_ms={} bytes_to_vec_ms={} classify_ms={} text_decode_ms={} store_ms={} total_response_ms={} ipc_body_text_bytes={} ipc_raw_bytes=false",
+        req.id,
+        status,
+        body.kind,
+        body.size,
+        displayed_duration_ms,
+        duration_ms(headers_received_duration),
+        duration_ms(body_read_duration),
+        duration_ms(bytes_to_vec_duration),
+        duration_ms(classify_duration),
+        duration_ms(text_decode_duration),
+        duration_ms(store_duration),
+        duration_ms(start.elapsed()),
+        body_text.len()
+    ));
 
     Ok(HttpResponseDto {
         status,
         headers: headers_out,
         body_text,
-        duration_ms,
+        body,
+        duration_ms: displayed_duration_ms,
     })
 }
 
@@ -1530,6 +2133,7 @@ fn cancelled(duration_ms: Option<u128>) -> HttpErrorDto {
 pub async fn send_request(
     app: AppHandle,
     registry: State<'_, RequestRegistry>,
+    body_store: State<'_, ResponseBodyStore>,
     request_id: String,
     req: Request,
     environment_id: Option<String>,
@@ -1579,7 +2183,7 @@ pub async fn send_request(
 
     let result = tokio::select! {
       _ = token.cancelled() => Err(cancelled(Some(start.elapsed().as_millis()))),
-      res = do_send_request(&app, req) => res,
+      res = do_send_request(&app, &body_store, req) => res,
     };
 
     // cleanup only if still the same run_id
@@ -1628,6 +2232,312 @@ mod tests {
             extractors: vec![],
             scripts: RequestScripts::default(),
         }
+    }
+
+    fn response_headers(entries: &[(&str, &str)]) -> Vec<KeyValue> {
+        entries
+            .iter()
+            .map(|(key, value)| KeyValue {
+                key: (*key).to_string(),
+                value: (*value).to_string(),
+                enabled: true,
+            })
+            .collect()
+    }
+
+    fn body_for_headers(entries: &[(&str, &str)], url: &str) -> HttpResponseBodyDto {
+        build_response_body_dto(
+            "body_1".to_string(),
+            42,
+            &response_headers(entries),
+            &reqwest::Url::parse(url).unwrap(),
+        )
+    }
+
+    #[test]
+    fn detects_binary_mime_types_as_file_responses() {
+        for content_type in [
+            "application/pdf",
+            "application/zip",
+            "application/octet-stream",
+            "image/png",
+            "audio/mpeg",
+            "video/mp4",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "font/woff2",
+        ] {
+            let body = body_for_headers(
+                &[("Content-Type", content_type)],
+                "https://example.com/download",
+            );
+            assert_eq!(body.kind, HttpResponseBodyKind::Binary, "{content_type}");
+        }
+    }
+
+    #[test]
+    fn keeps_known_textual_mime_types_renderable() {
+        for content_type in [
+            "application/json",
+            "application/problem+json",
+            "application/xml",
+            "application/rss+xml",
+            "text/plain",
+            "text/html",
+            "application/javascript",
+        ] {
+            let body =
+                body_for_headers(&[("Content-Type", content_type)], "https://example.com/api");
+            assert_eq!(body.kind, HttpResponseBodyKind::Text, "{content_type}");
+        }
+    }
+
+    #[test]
+    fn content_disposition_attachment_overrides_textual_content_type() {
+        let body = body_for_headers(
+            &[
+                ("Content-Type", "application/json"),
+                (
+                    "Content-Disposition",
+                    "attachment; filename=\"report.json\"",
+                ),
+            ],
+            "https://example.com/report",
+        );
+
+        assert_eq!(body.kind, HttpResponseBodyKind::Binary);
+        assert_eq!(body.filename, "report.json");
+    }
+
+    #[test]
+    fn content_disposition_filename_forms_are_supported() {
+        let quoted = body_for_headers(
+            &[(
+                "Content-Disposition",
+                "attachment; filename=\"invoice.pdf\"",
+            )],
+            "https://example.com/download",
+        );
+        let unquoted = body_for_headers(
+            &[("Content-Disposition", "attachment; filename=invoice.pdf")],
+            "https://example.com/download",
+        );
+        let encoded = body_for_headers(
+            &[(
+                "Content-Disposition",
+                "attachment; filename=\"fallback.pdf\"; filename*=UTF-8''rapport%20septembre.pdf",
+            )],
+            "https://example.com/download",
+        );
+
+        assert_eq!(quoted.filename, "invoice.pdf");
+        assert_eq!(unquoted.filename, "invoice.pdf");
+        assert_eq!(encoded.filename, "rapport septembre.pdf");
+    }
+
+    #[test]
+    fn filename_uses_url_segment_then_fallback_with_inferred_extension() {
+        let from_url = body_for_headers(
+            &[("Content-Type", "application/pdf")],
+            "https://example.com/exports/monthly?token=secret",
+        );
+        let fallback = body_for_headers(
+            &[("Content-Type", "application/zip")],
+            "https://example.com/",
+        );
+
+        assert_eq!(from_url.filename, "monthly.pdf");
+        assert_eq!(fallback.filename, "response.zip");
+    }
+
+    #[test]
+    fn server_filename_is_sanitized_to_basename() {
+        let body = body_for_headers(
+            &[(
+                "Content-Disposition",
+                "attachment; filename=\"../../evil/report.pdf\"",
+            )],
+            "https://example.com/download",
+        );
+
+        assert_eq!(body.filename, "report.pdf");
+    }
+
+    #[test]
+    fn binary_invalid_utf8_and_empty_binary_are_not_text() {
+        let invalid_bytes = vec![0xff, 0xfe, 0xfd];
+        let invalid_body = body_for_headers(
+            &[("Content-Type", "application/octet-stream")],
+            "https://example.com/blob",
+        );
+        let empty_body = build_response_body_dto(
+            "empty".to_string(),
+            0,
+            &response_headers(&[("Content-Type", "application/octet-stream")]),
+            &reqwest::Url::parse("https://example.com/empty").unwrap(),
+        );
+
+        assert_eq!(invalid_body.kind, HttpResponseBodyKind::Binary);
+        assert!(String::from_utf8(invalid_bytes).is_err());
+        assert_eq!(empty_body.kind, HttpResponseBodyKind::Binary);
+        assert_eq!(empty_body.size, 0);
+    }
+
+    #[test]
+    fn file_detection_is_not_coupled_to_http_method() {
+        let mut get_request = build_request();
+        get_request.method = HttpMethod::Get;
+        let mut post_request = build_request();
+        post_request.method = HttpMethod::Post;
+        let get_body = body_for_headers(&[("Content-Type", "application/pdf")], &get_request.url);
+        let post_body = body_for_headers(&[("Content-Type", "application/zip")], &post_request.url);
+
+        assert_eq!(get_body.kind, HttpResponseBodyKind::Binary);
+        assert_eq!(post_body.kind, HttpResponseBodyKind::Binary);
+    }
+
+    #[test]
+    fn saving_stored_response_preserves_exact_bytes() {
+        let store = ResponseBodyStore::default();
+        let body_id = "body-save-test".to_string();
+        let bytes = vec![0, 1, 2, 255, b'P', b'D', b'F'];
+        store_response_body(&store, "req_1", body_id.clone(), bytes.clone()).unwrap();
+
+        let path = std::env::temp_dir().join(format!("bifrost-save-test-{}.bin", Uuid::new_v4()));
+        write_stored_response_body_to_file(&store, &body_id, &path).unwrap();
+        let saved = fs::read(&path).unwrap();
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(saved, bytes);
+    }
+
+    #[test]
+    fn replacing_request_response_body_evicts_previous_bytes() {
+        let store = ResponseBodyStore::default();
+        store_response_body(&store, "req_1", "old".to_string(), vec![1]).unwrap();
+        store_response_body(&store, "req_1", "new".to_string(), vec![2]).unwrap();
+
+        let bodies = store.bodies.lock().unwrap();
+        assert!(!bodies.contains_key("old"));
+        assert_eq!(bodies.get("new").unwrap().bytes, vec![2]);
+    }
+
+    #[test]
+    #[ignore]
+    fn diagnostic_binary_response_pipeline_timings() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        println!(
+            "size_bytes,headers_ms,body_read_ms,http_total_ms,metadata_ipc_json_bytes,metadata_serialize_us,save_ipc_json_bytes,save_ipc_serialize_us,store_ms,fs_write_ms,total_save_without_dialog_ms,raw_bytes_cross_ipc"
+        );
+
+        for size in [10 * 1024, 1024 * 1024, 10 * 1024 * 1024, 100 * 1024 * 1024] {
+            let bytes = deterministic_bytes(size);
+            let url = spawn_one_response_server(bytes.clone(), "application/octet-stream");
+            let client = reqwest::Client::new();
+            let request_start = Instant::now();
+            let response = runtime
+                .block_on(async { client.get(url.clone()).send().await })
+                .unwrap();
+            let headers_ms = request_start.elapsed();
+            let headers = response
+                .headers()
+                .iter()
+                .map(|(key, value)| KeyValue {
+                    key: key.to_string(),
+                    value: value.to_str().unwrap_or("").to_string(),
+                    enabled: true,
+                })
+                .collect::<Vec<_>>();
+            let body_read_start = Instant::now();
+            let response_bytes = runtime.block_on(async { response.bytes().await }).unwrap();
+            let body_read_ms = body_read_start.elapsed();
+            let body_bytes = response_bytes.to_vec();
+            let body_id = Uuid::new_v4().to_string();
+            let body = build_response_body_dto(
+                body_id.clone(),
+                body_bytes.len() as u64,
+                &headers,
+                &reqwest::Url::parse(&url).unwrap(),
+            );
+            let response_dto = HttpResponseDto {
+                status: 200,
+                headers,
+                body_text: String::new(),
+                body,
+                duration_ms: duration_ms(headers_ms),
+            };
+            let metadata_serialize_start = Instant::now();
+            let metadata_json = serde_json::to_vec(&response_dto).unwrap();
+            let metadata_serialize_us = metadata_serialize_start.elapsed().as_micros();
+
+            let save_payload = serde_json::json!({
+                "bodyId": body_id,
+                "suggestedFilename": response_dto.body.filename,
+            });
+            let save_ipc_serialize_start = Instant::now();
+            let save_ipc_json = serde_json::to_vec(&save_payload).unwrap();
+            let save_ipc_serialize_us = save_ipc_serialize_start.elapsed().as_micros();
+
+            let store = ResponseBodyStore::default();
+            let store_start = Instant::now();
+            store_response_body(
+                &store,
+                "diagnostic-request",
+                response_dto.body.body_id.clone(),
+                body_bytes,
+            )
+            .unwrap();
+            let store_ms = store_start.elapsed();
+
+            let path =
+                std::env::temp_dir().join(format!("bifrost-diagnostic-{}.bin", Uuid::new_v4()));
+            let save_start = Instant::now();
+            let write_timing =
+                write_stored_response_body_to_file(&store, &response_dto.body.body_id, &path)
+                    .unwrap();
+            let total_save_without_dialog_ms = save_start.elapsed();
+            let _ = fs::remove_file(path);
+
+            println!(
+                "{},{},{},{},{},{},{},{},{},{},{},false",
+                size,
+                duration_ms(headers_ms),
+                duration_ms(body_read_ms),
+                duration_ms(request_start.elapsed()),
+                metadata_json.len(),
+                metadata_serialize_us,
+                save_ipc_json.len(),
+                save_ipc_serialize_us,
+                duration_ms(store_ms),
+                duration_ms(write_timing.write_duration),
+                duration_ms(total_save_without_dialog_ms),
+            );
+        }
+    }
+
+    fn deterministic_bytes(size: usize) -> Vec<u8> {
+        (0..size).map(|index| (index % 251) as u8).collect()
+    }
+
+    fn spawn_one_response_server(bytes: Vec<u8>, content_type: &str) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let content_type = content_type.to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = std::io::Read::read(&mut stream, &mut request);
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Disposition: attachment; filename=\"diagnostic.bin\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                bytes.len()
+            );
+            std::io::Write::write_all(&mut stream, headers.as_bytes()).unwrap();
+            for chunk in bytes.chunks(64 * 1024) {
+                std::io::Write::write_all(&mut stream, chunk).unwrap();
+            }
+            std::io::Write::flush(&mut stream).unwrap();
+        });
+
+        format!("http://{address}/diagnostic.bin")
     }
 
     #[test]
