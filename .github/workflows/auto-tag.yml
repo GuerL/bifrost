@@ -1,0 +1,77 @@
+name: Auto Tag Bifrost
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Keep tagging and its release together; never cancel a running signed build.
+concurrency:
+  group: bifrost-auto-tag
+  cancel-in-progress: false
+
+jobs:
+  auto-tag:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      created: ${{ steps.create.outputs.created }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Validate version and check remote tag
+        id: version
+        run: node scripts/validate-version.js
+        env:
+          CHECK_REMOTE: 'true'
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Create annotated tag
+        id: create
+        if: steps.version.outputs.exists == 'false'
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$GITHUB_SHA" -m "Bifrost $TAG"
+          if push_output=$(git push --porcelain origin "refs/tags/$TAG"); then
+            # Only a new remote ref owns release orchestration. An identical ref
+            # created by another actor can also produce a successful push.
+            if awk -F '\t' '$1 == "*" { created=1 } END { exit !created }' <<< "$push_output"; then
+              echo "created=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "created=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # Another actor may have created the tag between validation and push.
+            remote_tag=$(git ls-remote --refs origin "refs/tags/$TAG")
+            if [ -n "$remote_tag" ]; then
+              echo "Tag $TAG now exists; the winning creator owns the release."
+              echo "created=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::Failed to push $TAG and it does not exist on origin."
+              exit 1
+            fi
+          fi
+
+  release:
+    needs: auto-tag
+    if: needs.auto-tag.outputs.created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.auto-tag.outputs.tag }}
+    secrets: inherit

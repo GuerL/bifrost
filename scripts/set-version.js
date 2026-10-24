@@ -14,7 +14,7 @@ const cargoTomlPath = path.join(projectRoot, "src-tauri", "Cargo.toml");
 const tauriConfigPath = path.join(projectRoot, "src-tauri", "tauri.conf.json");
 
 const semverRegex =
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|[0-9A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 
 function fail(message) {
     console.error(`❌ ${message}`);
@@ -33,13 +33,16 @@ function writeJson(filePath, value) {
     fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function parseSemver(version) {
+export function parseSemver(version) {
+    if (typeof version !== "string") return null;
     const match = semverRegex.exec(version);
     if (!match) return null;
     return {
         major: Number(match[1]),
         minor: Number(match[2]),
         patch: Number(match[3]),
+        core: match.slice(1, 4),
+        prerelease: match[4]?.split(".") ?? [],
     };
 }
 
@@ -177,4 +180,4 @@ function main() {
     console.log(`   ${tauriConfigMessage}`);
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) main();

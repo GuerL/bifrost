@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { BeforeMount } from "@monaco-editor/react";
 import type * as MonacoApi from "monaco-editor";
+import { registerEditorTheme, editorThemeName } from "../design/editorTheme.ts";
 import { sanitizeJsonForValidation } from "../helpers/jsonValidationSanitizer.ts";
 
 const TEMPLATE_VARIABLE_PATTERN = /{{\s*([^{}]+?)\s*}}/g;
@@ -341,52 +342,7 @@ export function useMonacoVariableSupport({
     const beforeMountMonaco = useCallback<BeforeMount>((monaco) => {
         monacoRef.current = monaco;
 
-        monaco.editor.defineTheme("bifrost-midnight", {
-            base: "vs-dark",
-            inherit: true,
-            rules: [
-                { token: "keyword", foreground: "32bcc4" },
-                { token: "number", foreground: "f59e0b" },
-                { token: "string", foreground: "6adbe2" },
-            ],
-            colors: {
-                "editor.background": "#0b1220",
-                "editor.foreground": "#e2e8f0",
-                "editorLineNumber.foreground": "#475569",
-                "editorLineNumber.activeForeground": "#94a3b8",
-                "editorCursor.foreground": "#009DA6",
-                "editor.selectionBackground": "#009DA644",
-                "editor.lineHighlightBackground": "#0f172a",
-                "editorIndentGuide.background1": "#1e293b",
-                "editorIndentGuide.activeBackground1": "#334155",
-                "scrollbarSlider.background": "#009DA655",
-                "scrollbarSlider.hoverBackground": "#009DA688",
-                "scrollbarSlider.activeBackground": "#009DA6CC",
-            },
-        });
-        monaco.editor.defineTheme("bifrost-daylight", {
-            base: "vs",
-            inherit: true,
-            rules: [
-                { token: "keyword", foreground: "007C83" },
-                { token: "number", foreground: "B45309" },
-                { token: "string", foreground: "0E7490" },
-            ],
-            colors: {
-                "editor.background": "#F8FAFC",
-                "editor.foreground": "#0F172A",
-                "editorLineNumber.foreground": "#94A3B8",
-                "editorLineNumber.activeForeground": "#64748B",
-                "editorCursor.foreground": "#007C83",
-                "editor.selectionBackground": "#009DA633",
-                "editor.lineHighlightBackground": "#EEF2F7",
-                "editorIndentGuide.background1": "#D0D7E2",
-                "editorIndentGuide.activeBackground1": "#94A3B8",
-                "scrollbarSlider.background": "#94A3B855",
-                "scrollbarSlider.hoverBackground": "#64748B66",
-                "scrollbarSlider.activeBackground": "#47556988",
-            },
-        });
+        registerEditorTheme(monaco);
 
         // Keep JSON diagnostics enabled in the editor (visual feedback only).
         monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
@@ -625,6 +581,20 @@ declare const pg: BifrostScriptingApi;`;
             monacoProvidersRef.current.push(completionDisposable, hoverDisposable);
         }
     }, [getVariableValueForDisplay]);
+
+    useEffect(() => {
+        const root = document.documentElement;
+        const refreshTheme = () => {
+            const monaco = monacoRef.current;
+            if (!monaco) return;
+            registerEditorTheme(monaco);
+            monaco.editor.setTheme(editorThemeName(root.dataset.theme === "light" ? "light" : "dark"));
+        };
+        const observer = new MutationObserver(refreshTheme);
+        observer.observe(root, { attributes: true, attributeFilter: ["data-theme", "data-visual-identity"] });
+        refreshTheme();
+        return () => observer.disconnect();
+    }, []);
 
     const editorOptions = useMemo(
         () => ({

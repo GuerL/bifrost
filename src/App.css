@@ -4,6 +4,19 @@
   --pg-primary-strong: #007c83;
   --pg-primary-ink: #032325;
   --pg-primary-rgb: 0, 157, 166;
+  /* Semantic hierarchy: structure, controls, secondary actions, then selection. */
+  --pg-control-border: var(--pg-border-muted);
+  --pg-button-border: transparent;
+  --pg-section-border: transparent;
+  --pg-button-bg: var(--pg-surface-2);
+  --pg-control-shadow: none;
+  --pg-elevated-surface: var(--pg-surface-1);
+  --pg-row-surface: var(--pg-surface-1);
+  --pg-status-neutral-text: #cbd5e1;
+  --pg-status-success-text: #6ee7b7;
+  --pg-status-error-text: #fda4af;
+  --pg-status-warning-text: #fbbf24;
+  --pg-status-info-text: #93c5fd;
   --pg-success: #22c55e;
 
   --pg-bg-main: #0b1220;
@@ -99,6 +112,12 @@
 }
 
 :root[data-theme="light"] {
+  --pg-control-border: #64748b;
+  --pg-status-neutral-text: #475569;
+  --pg-status-success-text: #166534;
+  --pg-status-error-text: #991b1b;
+  --pg-status-warning-text: #854d0e;
+  --pg-status-info-text: #1e40af;
   --pg-bg-main: #eef2f8;
   --pg-surface-0: #ffffff;
   --pg-surface-1: #f7f9fc;
@@ -317,7 +336,7 @@ select,
 button,
 textarea {
   border-radius: var(--pg-control-radius);
-  border: 1px solid var(--pg-border);
+  border: 1px solid var(--pg-control-border);
   padding: 4px var(--pg-control-padding-x);
   min-height: var(--pg-control-height);
   font-size: 12px;
@@ -326,7 +345,7 @@ textarea {
   color: var(--pg-text);
   background: var(--pg-control-bg);
   transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease, transform 120ms ease;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: var(--pg-control-shadow);
   outline: none;
 }
 
@@ -359,6 +378,8 @@ select option:checked {
 }
 
 button {
+  border-color: var(--pg-button-border);
+  background: var(--pg-button-bg);
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
@@ -444,7 +465,7 @@ textarea:hover {
 
 button:hover:not(:disabled) {
   background: var(--pg-control-bg-hover);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 3px 8px var(--pg-shadow-color);
+  box-shadow: var(--pg-control-shadow);
 }
 
 button:active:not(:disabled) {
@@ -514,7 +535,7 @@ th {
   align-items: center;
   gap: 8px;
   border-radius: 8px;
-  border: 1px solid var(--pg-border);
+  border: 1px solid var(--pg-control-border);
   background: var(--pg-topbar-trigger-bg);
   color: var(--pg-text);
   padding: 0 10px;
@@ -571,7 +592,7 @@ button.pg-topbar-selector-trigger:hover:not(:disabled) {
   min-width: var(--radix-select-trigger-width);
   max-width: min(420px, calc(100vw - 32px));
   border-radius: 10px;
-  border: 1px solid var(--pg-border);
+  border: 1px solid var(--pg-border-soft);
   background: var(--pg-popover-bg);
   box-shadow: 0 16px 40px var(--pg-shadow-color);
   overflow: hidden;
@@ -676,13 +697,13 @@ button.pg-topbar-selector-trigger:hover:not(:disabled) {
   justify-content: space-between;
   gap: 8px;
   border-radius: var(--pg-control-radius);
-  border: 1px solid var(--pg-border);
+  border: 1px solid var(--pg-control-border);
   background: var(--pg-control-bg);
   color: var(--pg-text);
   padding: 0 var(--pg-control-padding-x);
   font-size: 12px;
   font-weight: 600;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: var(--pg-control-shadow);
   cursor: pointer;
   transition: border-color 130ms ease, box-shadow 130ms ease, background 130ms ease;
   -webkit-user-select: none;
@@ -726,7 +747,7 @@ button.pg-app-select-trigger:hover:not(:disabled) {
   min-width: var(--radix-select-trigger-width);
   max-width: min(420px, calc(100vw - 32px));
   border-radius: 10px;
-  border: 1px solid var(--pg-border);
+  border: 1px solid var(--pg-border-soft);
   background: var(--pg-popover-bg);
   box-shadow: 0 16px 36px var(--pg-shadow-color);
   overflow: hidden;

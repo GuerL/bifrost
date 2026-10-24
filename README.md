@@ -108,6 +108,12 @@ curl https://sh.rustup.rs -sSf | sh
 ```
 
 ---
+## Releases
+
+See [the version bump and release process](docs/releases.md) for automatic tagging,
+PR validation, manual releases, recovery, and repository setup.
+
+---
 ## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 only (AGPL-3.0-only)**.

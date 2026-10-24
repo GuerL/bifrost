@@ -1,0 +1,72 @@
+/* Product adapter. Existing layout, density, status and editor tokens remain owned by Bifrost. */
+:root[data-visual-identity="qvb"] {
+  font-family: var(--qvb-font-sans);
+  --pg-primary: var(--qvb-action-bg);
+  --pg-primary-soft: var(--qvb-action-hover);
+  --pg-primary-strong: var(--qvb-action-border);
+  --pg-primary-ink: var(--qvb-action-ink);
+  --pg-primary-rgb: 160, 154, 255;
+  --pg-button-bg: var(--pg-surface-2);
+  --pg-tab-active-border: transparent;
+  --pg-control-radius: var(--qvb-radius-control);
+}
+
+:root[data-visual-identity="qvb"]:not([data-theme="light"]) {
+  --pg-bg-main: var(--qvb-bg);
+  --pg-surface-0: var(--qvb-surface);
+  --pg-surface-1: var(--qvb-surface-control);
+  --pg-surface-2: var(--qvb-surface-selected);
+  --pg-surface-alt: var(--qvb-surface);
+  --pg-surface-gradient: var(--qvb-surface-control);
+  --pg-surface-soft: var(--qvb-surface-selected);
+  --pg-surface-overlay: #11131aee;
+  --pg-surface-overlay-disabled: #11131a99;
+  --pg-toolbar-bg: var(--qvb-surface);
+  --pg-toolbar-border: var(--qvb-border);
+  --pg-panel-border: var(--qvb-border-card);
+  --pg-floating-bg: var(--qvb-surface);
+  --pg-popover-bg: var(--qvb-surface);
+  --pg-topbar-trigger-bg: var(--qvb-surface-control);
+  --pg-topbar-trigger-bg-hover: var(--qvb-surface-hover);
+  --pg-topbar-body-toggle-bg: var(--qvb-surface-control);
+  --pg-control-bg: var(--qvb-surface-control);
+  --pg-control-bg-hover: var(--qvb-surface-hover);
+  --pg-tab-track-bg: var(--qvb-surface);
+  --pg-tab-track-border: var(--qvb-border-card);
+  /* Structural dividers stay quiet; fields retain an accessible boundary. */
+  --pg-border: var(--qvb-border-card);
+  --pg-control-border: var(--qvb-text-subtle);
+  --pg-elevated-surface: var(--qvb-surface-selected);
+  --pg-border-muted: var(--qvb-text-subtle);
+  --pg-border-soft: var(--qvb-border);
+  --pg-text: var(--qvb-text);
+  --pg-text-dim: var(--qvb-text);
+  --pg-text-muted: var(--qvb-text-secondary);
+  --pg-scrollbar-track: var(--qvb-surface);
+  --pg-scrollbar-thumb-border: var(--qvb-bg);
+}
+
+/* Light is a Bifrost adaptation: portfolio selection violet is dark enough for text. */
+:root[data-visual-identity="qvb"][data-theme="light"] {
+  --pg-primary: var(--qvb-selection);
+  --pg-primary-soft: var(--qvb-selection);
+  --pg-primary-strong: var(--qvb-selection);
+  --pg-primary-ink: #ffffff;
+  --pg-primary-rgb: 102, 100, 184;
+  --pg-tab-active-border: transparent;
+}
+
+/* Target controls and Radix items; a solid ring remains visible over inline shadows. */
+:root[data-visual-identity="qvb"] :is(button, input, textarea, select, a, [role="option"], [role="menuitem"]):focus-visible {
+  outline: 2px solid var(--qvb-focus);
+  outline-offset: 2px;
+}
+:root[data-visual-identity="qvb"][data-theme="light"] :is(button, input, textarea, select, a, [role="option"], [role="menuitem"]):focus-visible {
+  outline-color: var(--qvb-selection);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-visual-identity="qvb"] :is(button, input, textarea, select, .pg-app-select-content, .pg-topbar-selector-content) {
+    transition: none;
+    animation: none;
+  }
+}

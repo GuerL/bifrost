@@ -296,7 +296,7 @@ export default function RequestBodyEditor({
                 const jsonBody = draft.body;
                 return (
                     <div style={fillHeight ? { minHeight: 0, flex: 1 } : undefined}>
-                        <div style={editorPanelStyle(fillHeight ? "100%" : "min(34vh, 320px)", fillHeight ? 160 : 180)}>
+                        <div className="bf-code-surface" style={editorPanelStyle(fillHeight ? "100%" : "min(34vh, 320px)", fillHeight ? 160 : 180)}>
                             <Editor
                                 key={`body-json-${selectedRequestId ?? "none"}`}
                                 height="100%"
@@ -372,7 +372,7 @@ export default function RequestBodyEditor({
                             disabled={readOnly}
                         />
                         <div style={fillHeight ? { minHeight: 0, flex: 1 } : undefined}>
-                            <div style={editorPanelStyle(fillHeight ? "100%" : "min(34vh, 320px)", fillHeight ? 160 : 180)}>
+                            <div className="bf-code-surface" style={editorPanelStyle(fillHeight ? "100%" : "min(34vh, 320px)", fillHeight ? 160 : 180)}>
                                 <Editor
                                     key={`body-raw-${selectedRequestId ?? "none"}`}
                                     height="100%"

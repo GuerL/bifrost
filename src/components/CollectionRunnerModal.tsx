@@ -1,5 +1,5 @@
 import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
-import { buttonStyle, dangerButtonStyle, primaryButtonStyle } from "../helpers/UiStyles.ts";
+import { buttonStyle, dangerButtonStyle, primaryButtonStyle, tabStyle } from "../helpers/UiStyles.ts";
 import type { CollectionNode, Request } from "../types.ts";
 import { groupRunnerExecutionsForDisplay } from "../runner/grouping.ts";
 import { calculateRunnerAverages } from "../runner/stats.ts";
@@ -261,7 +261,7 @@ export default function CollectionRunnerModal({
                     maxHeight: 820,
                     border: "1px solid var(--pg-border)",
                     borderRadius: 12,
-                    background: "var(--pg-surface-1)",
+                    background: "var(--pg-elevated-surface)",
                     padding: 16,
                     display: "flex",
                     flexDirection: "column",
@@ -282,7 +282,7 @@ export default function CollectionRunnerModal({
 
                 <div
                     style={{
-                        border: "1px solid var(--pg-border)",
+                        border: "1px solid var(--pg-section-border)",
                         borderRadius: 12,
                         background: "var(--pg-surface-0)",
                         padding: 8,
@@ -308,7 +308,7 @@ export default function CollectionRunnerModal({
                     <>
                         <div
                             style={{
-                                border: "1px solid var(--pg-border)",
+                                border: "1px solid var(--pg-section-border)",
                                 borderRadius: 12,
                                 background: "var(--pg-surface-0)",
                                 padding: 12,
@@ -391,7 +391,7 @@ export default function CollectionRunnerModal({
 
                         <div
                             style={{
-                                border: "1px solid var(--pg-border)",
+                                border: "1px solid var(--pg-section-border)",
                                 borderRadius: 12,
                                 background: "var(--pg-surface-0)",
                                 padding: 12,
@@ -433,7 +433,7 @@ export default function CollectionRunnerModal({
                             {hasRequests && (
                                 <div
                                     style={{
-                                        border: "1px solid var(--pg-border)",
+                                        border: "1px solid var(--pg-section-border)",
                                         borderRadius: 10,
                                         background: "var(--pg-surface-1)",
                                         overflowY: "auto",
@@ -466,7 +466,7 @@ export default function CollectionRunnerModal({
                 {mainTab === "results" && (
                     <div
                         style={{
-                            border: "1px solid var(--pg-border)",
+                            border: "1px solid var(--pg-section-border)",
                             borderRadius: 12,
                             background: "var(--pg-surface-0)",
                             minHeight: 0,
@@ -552,7 +552,8 @@ export default function CollectionRunnerModal({
                                                         flexDirection: "column",
                                                         gap: 8,
                                                         borderRadius: 10,
-                                                        border: "1px solid var(--pg-border)",
+                                                        border: "1px solid var(--pg-section-border)",
+                                                        borderBottom: "1px solid var(--pg-border-soft)",
                                                         background: "var(--pg-surface-0)",
                                                         overflow: "hidden",
                                                     }}
@@ -726,7 +727,7 @@ export default function CollectionRunnerModal({
 
                 <div
                     style={{
-                        border: "1px solid var(--pg-border)",
+                        border: "1px solid var(--pg-section-border)",
                         borderRadius: 12,
                         background: "var(--pg-surface-0)",
                         padding: 12,
@@ -748,7 +749,7 @@ export default function CollectionRunnerModal({
                                     Tests {run.summary.passedTests ?? 0}/{run.summary.totalTests ?? 0}
                                 </span>
                                 {run.summary.wasCancelledByUser && (
-                                    <span style={{ fontSize: 12, color: "#fbbf24", fontWeight: 700 }}>
+                                    <span style={{ fontSize: 12, color: "var(--pg-status-warning-text)", fontWeight: 700 }}>
                                         Run cancelled by user.
                                     </span>
                                 )}
@@ -792,8 +793,9 @@ function ExecutionRow({
                 flexDirection: "column",
                 gap: 8,
                 borderRadius: 10,
-                border: rowBorderStyle(execution.status, execution.hasTestFailures),
-                background: "var(--pg-surface-1)",
+                border: "1px solid transparent",
+                borderBottom: "1px solid var(--pg-border-soft)",
+                background: "var(--pg-row-surface)",
                 padding: "8px 10px",
             }}
         >
@@ -997,7 +999,7 @@ function renderRunnerSelectionTreeNodes({
                             <button
                                 onClick={() => onToggleExpanded(node.folderId)}
                                 style={{
-                                    border: "1px solid var(--pg-border)",
+                                    border: "1px solid var(--pg-section-border)",
                                     borderRadius: 8,
                                     background: expanded
                                         ? "rgba(var(--pg-primary-rgb), 0.08)"
@@ -1081,7 +1083,7 @@ function renderRunnerSelectionTreeNodes({
                         width: "100%",
                         minWidth: 0,
                         boxSizing: "border-box",
-                        border: "1px solid var(--pg-border)",
+                        border: "1px solid var(--pg-border-soft)",
                         borderRadius: 10,
                         paddingTop: 7,
                         paddingBottom: 7,
@@ -1113,7 +1115,7 @@ function renderRunnerSelectionTreeNodes({
                             fontSize: 11,
                             fontWeight: 700,
                             color: request ? "var(--pg-text)" : "var(--pg-text-muted)",
-                            border: "1px solid var(--pg-border)",
+                            border: "1px solid var(--pg-section-border)",
                             borderRadius: 999,
                             padding: "3px 8px",
                             textAlign: "center",
@@ -1212,7 +1214,7 @@ function ExecutionDetails({ execution }: { execution: RunnerExecutionResult }) {
                         style={{
                             margin: 0,
                             padding: 8,
-                            border: "1px solid var(--pg-border)",
+                            border: "1px solid var(--pg-section-border)",
                             borderRadius: 8,
                             background: "var(--pg-surface-0)",
                             color: "var(--pg-text-dim)",
@@ -1335,36 +1337,21 @@ function labelTextStyle(): React.CSSProperties {
 
 function tabButtonStyle(active: boolean): React.CSSProperties {
     return {
-        ...buttonStyle(false),
+        ...tabStyle(active),
         height: 30,
         padding: "0 10px",
-        borderColor: active ? "var(--pg-primary)" : "var(--pg-border)",
-        background: active ? "rgba(var(--pg-primary-rgb), 0.2)" : "var(--pg-surface-1)",
-        color: active ? "var(--pg-primary)" : "var(--pg-text-dim)",
         boxShadow: "none",
     };
 }
 
 function filterTabStyle(active: boolean): React.CSSProperties {
     return {
-        ...buttonStyle(false),
+        ...tabStyle(active),
         height: 28,
         padding: "0 10px",
-        borderColor: active ? "var(--pg-primary)" : "var(--pg-border)",
-        background: active ? "rgba(var(--pg-primary-rgb), 0.2)" : "var(--pg-surface-1)",
-        color: active ? "var(--pg-primary)" : "var(--pg-text-dim)",
         boxShadow: "none",
         fontSize: 12,
     };
-}
-
-function rowBorderStyle(state: RunnerExecutionStatus, hasTestFailures = false): string {
-    if (hasTestFailures && state === "success") return "1px solid rgba(239, 68, 68, 0.45)";
-    if (state === "failed") return "1px solid var(--pg-danger)";
-    if (state === "cancelled") return "1px solid #f59e0b";
-    if (state === "success") return "1px solid rgba(16, 185, 129, 0.5)";
-    if (state === "running") return "1px solid var(--pg-primary)";
-    return "1px solid var(--pg-border)";
 }
 
 function runStatusBadgeStyle(state: RunnerExecutionStatus): React.CSSProperties {
@@ -1376,19 +1363,19 @@ function runStatusBadgeStyle(state: RunnerExecutionStatus): React.CSSProperties 
                 : state === "cancelled"
                     ? "rgba(245, 158, 11, 0.25)"
                     : state === "running"
-                        ? "rgba(var(--pg-primary-rgb), 0.28)"
+                        ? "rgba(59, 130, 246, 0.2)"
                         : "rgba(148, 163, 184, 0.2)";
 
     const textColor =
         state === "success"
-            ? "#34d399"
+            ? "var(--pg-status-success-text)"
             : state === "failed"
-                ? "#fda4af"
+                ? "var(--pg-status-error-text)"
                 : state === "cancelled"
-                    ? "#fbbf24"
+                    ? "var(--pg-status-warning-text)"
                     : state === "running"
-                        ? "var(--pg-primary)"
-                        : "var(--pg-text-muted)";
+                        ? "var(--pg-status-info-text)"
+                        : "var(--pg-status-neutral-text)";
 
     return {
         fontSize: 11,
@@ -1397,7 +1384,7 @@ function runStatusBadgeStyle(state: RunnerExecutionStatus): React.CSSProperties 
         padding: "3px 9px",
         color: textColor,
         background: tone,
-        border: "1px solid rgba(255,255,255,0.08)",
+        border: "1px solid transparent",
         flexShrink: 0,
     };
 }
@@ -1409,13 +1396,13 @@ function statusCodeBadgeStyle(statusCode: number): React.CSSProperties {
     const serverError = statusCode >= 500;
 
     const color = success
-        ? "#34d399"
+        ? "var(--pg-status-success-text)"
         : redirect
-            ? "#93c5fd"
+            ? "var(--pg-status-info-text)"
             : clientError
-                ? "#fbbf24"
+                ? "var(--pg-status-warning-text)"
                 : serverError
-                    ? "#fda4af"
+                    ? "var(--pg-status-error-text)"
                     : "var(--pg-text-muted)";
 
     const bg = success
@@ -1435,7 +1422,7 @@ function statusCodeBadgeStyle(statusCode: number): React.CSSProperties {
         padding: "3px 8px",
         color,
         background: bg,
-        border: "1px solid rgba(255,255,255,0.08)",
+        border: "1px solid transparent",
         flexShrink: 0,
     };
 }
@@ -1448,7 +1435,7 @@ function durationBadgeStyle(): React.CSSProperties {
         padding: "3px 8px",
         color: "var(--pg-text-dim)",
         background: "rgba(148, 163, 184, 0.2)",
-        border: "1px solid rgba(255,255,255,0.08)",
+        border: "1px solid transparent",
         flexShrink: 0,
     };
 }
@@ -1459,9 +1446,9 @@ function testFailureBadgeStyle(): React.CSSProperties {
         fontWeight: 700,
         borderRadius: 999,
         padding: "3px 8px",
-        color: "var(--pg-danger)",
+        color: "var(--pg-status-error-text)",
         background: "rgba(239, 68, 68, 0.14)",
-        border: "1px solid rgba(239, 68, 68, 0.45)",
+        border: "1px solid transparent",
         flexShrink: 0,
     };
 }
@@ -1471,8 +1458,8 @@ function expandButtonStyle(): React.CSSProperties {
         width: 24,
         height: 24,
         borderRadius: 8,
-        border: "1px solid var(--pg-border)",
-        background: "var(--pg-surface-0)",
+        border: "1px solid var(--pg-button-border)",
+        background: "var(--pg-button-bg)",
         color: "var(--pg-text-dim)",
         fontWeight: 700,
         lineHeight: 1,
@@ -1498,7 +1485,7 @@ function detailValueStyle(): React.CSSProperties {
 
 function tableWrapStyle(): React.CSSProperties {
     return {
-        border: "1px solid var(--pg-border)",
+        border: "1px solid var(--pg-section-border)",
         borderRadius: 10,
         overflow: "hidden",
     };

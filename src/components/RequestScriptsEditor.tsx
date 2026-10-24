@@ -137,7 +137,7 @@ bf.env.set("lastAccessToken", response?.token ?? "");`}
                     <span style={{ fontSize: 12, color: "var(--pg-text-muted)", fontWeight: 600 }}>
                         {showingPre ? "Pre-request script" : "Post-response script"}
                     </span>
-                    <div style={editorPanelStyle(fillHeight ? "100%" : "min(26vh, 280px)", 160)}>
+                    <div className="bf-code-surface" style={editorPanelStyle(fillHeight ? "100%" : "min(26vh, 280px)", 160)}>
                         <Editor
                             key={`script-${showingPre ? "pre" : "post"}-${selectedRequestId ?? "none"}`}
                             height="100%"

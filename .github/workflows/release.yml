@@ -1,6 +1,18 @@
 name: Release
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing application tag to release
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing application tag to release (for example v1.3.0)
+        required: true
+        type: string
   push:
     tags:
       - "v*"
@@ -9,11 +21,46 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
+  validate-tag:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Resolve and validate exact tagged commit
+        id: resolve
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          git check-ref-format "refs/tags/$TAG"
+          sha=$(git rev-parse --verify "refs/tags/$TAG^{commit}")
+          # Validate data from the tag using the workflow's validator, including older tags.
+          git merge-base --is-ancestor "$sha" origin/main || {
+            echo "::error::Release tags must point to commits reachable from main."
+            exit 1
+          }
+          VALIDATION_REF="$sha" EXPECTED_TAG="$TAG" node scripts/validate-version.js
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
   publish-tauri:
+    needs: validate-tag
     timeout-minutes: 60
     name: Build and Publish (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
@@ -34,6 +81,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate-tag.outputs.sha }}
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -95,11 +145,11 @@ jobs:
         with:
           owner: GuerL
           repo: bifrost
-          tagName: ${{ github.ref_name }}
-          releaseName: Bifrost ${{ github.ref_name }}
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: Bifrost ${{ inputs.tag || github.ref_name }}
           releaseBody: See the assets to download and install this version.
           releaseDraft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ needs.validate-tag.outputs.prerelease == 'true' }}
           generateReleaseNotes: true
           includeUpdaterJson: true
           updaterJsonPreferNsis: true

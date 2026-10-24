@@ -14,6 +14,7 @@ import {
     type Theme,
 } from "../helpers/Theme.tsx";
 import {
+    tabStyle,
     buttonStyle,
     modalInputStyle,
 } from "../helpers/UiStyles.ts";
@@ -63,7 +64,7 @@ const shellStyle = {
     minHeight: 460,
     border: "1px solid var(--pg-border)",
     borderRadius: 16,
-    background: "var(--pg-surface-1)",
+    background: "var(--pg-elevated-surface)",
     boxShadow: "0 24px 60px rgba(0, 0, 0, 0.28)",
     display: "flex",
     flexDirection: "column" as const,
@@ -71,7 +72,7 @@ const shellStyle = {
 };
 
 const sectionCardStyle = {
-    border: "1px solid var(--pg-border)",
+    border: "1px solid var(--pg-section-border)",
     borderRadius: 12,
     background: "var(--pg-surface-0)",
     padding: 14,
@@ -704,12 +705,10 @@ export default function SettingsModal({
                                 key={tab.id}
                                 onClick={() => setSelectedTab(tab.id)}
                                 style={{
-                                    ...buttonStyle(false),
+                                    ...tabStyle(active),
                                     height: 34,
                                     padding: "0 14px",
-                                    borderColor: active
-                                        ? "var(--pg-primary-strong)"
-                                        : "var(--pg-border)",
+                                    borderColor: "transparent",
                                     background: active
                                         ? "rgba(var(--pg-primary-rgb), 0.14)"
                                         : "transparent",
