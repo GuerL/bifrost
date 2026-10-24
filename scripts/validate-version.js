@@ -80,6 +80,7 @@ export async function validateCurrentVersion() {
     if (releaseBase && !/^0+$/.test(releaseBase)) {
         const base = JSON.parse(git('show', `${releaseBase}:package.json`)).version;
         changed = base !== version;
+        console.log(`Automatic version comparison: current=${version}, previous main=${base} (${releaseBase}), changed=${changed}`);
         if (changed) assertIncreasing(version, base, 'previous main commit');
     }
     if (process.env.CHECK_REMOTE === 'true') {
