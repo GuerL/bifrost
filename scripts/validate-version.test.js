@@ -224,3 +224,39 @@ test.each([
         assert.deepEqual(setOutput.mock.calls, [['publish', expected]]);
     }
 });
+
+test.each([
+    ['valid inputs', 'v1.16.2', 'a'.repeat(40), 0],
+    ['missing SHA', 'v1.16.2', '', 1],
+    ['branch instead of SHA', 'v1.16.2', 'main', 1],
+    ['missing tag', '', 'a'.repeat(40), 1],
+    ['invalid tag ref', 'v1.16.2..invalid', 'a'.repeat(40), 1],
+])('release checkout fails closed: %s', (_, tag, sha, expected) => {
+    const workflow = YAML.parse(fs.readFileSync('.github/workflows/release.yml', 'utf8'));
+    const steps = workflow.jobs['publish-tauri'].steps;
+    const guard = steps.find(step => step.name === 'Require validated release inputs');
+    assert.ok(steps.indexOf(guard) < steps.findIndex(step => step.name === 'Checkout'));
+    assert.equal(guard.env.RELEASE_TAG, '${{ needs.validate-tag.outputs.tag }}');
+    assert.equal(guard.env.RELEASE_SHA, '${{ needs.validate-tag.outputs.sha }}');
+    assert.equal(workflow.jobs['validate-tag'].outputs.sha, '${{ steps.resolve.outputs.sha }}');
+    const result = spawnSync('bash', ['-c', guard.run], { encoding: 'utf8', env: {
+        ...process.env, RELEASE_TAG: tag, RELEASE_SHA: sha,
+    } });
+    assert.equal(result.status, expected, result.stderr);
+});
+
+test('release checkout verifies HEAD before any dependency install or build', () => {
+    const workflow = YAML.parse(fs.readFileSync('.github/workflows/release.yml', 'utf8'));
+    const steps = workflow.jobs['publish-tauri'].steps;
+    const verify = steps.find(step => step.name === 'Verify release checkout');
+    assert.ok(steps.indexOf(verify) > steps.findIndex(step => step.name === 'Checkout'));
+    assert.ok(steps.indexOf(verify) < steps.findIndex(step => step.name === 'Setup Node.js'));
+    assert.equal(verify.env.RELEASE_SHA, '${{ needs.validate-tag.outputs.sha }}');
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+    for (const [sha, status] of [[head, 0], ['0'.repeat(40), 1]]) {
+        const result = spawnSync('bash', ['-c', verify.run], { encoding: 'utf8', env: {
+            ...process.env, RELEASE_SHA: sha,
+        } });
+        assert.equal(result.status, status, result.stderr);
+    }
+});
