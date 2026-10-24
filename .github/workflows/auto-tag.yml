@@ -1,0 +1,77 @@
+
+name: Auto Tag Bifrost
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bifrost-auto-tag
+  cancel-in-progress: false
+
+jobs:
+  auto-tag:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate synchronized versions
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+          TAURI_VERSION=$(jq -r '.version // empty' src-tauri/tauri.conf.json)
+          CARGO_VERSION=$(sed -n '/^\[package\]/,/^\[/s/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' src-tauri/Cargo.toml | head -1)
+
+          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Invalid version: $VERSION"
+            exit 1
+          fi
+
+          if [[ "$VERSION" != "$CARGO_VERSION" ]]; then
+            echo "::error::Cargo.toml version mismatch"
+            exit 1
+          fi
+
+          if [[ -n "$TAURI_VERSION" && "$VERSION" != "$TAURI_VERSION" ]]; then
+            echo "::error::Tauri version mismatch"
+            exit 1
+          fi
+
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check existing remote tag
+        id: check
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git ls-remote --exit-code --refs origin "refs/tags/$TAG" > /dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG already exists, skipping."
+          else
+            status=$?
+            if [ "$status" -ne 2 ]; then
+              echo "::error::Could not check remote tags"
+              exit "$status"
+            fi
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create version tag
+        if: steps.check.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "$TAG" -m "Bifrost $TAG"
+          git push origin "refs/tags/$TAG"
