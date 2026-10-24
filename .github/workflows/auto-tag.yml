@@ -37,22 +37,33 @@ jobs:
           SKIP_PUBLISHED: 'true'
           RELEASE_BASE_SHA: ${{ github.event.before }}
           GITHUB_TOKEN: ${{ github.token }}
-      - name: Create annotated tag
+      - name: Create annotated tag or recover matching existing tag
         id: create
-        if: steps.version.outputs.published == 'false' && steps.version.outputs.changed == 'true'
+        if: steps.version.outputs.published == 'false' && (steps.version.outputs.exists == 'true' || steps.version.outputs.changed == 'true')
         shell: bash
         env:
           TAG: ${{ steps.version.outputs.tag }}
+          VERSION_CHANGED: ${{ steps.version.outputs.changed }}
         run: |
           set -euo pipefail
-          # Recover a push completed before a failed dispatch; never move a tag.
-          remote_commit=$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | tail -n 1 | cut -f1)
-          if [ -n "$remote_commit" ]; then
+          # Match the exact ref names, independently of ls-remote output order.
+          remote_refs=$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}")
+          remote_object=$(awk -v ref="refs/tags/$TAG" '$2 == ref { print $1 }' <<< "$remote_refs")
+          remote_peeled=$(awk -v ref="refs/tags/$TAG^{}" '$2 == ref { print $1 }' <<< "$remote_refs")
+          remote_commit=${remote_peeled:-$remote_object}
+          if [ -n "$remote_object" ]; then
             if [ "$remote_commit" != "$GITHUB_SHA" ]; then
-              echo "::error::Existing tag $TAG points to another commit."
+              echo "::error::Existing tag $TAG resolves to $remote_commit, not this run's $GITHUB_SHA. Never move it. Inspect the original tagged commit and its Release workflow before manual recovery."
               exit 1
             fi
+            # validate-tag must still check metadata, main ancestry and publication eligibility.
             echo "created=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Recheck eligibility here too: a tag may disappear after the version check.
+          if [ "$VERSION_CHANGED" != true ]; then
+            echo "No version change and no existing tag; refusing to create $TAG on the latest commit."
+            echo "created=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
@@ -196,9 +207,24 @@ jobs:
             const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
               ...context.repo, workflow_id, event: 'workflow_dispatch', head_sha: sha, per_page: 100,
             });
-            if (runs.some(run => run.head_branch === tag)) {
-              core.info(`Release already requested for ${tag}; inspect that run or retry it manually.`);
+            const previous = runs.filter(run => run.head_branch === tag);
+            if (previous.some(run => run.status !== 'completed')) {
+              core.info(`Release for ${tag} is already pending or running; no duplicate dispatch.`);
               return;
+            }
+            if (previous.some(run => run.conclusion === 'success')) {
+              throw new Error(`A Release run already succeeded for ${tag}, but validation found no published release. Inspect that run and the release state before manual recovery.`);
+            }
+            // Failed/cancelled completed runs do not permanently block recovery.
+            // Recheck publication immediately before requesting a new run.
+            try {
+              const { data: release } = await github.rest.repos.getReleaseByTag({ ...context.repo, tag });
+              if (!release.draft && release.published_at) {
+                core.info(`Release ${tag} is already published; skipping dispatch.`);
+                return;
+              }
+            } catch (error) {
+              if (error.status !== 404) throw error;
             }
             const { data: ref } = await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` });
             let object = ref.object;

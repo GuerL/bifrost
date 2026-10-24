@@ -130,6 +130,8 @@ test.each([
     ['race', 0, 'created=false'],
     ['up-to-date', 0, 'created=false'],
     ['recover', 0, 'created=true'],
+    ['recover-lightweight', 0, 'created=true'],
+    ['unchanged-missing', 0, 'created=false'],
     ['occupied', 1, null],
     ['push-error', 1, null],
     ['lookup-error', 1, null],
@@ -147,8 +149,9 @@ case "$1" in
     touch "$RACE_MARKER"
     exit 1 ;;
   ls-remote)
-    if [ "$MODE" = recover ]; then printf 'object\\trefs/tags/v1.3.0\\nfixture-sha\\trefs/tags/v1.3.0^{}\\n'; fi
-    if [ "$MODE" = occupied ]; then echo 'other refs/tags/v1.3.0'; fi
+    if [ "$MODE" = recover ]; then printf 'fixture-sha\\trefs/tags/v1.3.0^{}\\nobject\\trefs/tags/v1.3.0\\n'; fi
+    if [ "$MODE" = recover-lightweight ]; then printf 'fixture-sha\\trefs/tags/v1.3.0\\n'; fi
+    if [ "$MODE" = occupied ]; then printf 'other\\trefs/tags/v1.3.0\\n'; fi
     if [ "$MODE" = lookup-error ]; then exit 1; fi
     if [ "$MODE" = race ] && [ -f "$RACE_MARKER" ]; then echo 'abc refs/tags/v1.3.0'; fi
     exit 0 ;;
@@ -158,6 +161,7 @@ esac
     try {
         const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: {
             ...process.env, PATH: `${dir}:${process.env.PATH}`, MODE: mode,
+            VERSION_CHANGED: ['recover', 'recover-lightweight', 'unchanged-missing'].includes(mode) ? 'false' : 'true',
             RACE_MARKER: path.join(dir, 'pushed'), TAG: 'v1.3.0', GITHUB_SHA: 'fixture-sha', GITHUB_OUTPUT: output,
         } });
         assert.equal(result.status, status, result.stderr);
@@ -209,7 +213,7 @@ test.each([
     }
 });
 
-test.each(['new', 'existing', 'moved', 'api-error', 'workflow-mismatch'])(
+test.each(['new', 'existing', 'failed', 'cancelled', 'success', 'published', 'failed-published', 'publication-error', 'moved', 'api-error', 'workflow-mismatch'])(
     'dispatch request uses the actual tag and fails closed: %s', async mode => {
         const workflow = YAML.parse(fs.readFileSync('.github/workflows/auto-tag.yml', 'utf8'));
         const script = workflow.jobs['dispatch-release'].steps.at(-1).with.script;
@@ -219,10 +223,17 @@ test.each(['new', 'existing', 'moved', 'api-error', 'workflow-mismatch'])(
         const config = fs.readFileSync('.github/workflows/release.yml', 'utf8');
         const dispatch = vi.fn(async () => { if (mode === 'api-error') throw new Error('HTTP 403'); });
         const github = {
-            paginate: async () => mode === 'existing' ? [{ head_branch: 'v1.16.3' }] : [],
+            paginate: async () => ['existing', 'failed', 'cancelled', 'success', 'failed-published'].includes(mode) ? [{
+                head_branch: 'v1.16.3', status: mode === 'existing' ? 'in_progress' : 'completed',
+                conclusion: { failed: 'failure', cancelled: 'cancelled', success: 'success', 'failed-published': 'failure' }[mode],
+            }] : [],
             rest: {
                 repos: {
                     get: async () => ({ data: { default_branch: 'main' } }),
+                    getReleaseByTag: async () => {
+                        if (['published', 'failed-published'].includes(mode)) return { data: { draft: false, published_at: 'today' } };
+                        throw Object.assign(new Error('release lookup'), { status: mode === 'publication-error' ? 403 : 404 });
+                    },
                     getContent: async () => ({ data: { content: Buffer.from(mode === 'workflow-mismatch' ? 'old config' : config).toString('base64') } }),
                 },
                 actions: { listWorkflowRuns: () => {}, createWorkflowDispatch: dispatch },
@@ -233,9 +244,9 @@ test.each(['new', 'existing', 'moved', 'api-error', 'workflow-mismatch'])(
             },
         };
         const run = execute(github, { repo: { owner: 'fixture', repo: 'repo' } }, { info: vi.fn() }, () => ({ readFileSync: () => config }));
-        if (['moved', 'api-error', 'workflow-mismatch'].includes(mode)) await assert.rejects(run);
+        if (['moved', 'api-error', 'workflow-mismatch', 'success', 'publication-error'].includes(mode)) await assert.rejects(run);
         else await run;
-        if (['new', 'api-error'].includes(mode)) assert.deepEqual(dispatch.mock.calls, [[{
+        if (['new', 'api-error', 'failed', 'cancelled'].includes(mode)) assert.deepEqual(dispatch.mock.calls, [[{
             owner: 'fixture', repo: 'repo', workflow_id: 'release.yml', ref: 'v1.16.3',
         }]]);
         else assert.equal(dispatch.mock.calls.length, 0);
@@ -284,4 +295,18 @@ test('release eligibility rejects an older existing unpublished tag', async () =
     vi.stubEnv('RELEASE_ELIGIBILITY', 'true');
     await assert.rejects(scenario({ automatic: true, exists: true,
         releases: [{ tag_name: 'v999.0.0', published_at: 'today' }] }), /latest relevant published/);
+});
+
+
+test.each([
+    [false, false, false], [false, true, true], [true, false, true], [true, true, true],
+])('tag preparation gate: changed=%s exists=%s prepares=%s', (changed, exists, expected) => {
+    const workflow = YAML.parse(fs.readFileSync('.github/workflows/auto-tag.yml', 'utf8'));
+    const expression = workflow.jobs['auto-tag'].steps.find(s => s.id === 'create').if;
+    const evaluate = new Function('steps', 'return ' + expression);
+    for (const published of [false, true]) {
+        assert.equal(evaluate({ version: { outputs: {
+            published: String(published), changed: String(changed), exists: String(exists),
+        } } }), expected && !published);
+    }
 });
