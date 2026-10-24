@@ -75,18 +75,27 @@ export async function validateCurrentVersion() {
         changed = base !== version;
         if (changed) assertIncreasing(version, base, 'PR base');
     }
+    // Automatic pushes compare against their immutable previous main commit.
+    const releaseBase = process.env.RELEASE_BASE_SHA;
+    if (releaseBase && !/^0+$/.test(releaseBase)) {
+        const base = JSON.parse(git('show', `${releaseBase}:package.json`)).version;
+        changed = base !== version;
+        if (changed) assertIncreasing(version, base, 'previous main commit');
+    }
     if (process.env.CHECK_REMOTE === 'true') {
         // A failed remote lookup must fail validation, never masquerade as an absent tag.
         const exists = git('ls-remote', '--refs', 'origin', `refs/tags/${tag}`) !== '';
         if (process.env.BASE_SHA && changed && exists) throw new Error(`Requested tag ${tag} already exists on origin. Choose a new version.`);
-        if (changed && !exists) {
-            const relevant = (await publishedVersions()).filter(v => parseSemver(version).prerelease.length || !parseSemver(v).prerelease.length);
+        const releases = process.env.SKIP_PUBLISHED === 'true' || (changed && !exists) ? await publishedVersions() : [];
+        const published = process.env.SKIP_PUBLISHED === 'true' && releases.includes(version);
+        if (changed && !exists && !published) {
+            const relevant = releases.filter(v => parseSemver(version).prerelease.length || !parseSemver(v).prerelease.length);
             const latest = relevant.sort(compareVersions).at(-1);
             if (latest) assertIncreasing(version, latest, 'latest relevant published release');
         }
-        if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `exists=${exists}\n`);
+        if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `exists=${exists}\npublished=${published}\n`);
     }
-    if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `tag=${tag}\nprerelease=${parseSemver(version).prerelease.length > 0}\n`);
+    if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed}\ntag=${tag}\nprerelease=${parseSemver(version).prerelease.length > 0}\n`);
     console.log(`Validated ${tag}${process.env.BASE_SHA ? ` (version ${changed ? 'changed' : 'unchanged'})` : ''}`);
 }
 

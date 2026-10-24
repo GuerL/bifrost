@@ -24,19 +24,18 @@ Existing Tauri/platform packaging restrictions still apply.
 1. Starting with 1.2.0, run `npm run version:set -- 1.3.0` on a feature branch.
 2. Commit the three version files, open a PR targeting `main`, and merge once
    checks pass. Do not create a tag yourself for the automatic path.
-3. `Auto Tag Bifrost` validates the merged commit, checks the remote tag, and
-   creates annotated tag `v1.3.0` pointing at that push's exact commit SHA.
-4. Only the job that successfully pushes the new tag calls `release.yml`, passing
-   `v1.3.0` and inheriting the existing repository/organization signing secrets.
-5. Release validation resolves that tag to a commit SHA, requires that commit to
-   be reachable from `main`, and checks its configuration versions against the
-   tag. Both macOS and Windows check out that exact SHA. The existing sequential
-   matrix, signing, notarization, release notes, and asset publication run as before.
+3. **Release** validates the merged commit, checks published releases and the remote
+   tag, and creates an annotated tag only for a new, increasing version.
+4. In the same workflow run, `auto-tag → validate-tag → publish-tauri` passes
+   the tag and push SHA explicitly. Validation requires the tag to resolve to
+   that SHA, be reachable from `main`, and match all three version files.
+5. The sequential matrix builds macOS ARM64, macOS Intel, and Windows from the
+   validated SHA, preserving signing, notarization, updater assets, and release notes.
 
 No PAT is needed. Tags pushed with `GITHUB_TOKEN` do not start another tag-push
-workflow, so the caller explicitly invokes the reusable workflow. Human-pushed
-`v*` tags still start the same release workflow. See
-[GitHub's reusable workflow documentation](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows).
+workflow ([GitHub documentation](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow)).
+Human-pushed `v*` tags and manual dispatches enter the same **Release** workflow,
+skipping automatic tagging. All entry points share one concurrency group.
 
 ## PR check policy
 
@@ -83,9 +82,10 @@ the tagged commit. Only release trusted commits merged into `main`.
 
 If a build fails after tag creation, the failure remains a failed Actions run.
 Re-run failed jobs, or dispatch **Release** for the existing tag. Re-running all
-jobs of **Auto Tag Bifrost** finds the existing tag and skips release, by design.
-Do not delete or move a published tag to retry. A deliberate manual retry can
-update an existing release and its assets; it is not a new version release.
+jobs of **Release** finds the existing tag and skips release, by design.
+Do not delete or move a published tag to retry. Already published releases are
+skipped, including manual dispatches; historical release artifacts are never updated by a new run. For an interrupted published
+release, re-run its failed publication job to finish the original matrix.
 
 ## Repository setup
 
@@ -96,7 +96,7 @@ update an existing release and its assets; it is not a new version release.
 - Keep existing repository/organization secrets: `TAURI_SIGNING_PRIVATE_KEY`,
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `APPLE_CERTIFICATE`,
   `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
-  `APPLE_PASSWORD`, and `APPLE_TEAM_ID`. The reusable call uses `secrets: inherit`.
+  `APPLE_PASSWORD`, and `APPLE_TEAM_ID`. Jobs use these secrets directly.
 - Protect `main`, require **Version validation**, and require the branch to be
   up to date. Review workflow changes carefully. Restrict tag creation/deletion
   to trusted maintainers and the tagging automation. Branch/tag rules are the
@@ -105,21 +105,18 @@ update an existing release and its assets; it is not a new version release.
 
 ## Reliability and updater behavior
 
-Auto-tag runs are serialized across tagging and their called releases. Existing
-tags skip release; a rejected push is rechecked remotely to handle a competing
-tag creator. Only the successful creator calls the reusable workflow. Lookup or
-push failures without an existing remote tag fail the run. Release runs use the
-same per-tag concurrency group for reusable calls, manual tag pushes, and manual
-dispatches, so builds for the same tag cannot overlap. Different tags can still
-have manual release runs concurrently; avoid manually publishing different
-versions at the same time while the automatic release is running.
+All release runs are serialized across tagging, validation, and publication.
+Unchanged versions, existing tags, and published versions skip automatic release.
+A rejected push is rechecked remotely to handle a competing tag creator; only the
+successful creator proceeds. Lookup and push failures fail closed.
 
 GitHub concurrency retains at most one running and one pending run; a newer push
-can replace a pending auto-tag run. The latest main commit is validated and
-released, so rapid merges may skip intermediate, untagged versions. Space release
+can replace a pending release run. Each automatic run compares its version with
+the push event’s previous main commit, so rapid merges may skip intermediate,
+untagged versions. Space release
 bumps apart if each intermediate version must be published. There is no automatic
 retry after a tag was created: use the recovery path above if the run is interrupted
-between tag creation and release invocation. Explicit manual retries are allowed;
+between tag creation and validation. Explicit manual retries are allowed;
 concurrency serializes them rather than treating them as new automatic releases.
 
 Updater configuration, public key, `createUpdaterArtifacts`, Tauri private signing
