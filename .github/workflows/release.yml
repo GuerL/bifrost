@@ -52,8 +52,8 @@ jobs:
           git check-ref-format "refs/tags/$TAG"
           sha=$(git rev-parse --verify "refs/tags/$TAG^{commit}")
           # Validate data from the tag using the workflow's validator, including older tags.
-          git merge-base --is-ancestor "$sha" origin/master || {
-            echo "::error::Release tags must point to commits reachable from master."
+          git merge-base --is-ancestor "$sha" origin/main || {
+            echo "::error::Release tags must point to commits reachable from main."
             exit 1
           }
           VALIDATION_REF="$sha" EXPECTED_TAG="$TAG" node scripts/validate-version.js

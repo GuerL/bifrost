@@ -8,6 +8,32 @@ import assert from 'node:assert/strict';
 import { parseSemver } from './set-version.js';
 import { compareVersions, validateVersions, assertIncreasing, validateCurrentVersion } from './validate-version.js';
 
+test('main branch workflows retain PR validation, auto-tagging, and all release entry points', () => {
+    const workflow = name => YAML.parse(fs.readFileSync(`.github/workflows/${name}.yml`, 'utf8'));
+    const validation = workflow('version-check');
+    assert.deepEqual(validation.on, { pull_request: { branches: ['main'] } });
+    const validateStep = validation.jobs['version-check'].steps.find(step => step.run === 'node scripts/validate-version.js');
+    assert.equal(validateStep.env.BASE_SHA, '${{ github.event.pull_request.base.sha }}');
+
+    const autoTag = workflow('auto-tag');
+    assert.deepEqual(autoTag.on, { push: { branches: ['main'] } });
+    assert.equal(autoTag.jobs.release.uses, './.github/workflows/release.yml');
+    assert.equal(autoTag.jobs.release.with.tag, '${{ needs.auto-tag.outputs.tag }}');
+
+    const release = workflow('release');
+    assert.deepEqual(release.on.push, { tags: ['v*'] });
+    for (const event of ['workflow_call', 'workflow_dispatch']) {
+        assert.equal(release.on[event].inputs.tag.required, true);
+        assert.equal(release.on[event].inputs.tag.type, 'string');
+    }
+    const resolve = release.jobs['validate-tag'].steps.find(step => step.id === 'resolve');
+    assert.equal(resolve.env.TAG, '${{ inputs.tag || github.ref_name }}');
+    assert.match(resolve.run, /git merge-base --is-ancestor "\$sha" origin\/main \|\|/);
+    assert.match(resolve.run, /VALIDATION_REF="\$sha" EXPECTED_TAG="\$TAG" node scripts\/validate-version.js/);
+    assert.equal(release.jobs['publish-tauri'].steps.find(step => step.name === 'Checkout').with.ref,
+        '${{ needs.validate-tag.outputs.sha }}');
+});
+
 test('shared parser accepts SemVer and rejects numeric leading zeroes', () => {
     for (const v of ['1.2.3', '0.0.0', '1.2.3-alpha-1', '1.2.3-rc.1+build.01', '1.2.3-01a']) assert.ok(parseSemver(v), v);
     for (const v of ['v1.2.3', '01.2.3', '1.2', '1.2.3-01', '1.2.3-rc.01', '1.2.3-', '1.2.3\n', null]) assert.equal(parseSemver(v), null, String(v));

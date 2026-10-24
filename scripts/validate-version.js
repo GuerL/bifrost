@@ -69,6 +69,7 @@ export async function validateCurrentVersion() {
     const tag = `v${version}`;
     if (process.env.EXPECTED_TAG && process.env.EXPECTED_TAG !== tag) throw new Error(`Requested tag ${process.env.EXPECTED_TAG} does not match application tag ${tag}.`);
     let changed = true;
+    // PR validation supplies the target main branch's base SHA, not its moving tip.
     if (process.env.BASE_SHA) {
         const base = JSON.parse(git('show', `${process.env.BASE_SHA}:package.json`)).version;
         changed = base !== version;

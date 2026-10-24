@@ -22,14 +22,14 @@ Existing Tauri/platform packaging restrictions still apply.
 ## Example: 1.2.0 to 1.3.0
 
 1. Starting with 1.2.0, run `npm run version:set -- 1.3.0` on a feature branch.
-2. Commit the three version files, open a PR targeting `master`, and merge once
+2. Commit the three version files, open a PR targeting `main`, and merge once
    checks pass. Do not create a tag yourself for the automatic path.
 3. `Auto Tag Bifrost` validates the merged commit, checks the remote tag, and
    creates annotated tag `v1.3.0` pointing at that push's exact commit SHA.
 4. Only the job that successfully pushes the new tag calls `release.yml`, passing
    `v1.3.0` and inheriting the existing repository/organization signing secrets.
 5. Release validation resolves that tag to a commit SHA, requires that commit to
-   be reachable from `master`, and checks its configuration versions against the
+   be reachable from `main`, and checks its configuration versions against the
    tag. Both macOS and Windows check out that exact SHA. The existing sequential
    matrix, signing, notarization, release notes, and asset publication run as before.
 
@@ -40,7 +40,7 @@ workflow, so the caller explicitly invokes the reusable workflow. Human-pushed
 
 ## PR check policy
 
-`Version validation` runs on every PR to `master`, without path filters. Use its
+`Version validation` runs on every PR to `main`, without path filters. Use its
 job named **Version validation** as a required branch protection check. It uses
 `pull_request`, a read-only token, and no signing secrets or release jobs.
 
@@ -75,11 +75,11 @@ git tag -a v1.3.0 <merged-commit-sha> -m 'Bifrost v1.3.0'
 git push origin refs/tags/v1.3.0
 ```
 
-For an existing tag, open **Actions → Release → Run workflow**, select `master`
+For an existing tag, open **Actions → Release → Run workflow**, select `main`
 (the workflow implementation), and supply the tag, such as `v1.3.0`. The tag must
 already exist and match the application version in its commit. This also supports
 older tags whose commits predate the new validation script. The build still uses
-the tagged commit. Only release trusted commits merged into `master`.
+the tagged commit. Only release trusted commits merged into `main`.
 
 If a build fails after tag creation, the failure remains a failed Actions run.
 Re-run failed jobs, or dispatch **Release** for the existing tag. Re-running all
@@ -97,7 +97,7 @@ update an existing release and its assets; it is not a new version release.
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `APPLE_CERTIFICATE`,
   `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
   `APPLE_PASSWORD`, and `APPLE_TEAM_ID`. The reusable call uses `secrets: inherit`.
-- Protect `master`, require **Version validation**, and require the branch to be
+- Protect `main`, require **Version validation**, and require the branch to be
   up to date. Review workflow changes carefully. Restrict tag creation/deletion
   to trusted maintainers and the tagging automation. Branch/tag rules are the
   trust boundary for code built with signing secrets.
@@ -115,7 +115,7 @@ have manual release runs concurrently; avoid manually publishing different
 versions at the same time while the automatic release is running.
 
 GitHub concurrency retains at most one running and one pending run; a newer push
-can replace a pending auto-tag run. The latest master commit is validated and
+can replace a pending auto-tag run. The latest main commit is validated and
 released, so rapid merges may skip intermediate, untagged versions. Space release
 bumps apart if each intermediate version must be published. There is no automatic
 retry after a tag was created: use the recovery path above if the run is interrupted
