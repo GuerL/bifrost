@@ -2,15 +2,15 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { copyTextToClipboard } from "../helpers/ClipboardRequestTransfer.ts";
 import { notifyError } from "../helpers/Toast.tsx";
-import { responseTextOffsetAtPoint } from "../helpers/responseJsonPath.ts";
+import { bifrostExpressionFromSegments, jsonPathFromSegments, responseTextOffsetAtPoint, type ResponseJsonIndex } from "../helpers/responseJsonPath.ts";
 
 type Props = {
-    index: { pathAt: (offset: number) => string | null } | null;
+    index: ResponseJsonIndex | null;
     children: ReactNode;
 };
 
 export default function ResponseBodyContextMenu({ index, children }: Props) {
-    const [menu, setMenu] = useState<{ x: number; y: number; path: string; root: HTMLElement; selection: string } | null>(null);
+    const [menu, setMenu] = useState<{ x: number; y: number; path: string; expression: string; root: HTMLElement; selection: string } | null>(null);
     const [status, setStatus] = useState("");
     const menuRef = useRef<HTMLDivElement>(null);
     const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -51,14 +51,14 @@ export default function ResponseBodyContextMenu({ index, children }: Props) {
         };
     }, [menu]);
 
-    async function copy(text: string, jsonPath: boolean) {
+    async function copy(text: string, confirmation = "Copied") {
         const selection = window.getSelection();
         const ranges = Array.from({ length: selection?.rangeCount ?? 0 }, (_, i) => selection!.getRangeAt(i).cloneRange());
         const focused = document.activeElement;
         setMenu(null);
         try {
             await copyTextToClipboard(text);
-            setStatus(jsonPath ? "JSONPath copied" : "Copied");
+            setStatus(confirmation);
             if (resetTimer.current) clearTimeout(resetTimer.current);
             resetTimer.current = setTimeout(() => setStatus(""), 1600);
         } catch {
@@ -83,21 +83,23 @@ export default function ResponseBodyContextMenu({ index, children }: Props) {
         const root = (event.target as HTMLElement).closest<HTMLElement>('pre[aria-label="Response body"]');
         if (!root) return;
         const offset = responseTextOffsetAtPoint(root, event.clientX, event.clientY);
-        const path = offset === null ? null : index.pathAt(offset);
-        if (path === null) return;
+        const segments = offset === null ? null : index.segmentsAt(offset);
+        if (segments === null) return;
         event.preventDefault();
         const selection = window.getSelection();
-        setMenu({ x: Math.max(8, Math.min(event.clientX, window.innerWidth - 188)),
-            y: Math.max(8, Math.min(event.clientY, window.innerHeight - 126)), path, root,
+        setMenu({ x: Math.max(8, Math.min(event.clientX, window.innerWidth - 228)),
+            y: Math.max(8, Math.min(event.clientY, window.innerHeight - 158)),
+            path: jsonPathFromSegments(segments), expression: bifrostExpressionFromSegments(segments), root,
             selection: selection?.anchorNode && root.contains(selection.anchorNode) ? selection.toString() : "" });
     }}>
         {children}
         {status && <span role="status" className="pg-jsonpath-status">{status}</span>}
         {menu && createPortal(<div ref={menuRef} role="menu" aria-label="Response body actions"
-            className="pg-jsonpath-menu" style={{ left: menu.x, top: menu.y }}
+            className="pg-jsonpath-menu" style={{ left: menu.x, top: menu.y, width: "max-content" }}
             onMouseDown={event => event.preventDefault()} onContextMenu={event => event.preventDefault()}>
-            <button role="menuitem" onClick={() => void copy(menu.path, true)}>Copy JSONPath</button>
-            <button role="menuitem" disabled={!menu.selection} onClick={() => void copy(menu.selection, false)}>Copy</button>
+            <button role="menuitem" onClick={() => void copy(menu.path, "JSONPath copied")}>Copy JSONPath</button>
+            <button role="menuitem" onClick={() => void copy(menu.expression, "Bifrost expression copied")}>Copy as Bifrost Expression</button>
+            <button role="menuitem" disabled={!menu.selection} onClick={() => void copy(menu.selection)}>Copy</button>
             <button role="menuitem" onClick={() => {
                 const range = document.createRange();
                 range.selectNodeContents(menu.root);

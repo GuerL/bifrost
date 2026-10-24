@@ -5,18 +5,31 @@ type JsonPathNode = {
     segment: string | number | null;
 };
 
-export function jsonPathFromSegments(segments: readonly (string | number)[]): string {
-    return "$" + segments.map(segment => typeof segment === "number"
+function propertyAccessors(segments: readonly (string | number)[]): string {
+    return segments.map(segment => typeof segment === "number"
         ? `[${segment}]`
         : /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(segment)
             ? `.${segment}`
             : `[${JSON.stringify(segment)}]`).join("");
 }
 
+export function jsonPathFromSegments(segments: readonly (string | number)[]): string {
+    return "$" + propertyAccessors(segments);
+}
+
+export function bifrostExpressionFromSegments(segments: readonly (string | number)[]): string {
+    return "bf.response.json()" + propertyAccessors(segments);
+}
+
+export type ResponseJsonIndex = {
+    segmentsAt: (offset: number) => (string | number)[] | null;
+    pathAt: (offset: number) => string | null;
+};
+
 /** Index the viewer's canonical, two-space JSON using structure, never token matching.
  * Store parent links rather than full paths so large/deep responses stay compact.
  */
-export function indexResponseJson(text: string): { pathAt: (offset: number) => string | null } | null {
+export function indexResponseJson(text: string): ResponseJsonIndex | null {
     let value: unknown;
     try {
         value = JSON.parse(text);
@@ -53,25 +66,30 @@ export function indexResponseJson(text: string): { pathAt: (offset: number) => s
         // Extremely deep input must not prevent the response from being displayed.
         return null;
     }
+    function segmentsAt(offset: number): (string | number)[] | null {
+        if (!Number.isInteger(offset) || offset < 0 || offset >= text.length) return null;
+        // Last node starting at/before the clicked offset, then its containing ancestor.
+        let low = 0, high = nodes.length;
+        while (low < high) {
+            const mid = (low + high) >>> 1;
+            if (nodes[mid].start <= offset) low = mid + 1;
+            else high = mid;
+        }
+        let node: JsonPathNode | null = nodes[low - 1];
+        while (node && offset >= node.end) node = node.parent;
+        if (!node) return null;
+        const segments: (string | number)[] = [];
+        while (node.parent) {
+            segments.push(node.segment!);
+            node = node.parent;
+        }
+        return segments.reverse();
+    }
     return {
+        segmentsAt,
         pathAt(offset) {
-            if (!Number.isInteger(offset) || offset < 0 || offset >= text.length) return null;
-            // Last node starting at/before the clicked offset, then its containing ancestor.
-            let low = 0, high = nodes.length;
-            while (low < high) {
-                const mid = (low + high) >>> 1;
-                if (nodes[mid].start <= offset) low = mid + 1;
-                else high = mid;
-            }
-            let node: JsonPathNode | null = nodes[low - 1];
-            while (node && offset >= node.end) node = node.parent;
-            if (!node) return null;
-            const segments: (string | number)[] = [];
-            while (node.parent) {
-                segments.push(node.segment!);
-                node = node.parent;
-            }
-            return jsonPathFromSegments(segments.reverse());
+            const segments = segmentsAt(offset);
+            return segments === null ? null : jsonPathFromSegments(segments);
         },
     };
 }

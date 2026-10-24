@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { indexResponseJson, jsonPathFromSegments } from "./responseJsonPath.ts";
+import { bifrostExpressionFromSegments, indexResponseJson, jsonPathFromSegments } from "./responseJsonPath.ts";
+
+import { runPostResponseScript } from "./RequestScriptsRuntime.ts";
+import type { Request } from "../types.ts";
 
 const fixture = (value: unknown) => {
     const text = JSON.stringify(value, null, 2);
@@ -88,5 +91,71 @@ describe("response JSONPath", () => {
         const { text, index } = fixture(Array.from({ length: 10000 }, (_, id) => ({ id })));
         const offset = text.indexOf("9999");
         for (let i = 0; i < 100; i++) expect(index.pathAt(offset)).toBe("$[9999].id");
+    });
+});
+
+
+describe("Bifrost response expressions", () => {
+    const cases: { segments: (string | number)[]; expression: string }[] = [
+        { segments: [], expression: 'bf.response.json()' },
+        { segments: ['accessToken'], expression: 'bf.response.json().accessToken' },
+        { segments: ['user', 'name'], expression: 'bf.response.json().user.name' },
+        { segments: ['users', 0], expression: 'bf.response.json().users[0]' },
+        { segments: ['users', 0, 'email'], expression: 'bf.response.json().users[0].email' },
+        { segments: ['roles', 1], expression: 'bf.response.json().roles[1]' },
+        { segments: ['matrix', 0, 1, 0], expression: 'bf.response.json().matrix[0][1][0]' },
+        ...['user-name', 'first name', 'user.name', '123field', 'a"b', 'a\\b', '', 'line\nfeed', 'é', 'a"];throw Error("injection");//'].map(key => ({
+            segments: [key], expression: `bf.response.json()[${JSON.stringify(key)}]`,
+        })),
+    ];
+
+    it.each(cases)("generates $expression and executes it in a Post-response script", ({ segments, expression }) => {
+        const selected = { token: 'abc123' };
+        const body = segments.reduceRight<unknown>((child, segment) => typeof segment === 'number'
+            ? Array.from({ length: segment + 1 }, (_, index) => index === segment ? child : null)
+            : { [segment]: child }, selected);
+        const { text, index } = fixture(body);
+        const resolved = index.segmentsAt(text.indexOf(JSON.stringify('token')))!;
+        // The selected object is the parent of its 'token' property.
+        resolved.pop();
+        expect(resolved).toEqual(segments);
+        expect(bifrostExpressionFromSegments(resolved)).toBe(expression);
+        expect(jsonPathFromSegments([...resolved, 'token'])).toBe(index.pathAt(text.indexOf(JSON.stringify('token'))));
+        const request: Request = {
+            id: 'test', name: 'Test', method: 'get', url: 'https://example.com',
+            headers: [], query: [], body: { type: 'none' }, auth: { type: 'none' },
+            extractors: [], scripts: { pre_request: '', post_response: '' },
+        };
+        const result = runPostResponseScript({
+            script: `bf.env.set("picked", JSON.stringify(${expression}));`,
+            request, response: { status: 200, headers: [], body_text: text, duration_ms: 1 },
+            runtimeVariables: {}, environmentValues: new Map(),
+        });
+        expect(result.scriptError).toBeNull();
+        expect(result.environmentMutations).toEqual([{ type: 'set', key: 'picked', value: JSON.stringify(selected) }]);
+    });
+
+    it.each([null, true, false, 42, 'value', {}, []])("handles primitive and empty-container selections: %j", value => {
+        const { text, index } = fixture({ nested: [value] });
+        const start = text.indexOf(JSON.stringify(value, null, 2));
+        const segments = index.segmentsAt(start)!;
+        expect(segments).toEqual(['nested', 0]);
+        const expression = bifrostExpressionFromSegments(segments);
+        expect(expression).toBe('bf.response.json().nested[0]');
+        expect(new Function('bf', `return ${expression}`)({ response: { json: () => JSON.parse(text) } })).toEqual(value);
+        expect(bifrostExpressionFromSegments([])).toBe('bf.response.json()');
+    });
+
+    it("uses the same deeply nested node as JSONPath and rejects invalid offsets", () => {
+        let value: unknown = 'leaf';
+        for (let depth = 0; depth < 100; depth++) value = { child: [value] };
+        const { text, index } = fixture(value);
+        const segments = index.segmentsAt(text.indexOf('"leaf"'))!;
+        const expression = bifrostExpressionFromSegments(segments);
+        expect(expression).toBe('bf.response.json()' + '.child[0]'.repeat(100));
+        expect(new Function('bf', `return ${expression}`)({ response: { json: () => JSON.parse(text) } })).toBe('leaf');
+        expect(index.pathAt(text.indexOf('"leaf"'))).toBe('$' + '.child[0]'.repeat(100));
+        expect(index.segmentsAt(-1)).toBeNull();
+        expect(index.segmentsAt(text.length)).toBeNull();
     });
 });
