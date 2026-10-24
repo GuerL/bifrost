@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpErrorDiagnosticDto, HttpResponseDto } from "../types.ts";
 import type { ScriptTestResult } from "../helpers/RequestScriptsRuntime.ts";
+import ResponseBodyContextMenu from "./ResponseBodyContextMenu.tsx";
+import { indexResponseJson } from "../helpers/responseJsonPath.ts";
 import FindBar from "./FindBar.tsx";
 import { copyTextToClipboard } from "../helpers/ClipboardRequestTransfer.ts";
 import { notifyError, notifySuccess } from "../helpers/Toast.tsx";
@@ -32,11 +34,13 @@ type ResponseBodyView = {
 type JsonTokenType = "plain" | "key" | "string" | "number" | "boolean" | "null";
 
 type JsonToken = {
+    start: number;
     text: string;
     type: JsonTokenType;
 };
 
 type HighlightSegment = {
+    start: number;
     text: string;
     matchIndex: number | null;
 };
@@ -86,6 +90,10 @@ export default function ResponsePanel({
     );
     const jsonTokens = useMemo(
         () => (bodyView.isJson ? tokenizeJson(bodyView.displayText) : []),
+        [bodyView.displayText, bodyView.isJson]
+    );
+    const jsonPathIndex = useMemo(
+        () => bodyView.isJson ? indexResponseJson(bodyView.displayText) : null,
         [bodyView.displayText, bodyView.isJson]
     );
     const cookies = useMemo(() => extractCookies(response), [response]);
@@ -505,36 +513,39 @@ export default function ResponsePanel({
                                     />
                                 </div>
                             ) : (
-                                <pre
-                                    className="bf-code-surface"
-                                    tabIndex={0}
-                                    aria-label="Response body"
-                                    style={responsePreStyle(bodyView.canPreview)}
-                                >
-                                    {findOpen && hasFindQuery
-                                        ? bodyHighlightSegments.map((segment, index) =>
-                                            segment.matchIndex === null ? (
-                                                <span key={`segment-${index}`}>{segment.text}</span>
-                                            ) : (
-                                                <span
-                                                    key={`match-${segment.matchIndex}`}
-                                                    ref={(element) => {
-                                                        matchElementsRef.current[segment.matchIndex ?? 0] = element;
-                                                    }}
-                                                    style={findMatchStyle(segment.matchIndex === activeMatchIndex)}
-                                                >
-                                                    {segment.text}
-                                                </span>
+                                <ResponseBodyContextMenu index={jsonPathIndex}>
+                                    <pre
+                                        className="bf-code-surface"
+                                        tabIndex={0}
+                                        aria-label="Response body"
+                                        style={responsePreStyle(bodyView.canPreview)}
+                                    >
+                                        {findOpen && hasFindQuery
+                                            ? bodyHighlightSegments.map((segment, index) =>
+                                                segment.matchIndex === null ? (
+                                                    <span key={`segment-${index}`} data-json-offset={segment.start}>{segment.text}</span>
+                                                ) : (
+                                                    <span
+                                                        key={`match-${segment.matchIndex}`}
+                                                        data-json-offset={segment.start}
+                                                        ref={(element) => {
+                                                            matchElementsRef.current[segment.matchIndex ?? 0] = element;
+                                                        }}
+                                                        style={findMatchStyle(segment.matchIndex === activeMatchIndex)}
+                                                    >
+                                                        {segment.text}
+                                                    </span>
+                                                )
                                             )
-                                        )
-                                        : bodyView.isJson
-                                        ? jsonTokens.map((token, index) => (
-                                            <span key={`${token.type}-${index}`} style={jsonTokenStyle(token.type)}>
-                                                {token.text}
-                                            </span>
-                                        ))
-                                        : bodyView.displayText}
-                                </pre>
+                                            : bodyView.isJson
+                                            ? jsonTokens.map((token, index) => (
+                                                <span key={`${token.type}-${index}`} data-json-offset={token.start} style={jsonTokenStyle(token.type)}>
+                                                    {token.text}
+                                                </span>
+                                            ))
+                                            : bodyView.displayText}
+                                    </pre>
+                                </ResponseBodyContextMenu>
                             )}
                         </div>
                     )}
@@ -881,7 +892,7 @@ function tokenizeJson(json: string): JsonToken[] {
         const full = match[0];
         const index = match.index ?? 0;
         if (index > lastIndex) {
-            tokens.push({ text: json.slice(lastIndex, index), type: "plain" });
+            tokens.push({ start: lastIndex, text: json.slice(lastIndex, index), type: "plain" });
         }
 
         const hasQuotedString = typeof match[1] === "string";
@@ -898,12 +909,12 @@ function tokenizeJson(json: string): JsonToken[] {
             type = "number";
         }
 
-        tokens.push({ text: full, type });
+        tokens.push({ start: index, text: full, type });
         lastIndex = index + full.length;
     }
 
     if (lastIndex < json.length) {
-        tokens.push({ text: json.slice(lastIndex), type: "plain" });
+        tokens.push({ start: lastIndex, text: json.slice(lastIndex), type: "plain" });
     }
 
     return tokens;
@@ -935,7 +946,7 @@ function buildHighlightSegments(
     matches: Array<{ start: number; end: number }>
 ): HighlightSegment[] {
     if (matches.length === 0) {
-        return [{ text, matchIndex: null }];
+        return [{ start: 0, text, matchIndex: null }];
     }
 
     const segments: HighlightSegment[] = [];
@@ -943,14 +954,14 @@ function buildHighlightSegments(
 
     matches.forEach((match, index) => {
         if (match.start > cursor) {
-            segments.push({ text: text.slice(cursor, match.start), matchIndex: null });
+            segments.push({ start: cursor, text: text.slice(cursor, match.start), matchIndex: null });
         }
-        segments.push({ text: text.slice(match.start, match.end), matchIndex: index });
+        segments.push({ start: match.start, text: text.slice(match.start, match.end), matchIndex: index });
         cursor = match.end;
     });
 
     if (cursor < text.length) {
-        segments.push({ text: text.slice(cursor), matchIndex: null });
+        segments.push({ start: cursor, text: text.slice(cursor), matchIndex: null });
     }
 
     return segments;

@@ -15,19 +15,32 @@ test('main branch workflows retain PR validation, auto-tagging, and all release 
     const validateStep = validation.jobs['version-check'].steps.find(step => step.run === 'node scripts/validate-version.js');
     assert.equal(validateStep.env.BASE_SHA, '${{ github.event.pull_request.base.sha }}');
 
-    const autoTag = workflow('auto-tag');
-    assert.deepEqual(autoTag.on, { push: { branches: ['main'] } });
-    assert.equal(autoTag.jobs.release.uses, './.github/workflows/release.yml');
-    assert.equal(autoTag.jobs.release.with.tag, '${{ needs.auto-tag.outputs.tag }}');
-
+    assert.equal(fs.existsSync('.github/workflows/auto-tag.yml'), false);
     const release = workflow('release');
-    assert.deepEqual(release.on.push, { tags: ['v*'] });
-    for (const event of ['workflow_call', 'workflow_dispatch']) {
-        assert.equal(release.on[event].inputs.tag.required, true);
-        assert.equal(release.on[event].inputs.tag.type, 'string');
-    }
+    assert.equal(release.name, 'Release');
+    assert.deepEqual(Object.keys(release.jobs), ['auto-tag', 'validate-tag', 'publish-tauri']);
+    assert.deepEqual(release.on.push, { branches: ['main'], tags: ['v*'] });
+    assert.equal(release.on.workflow_call, undefined);
+    assert.equal(release.on.workflow_dispatch.inputs.tag.required, true);
+    assert.equal(release.jobs['validate-tag'].needs, 'auto-tag');
+    assert.equal(release.jobs['publish-tauri'].needs, 'validate-tag');
+    assert.match(release.jobs['validate-tag'].if, /always\(\)/);
+    assert.match(release.jobs['publish-tauri'].if, /always\(\)/);
+    assert.equal(release.jobs['auto-tag'].outputs.sha, '${{ github.sha }}');
+    assert.equal(release.jobs['auto-tag'].outputs.publish, "${{ steps.create.outputs.created || 'false' }}");
+    assert.equal(release.concurrency.group, 'bifrost-release');
+    assert.equal(release.concurrency['cancel-in-progress'], false);
+    assert.equal(release.jobs['publish-tauri'].strategy['max-parallel'], 1);
+    assert.deepEqual(release.jobs['publish-tauri'].strategy.matrix.include.map(entry => entry.runner),
+        ['macos-26', 'macos-26-intel', 'windows-latest']);
     const resolve = release.jobs['validate-tag'].steps.find(step => step.id === 'resolve');
-    assert.equal(resolve.env.TAG, '${{ inputs.tag || github.ref_name }}');
+    assert.equal(resolve.env.TAG, '${{ needs.auto-tag.outputs.tag || inputs.tag || github.ref_name }}');
+    assert.equal(resolve.env.EXPECTED_SHA, '${{ needs.auto-tag.outputs.sha }}');
+    assert.ok(resolve.run.includes('[ "$sha" != "$EXPECTED_SHA" ]'));
+    assert.equal(release.jobs['validate-tag'].outputs.tag, '${{ steps.resolve.outputs.tag }}');
+    const tauri = release.jobs['publish-tauri'].steps.find(step => step.id === 'tauri_release');
+    assert.equal(tauri.with.tagName, '${{ needs.validate-tag.outputs.tag }}');
+    assert.equal(tauri.with.releaseName, 'Bifrost ${{ needs.validate-tag.outputs.tag }}');
     assert.match(resolve.run, /git merge-base --is-ancestor "\$sha" origin\/main \|\|/);
     assert.match(resolve.run, /VALIDATION_REF="\$sha" EXPECTED_TAG="\$TAG" node scripts\/validate-version.js/);
     assert.equal(release.jobs['publish-tauri'].steps.find(step => step.name === 'Checkout').with.ref,
@@ -59,12 +72,14 @@ test('only the Cargo package version is used and all three files must agree', ()
 vi.mock('node:child_process', async importOriginal => ({ ...await importOriginal(), execFileSync: vi.fn() }));
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
-async function scenario({ base, exists = false, releases = [], remoteError = false, apiError = false, pages } = {}) {
+async function scenario({ base, exists = false, releases = [], remoteError = false, apiError = false, pages, automatic = false, releaseBase = false } = {}) {
     const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
-    vi.stubEnv('BASE_SHA', base === undefined ? '' : 'base-sha');
+    vi.stubEnv('RELEASE_BASE_SHA', releaseBase ? 'previous-main' : '');
+    vi.stubEnv('BASE_SHA', base === undefined || releaseBase ? '' : 'base-sha');
     vi.stubEnv('EXPECTED_TAG', '');
     vi.stubEnv('VALIDATION_REF', '');
     vi.stubEnv('CHECK_REMOTE', 'true');
+    vi.stubEnv('SKIP_PUBLISHED', automatic ? 'true' : '');
     vi.stubEnv('GITHUB_REPOSITORY', 'fixture/repo');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-version-'));
     const output = path.join(dir, 'output');
@@ -123,7 +138,7 @@ test.each([
     ['push-error', 1, null],
     ['lookup-error', 1, null],
 ])('tag push handling: %s (all Git commands are simulated)', (mode, status, expected) => {
-    const workflow = YAML.parse(fs.readFileSync('.github/workflows/auto-tag.yml', 'utf8'));
+    const workflow = YAML.parse(fs.readFileSync('.github/workflows/release.yml', 'utf8'));
     const script = workflow.jobs['auto-tag'].steps.find(step => step.id === 'create').run;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-tag-race-'));
     const output = path.join(dir, 'output');
@@ -150,4 +165,62 @@ esac
         if (expected) assert.match(fs.readFileSync(output, 'utf8'), new RegExp(expected));
         else assert.equal(fs.existsSync(output), false);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('automatic release skips a published version even if its tag is missing', async () => {
+    const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+    const result = await scenario({ automatic: true, releases: [{ tag_name: 'v' + version, published_at: 'today' }] });
+    assert.match(result.output, /exists=false/);
+    assert.match(result.output, /published=true/);
+});
+test('automatic release allows a new version and skips an existing tag', async () => {
+    assert.match((await scenario({ automatic: true, exists: true })).output, /exists=true/);
+    const result = await scenario({ automatic: true });
+    assert.match(result.output, /exists=false/);
+    assert.match(result.output, /published=false/);
+});
+
+test('unchanged automatic version skips tagging even without a remote tag', async () => {
+    const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+    assert.match((await scenario({ base: version, releaseBase: true, automatic: true })).output, /changed=false/);
+});
+test('automatic pushes reject regression against previous main', async () => {
+    await assert.rejects(scenario({ base: '999.0.0', releaseBase: true, automatic: true }), /previous main commit/);
+});
+
+test.each([
+    ['new main version', 'push', 'refs/heads/main', 'success', 'true', true],
+    ['unchanged main version', 'push', 'refs/heads/main', 'success', '', false],
+    ['existing main tag', 'push', 'refs/heads/main', 'success', 'false', false],
+    ['invalid main version', 'push', 'refs/heads/main', 'failure', '', false],
+    ['manual existing tag', 'workflow_dispatch', 'refs/heads/main', 'skipped', '', true],
+    ['external tag push', 'push', 'refs/tags/v1.17.0', 'skipped', '', true],
+])('validation entry gate: %s', (_, event, ref, result, publish, expected) => {
+    const workflow = YAML.parse(fs.readFileSync('.github/workflows/release.yml', 'utf8'));
+    const expression = workflow.jobs['validate-tag'].if.replaceAll('needs.auto-tag', 'needs.autoTag');
+    const evaluate = new Function('github', 'needs', 'always', 'startsWith', 'return ' + expression);
+    assert.equal(evaluate({ event_name: event, ref }, { autoTag: { result, outputs: { publish } } },
+        () => true, (value, prefix) => value.startsWith(prefix)), expected);
+});
+
+test.each([
+    ['unpublished tag', null, 404, 'true'],
+    ['draft release', { draft: true }, null, 'true'],
+    ['published release', { draft: false, published_at: 'today' }, null, 'false'],
+    ['API failure', null, 403, null],
+])('publication gate: %s', async (_, release, status, expected) => {
+    const workflow = YAML.parse(fs.readFileSync('.github/workflows/release.yml', 'utf8'));
+    const script = workflow.jobs['validate-tag'].steps.find(step => step.id === 'publication').with.script;
+    const execute = new Function('github', 'context', 'core', 'return (async () => {' + script + '})()');
+    const setOutput = vi.fn();
+    const github = { rest: { repos: { getReleaseByTag: async () => {
+        if (status) throw Object.assign(new Error('API error'), { status });
+        return { data: release };
+    } } } };
+    const run = execute(github, { repo: { owner: 'fixture', repo: 'repo' } }, { setOutput });
+    if (expected === null) await assert.rejects(run, /API error/);
+    else {
+        await run;
+        assert.deepEqual(setOutput.mock.calls, [['publish', expected]]);
+    }
 });
