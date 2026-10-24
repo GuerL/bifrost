@@ -1,3 +1,4 @@
+import { editorSurfaceStyle } from "../design/editorTheme.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpErrorDiagnosticDto, HttpResponseDto } from "../types.ts";
@@ -505,7 +506,10 @@ export default function ResponsePanel({
                                 </div>
                             ) : (
                                 <pre
-                                    style={responsePreStyle(bodyView.isJson, bodyView.canPreview)}
+                                    className="bf-code-surface"
+                                    tabIndex={0}
+                                    aria-label="Response body"
+                                    style={responsePreStyle(bodyView.canPreview)}
                                 >
                                     {findOpen && hasFindQuery
                                         ? bodyHighlightSegments.map((segment, index) =>
@@ -1227,18 +1231,16 @@ function CopyStatusIcon({ state }: { state: CopyState }) {
     );
 }
 
-function responsePreStyle(isJson: boolean, hasBodyModeControls: boolean): React.CSSProperties {
+function responsePreStyle(hasBodyModeControls: boolean): React.CSSProperties {
     return {
         margin: 0,
-        background: isJson ? "var(--pg-json-body-bg)" : "var(--pg-surface-1)",
-        color: "var(--pg-text-dim)",
+        ...editorSurfaceStyle(),
         width: "100%",
         minWidth: 0,
         minHeight: 0,
         flex: 1,
         overflow: "auto",
         borderRadius: 12,
-        border: "1px solid var(--pg-border-soft)",
         padding: hasBodyModeControls ? "42px 12px 12px" : 12,
         boxSizing: "border-box",
         fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
@@ -1246,7 +1248,6 @@ function responsePreStyle(isJson: boolean, hasBodyModeControls: boolean): React.
         lineHeight: 1.5,
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
-        boxShadow: "none",
     };
 }
 
@@ -1274,21 +1275,21 @@ function responsePreviewFrameStyle(): React.CSSProperties {
 
 function jsonTokenStyle(type: JsonTokenType): React.CSSProperties {
     if (type === "key") {
-        return { color: "var(--pg-json-key)" };
+        return { color: "var(--bf-editor-key)" };
     }
     if (type === "string") {
-        return { color: "var(--pg-json-string)" };
+        return { color: "var(--bf-editor-string)" };
     }
     if (type === "number") {
-        return { color: "var(--pg-json-number)" };
+        return { color: "var(--bf-editor-number)" };
     }
     if (type === "boolean") {
-        return { color: "var(--pg-json-boolean)" };
+        return { color: "var(--bf-editor-boolean)" };
     }
     if (type === "null") {
-        return { color: "var(--pg-text-muted)" };
+        return { color: "var(--bf-editor-muted)" };
     }
-    return { color: "var(--pg-text-dim)" };
+    return { color: "var(--bf-editor-foreground)" };
 }
 
 function responsePanelStyle(): React.CSSProperties {

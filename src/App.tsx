@@ -1,3 +1,4 @@
+import { editorSurfaceStyle } from "./design/editorTheme.ts";
 import {
     type ChangeEvent,
     useCallback,
@@ -9431,8 +9432,6 @@ function editorPanelStyle(height: number | string, minHeight = 220): React.CSSPr
         minHeight,
         borderRadius: 12,
         overflow: "hidden",
-        border: "1px solid var(--pg-border-soft)",
-        boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 10px 20px var(--pg-shadow-color)",
-        background: "var(--pg-editor-deep)",
+        ...editorSurfaceStyle(),
     };
 }

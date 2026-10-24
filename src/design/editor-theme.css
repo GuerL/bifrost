@@ -1,0 +1,53 @@
+/* Shared by Monaco's public theme API and the custom response renderer.
+   Syntax roles reuse Bifrost's existing light/dark colors, not a new palette. */
+:root {
+  --bf-editor-background: var(--pg-editor-deep);
+  --bf-editor-foreground: var(--pg-text);
+  --bf-editor-muted: var(--pg-text-muted);
+  --bf-editor-border: var(--pg-border-soft);
+  --bf-editor-focus: var(--pg-primary);
+  --bf-editor-line: rgba(var(--pg-primary-rgb), 0.06);
+  --bf-editor-selection: rgba(var(--pg-primary-rgb), 0.22);
+  --bf-editor-selection-inactive: rgba(var(--pg-primary-rgb), 0.12);
+  --bf-editor-guide: var(--pg-border-soft);
+  --bf-editor-guide-active: var(--pg-text-muted);
+  --bf-editor-key: var(--pg-json-key);
+  --bf-editor-string: var(--pg-json-string);
+  --bf-editor-number: var(--pg-json-number);
+  --bf-editor-boolean: var(--pg-json-boolean);
+  --bf-editor-keyword: var(--pg-primary);
+  --bf-editor-scrollbar: var(--pg-scrollbar-thumb);
+  --bf-editor-scrollbar-hover: var(--pg-scrollbar-thumb-hover);
+  --bf-editor-scrollbar-active: var(--pg-scrollbar-thumb-active);
+}
+:root[data-visual-identity="qvb"]:not([data-theme="light"]) {
+  --bf-editor-background: var(--qvb-surface-control);
+  --bf-editor-foreground: var(--qvb-text);
+  --bf-editor-muted: var(--qvb-text-secondary);
+  --bf-editor-border: var(--qvb-border);
+  --bf-editor-focus: var(--qvb-focus);
+  --bf-editor-keyword: var(--qvb-accent);
+  --bf-editor-scrollbar: var(--qvb-border-hover);
+  --bf-editor-scrollbar-hover: var(--qvb-text-subtle);
+  --bf-editor-scrollbar-active: var(--qvb-text-secondary);
+}
+:root[data-visual-identity="qvb"][data-theme="light"] {
+  /* Reuse darker existing roles so comments and warm syntax remain readable
+     over the violet selection as well as the light editor surface. */
+  --bf-editor-muted: var(--pg-status-neutral-text);
+  --bf-editor-number: var(--pg-status-warning-text);
+  --bf-editor-boolean: var(--pg-status-error-text);
+  --bf-editor-keyword: var(--pg-status-info-text);
+  --bf-editor-scrollbar: var(--pg-border-muted);
+  --bf-editor-scrollbar-hover: var(--pg-text-muted);
+  --bf-editor-scrollbar-active: var(--pg-text-dim);
+}
+.bf-code-surface:focus-within {
+  outline: 2px solid var(--bf-editor-focus);
+  outline-offset: -2px;
+}
+.bf-code-surface::selection,
+.bf-code-surface span::selection {
+  background: var(--bf-editor-selection);
+  color: var(--bf-editor-foreground);
+}

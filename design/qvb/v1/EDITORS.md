@@ -1,0 +1,19 @@
+# Final editor refinement
+
+Request bodies (JSON and raw) and both script phases use Monaco through `@monaco-editor/react`. Response bodies use a custom preformatted renderer with JSON token spans. Neither implementation was replaced.
+
+`src/design/editor-theme.css` defines the shared `--bf-editor-*` semantic roles. Dark editor background uses the actual qvb `--qvb-surface-control` (#14161d), foreground uses `--qvb-text`, borders use `--qvb-border`, and focus uses `--qvb-focus`. Selection and active-line tints derive from the existing primary RGB role. Light mode keeps Bifrost's existing #f8fafc surface. Syntax roles reuse existing JSON and status foreground tokens; no additional palette was introduced. Dark syntax retains blue keys, green strings, amber numbers and warm booleans. Light mode uses darker existing amber, red, blue and neutral foreground roles so text stays readable over selection. Monaco's inherited language grammar, bracket highlighting and language services remain enabled.
+
+`src/design/editorTheme.ts` resolves CSS colors to Monaco-compatible hex, defines the theme through `monaco.editor.defineTheme`, and supplies the shared surface style to editor wrappers and the response body. JSON keys, values, numbers and booleans have explicit grammar token mappings; a generic string rule alone would leave inherited JSON value colors in place. Monaco theme colors include gutter, line numbers, caret, selection, active line, indentation guides, widgets and neutral scrollbars. Theme names remain unchanged.
+
+The existing Monaco support hook watches the resolved root theme attributes and re-registers the active theme, then calls `setTheme`. This follows the actual CSS state and avoids relying on React effect ordering. Models are not recreated on theme switches. The observer disconnects on cleanup. No editor options, formatting, validation, completions, shortcuts, scripting APIs, execution behavior, or response formatting/size-handling logic changed.
+
+Owned `.bf-code-surface` wrappers provide an inset focus outline. The response preformatted region now has a keyboard tab stop for scrolling/selection and an accessible label. Its JSON gradient is no longer used; JSON and plain text use the same neutral surface. Existing copy/save actions, hover/focus visibility and handlers are preserved. No styling targets Monaco's internal classes. Theme-color key documentation: https://code.visualstudio.com/api/references/theme-color#editor-colors; public Monaco APIs are typed by the installed `monaco-editor` package.
+
+## Validation
+
+[Open the screenshot gallery](screenshots/editors/index.html). Generated images and browser evidence remain under the already ignored `design/qvb/v1/screenshots/` path; `.gitignore` was not changed.
+
+An isolated fixture rendered the actual components with the locally installed Monaco 0.56.0 distribution and synthetic content. Visually inspected dark/light JSON request bodies, formatted JSON responses, pre-request and post-response JavaScript, selected text with focus, empty states, long wrapped lines and vertical scrolling. The app's existing wrap/scroll settings were retained. Browser evidence recorded 28 checks and zero uncaught runtime exceptions. Each editable view switched dark→light or light→dark without losing model content; actual Monaco backgrounds changed between rgb(20,22,29) and rgb(248,250,252). Response copy/save controls remained enabled and visible on hover/focus. Existing platform action handlers were not invoked.
+
+`npm run build` passed, as did all 24 existing test files / 199 tests and `git diff --check`. The existing Vite bundle-size warning remains. Native Tauri rendering, clipboard/file operations, and stress testing with very large responses were not exercised; their implementations were unchanged. The fixture used the installed Monaco version; the application continues to use its existing loader configuration.
