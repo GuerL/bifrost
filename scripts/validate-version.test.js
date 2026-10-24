@@ -8,43 +8,37 @@ import assert from 'node:assert/strict';
 import { parseSemver } from './set-version.js';
 import { compareVersions, validateVersions, assertIncreasing, validateCurrentVersion } from './validate-version.js';
 
-test('main branch workflows retain PR validation, auto-tagging, and all release entry points', () => {
-    const workflow = name => YAML.parse(fs.readFileSync(`.github/workflows/${name}.yml`, 'utf8'));
-    const validation = workflow('version-check');
-    assert.deepEqual(validation.on, { pull_request: { branches: ['main'] } });
-    const validateStep = validation.jobs['version-check'].steps.find(step => step.run === 'node scripts/validate-version.js');
-    assert.equal(validateStep.env.BASE_SHA, '${{ github.event.pull_request.base.sha }}');
-
-    assert.equal(fs.existsSync('.github/workflows/auto-tag.yml'), false);
-    const release = workflow('release');
+test('independent tag dispatch orchestration and preserved build configuration', () => {
+    const load = name => YAML.parse(fs.readFileSync(`.github/workflows/${name}.yml`, 'utf8'));
+    const auto = load('auto-tag'), release = load('release');
+    assert.deepEqual(auto.on, { push: { branches: ['main'] } });
+    assert.deepEqual(Object.keys(auto.jobs), ['auto-tag', 'validate-tag', 'dispatch-release']);
+    assert.equal(auto.jobs['validate-tag'].needs, 'auto-tag');
+    assert.equal(auto.jobs['dispatch-release'].needs, 'validate-tag');
+    assert.equal(auto.jobs['dispatch-release'].permissions.actions, 'write');
+    assert.equal(auto.jobs['validate-tag'].if, "needs.auto-tag.outputs.publish == 'true'");
+    assert.equal(auto.jobs['dispatch-release'].if, "needs.validate-tag.outputs.publish == 'true'");
     assert.equal(release.name, 'Release');
-    assert.deepEqual(Object.keys(release.jobs), ['auto-tag', 'validate-tag', 'publish-tauri']);
-    assert.deepEqual(release.on.push, { branches: ['main'], tags: ['v*'] });
-    assert.equal(release.on.workflow_call, undefined);
-    assert.equal(release.on.workflow_dispatch.inputs.tag.required, true);
-    assert.equal(release.jobs['validate-tag'].needs, 'auto-tag');
-    assert.equal(release.jobs['publish-tauri'].needs, 'validate-tag');
-    assert.match(release.jobs['validate-tag'].if, /always\(\)/);
-    assert.match(release.jobs['publish-tauri'].if, /always\(\)/);
-    assert.equal(release.jobs['auto-tag'].outputs.sha, '${{ github.sha }}');
-    assert.equal(release.jobs['auto-tag'].outputs.publish, "${{ steps.create.outputs.created || 'false' }}");
-    assert.equal(release.concurrency.group, 'bifrost-release');
+    assert.deepEqual(Object.keys(release.on), ['workflow_dispatch']);
+    assert.deepEqual(Object.keys(release.jobs), ['validate-tag', 'publish-tauri']);
     assert.equal(release.concurrency['cancel-in-progress'], false);
-    assert.equal(release.jobs['publish-tauri'].strategy['max-parallel'], 1);
-    assert.deepEqual(release.jobs['publish-tauri'].strategy.matrix.include.map(entry => entry.runner),
-        ['macos-26', 'macos-26-intel', 'windows-latest']);
-    const resolve = release.jobs['validate-tag'].steps.find(step => step.id === 'resolve');
-    assert.equal(resolve.env.TAG, '${{ needs.auto-tag.outputs.tag || inputs.tag || github.ref_name }}');
-    assert.equal(resolve.env.EXPECTED_SHA, '${{ needs.auto-tag.outputs.sha }}');
-    assert.ok(resolve.run.includes('[ "$sha" != "$EXPECTED_SHA" ]'));
-    assert.equal(release.jobs['validate-tag'].outputs.tag, '${{ steps.resolve.outputs.tag }}');
-    const tauri = release.jobs['publish-tauri'].steps.find(step => step.id === 'tauri_release');
-    assert.equal(tauri.with.tagName, '${{ needs.validate-tag.outputs.tag }}');
-    assert.equal(tauri.with.releaseName, 'Bifrost ${{ needs.validate-tag.outputs.tag }}');
-    assert.match(resolve.run, /git merge-base --is-ancestor "\$sha" origin\/main \|\|/);
-    assert.match(resolve.run, /VALIDATION_REF="\$sha" EXPECTED_TAG="\$TAG" node scripts\/validate-version.js/);
-    assert.equal(release.jobs['publish-tauri'].steps.find(step => step.name === 'Checkout').with.ref,
-        '${{ needs.validate-tag.outputs.sha }}');
+    assert.equal(auto.concurrency['cancel-in-progress'], false);
+    const build = release.jobs['publish-tauri'];
+    assert.equal(build.strategy['max-parallel'], 1);
+    assert.equal(build.strategy['fail-fast'], false);
+    assert.deepEqual(build.strategy.matrix.include, [
+        { label: 'macOS ARM64', runner: 'macos-26', args: '', tauri_timeout: 45 },
+        { label: 'macOS Intel', runner: 'macos-26-intel', args: '', tauri_timeout: 45 },
+        { label: 'Windows', runner: 'windows-latest', args: '--config src-tauri/tauri.windows.conf.json', tauri_timeout: 45 },
+    ]);
+    assert.equal(build.steps.find(s => s.name === 'Checkout').with.ref, '${{ needs.validate-tag.outputs.sha }}');
+    const resolve = release.jobs['validate-tag'].steps.find(s => s.id === 'resolve');
+    assert.equal(resolve.env.TAG, '${{ github.ref_name }}');
+    assert.equal(resolve.env.EXPECTED_SHA, '${{ github.sha }}');
+    assert.match(resolve.run, /FETCH_HEAD\^\{commit\}/);
+    assert.match(resolve.run, /git merge-base --is-ancestor/);
+    assert.match(resolve.run, /remote_object.*git ls-remote/);
+    assert.ok(build.steps.some(s => s.name === 'Remove updater signature assets from release'));
 });
 
 test('shared parser accepts SemVer and rejects numeric leading zeroes', () => {
@@ -135,10 +129,12 @@ test.each([
     ['success', 0, 'created=true'],
     ['race', 0, 'created=false'],
     ['up-to-date', 0, 'created=false'],
+    ['recover', 0, 'created=true'],
+    ['occupied', 1, null],
     ['push-error', 1, null],
     ['lookup-error', 1, null],
 ])('tag push handling: %s (all Git commands are simulated)', (mode, status, expected) => {
-    const workflow = YAML.parse(fs.readFileSync('.github/workflows/release.yml', 'utf8'));
+    const workflow = YAML.parse(fs.readFileSync('.github/workflows/auto-tag.yml', 'utf8'));
     const script = workflow.jobs['auto-tag'].steps.find(step => step.id === 'create').run;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-tag-race-'));
     const output = path.join(dir, 'output');
@@ -148,10 +144,13 @@ case "$1" in
   push)
     if [ "$MODE" = success ]; then printf '*\\trefs/tags/v1.3.0:refs/tags/v1.3.0\\t[new tag]\\n'; exit 0; fi
     if [ "$MODE" = up-to-date ]; then printf '=\\trefs/tags/v1.3.0:refs/tags/v1.3.0\\t[up to date]\\n'; exit 0; fi
+    touch "$RACE_MARKER"
     exit 1 ;;
   ls-remote)
+    if [ "$MODE" = recover ]; then printf 'object\\trefs/tags/v1.3.0\\nfixture-sha\\trefs/tags/v1.3.0^{}\\n'; fi
+    if [ "$MODE" = occupied ]; then echo 'other refs/tags/v1.3.0'; fi
     if [ "$MODE" = lookup-error ]; then exit 1; fi
-    if [ "$MODE" = race ]; then echo 'abc refs/tags/v1.3.0'; fi
+    if [ "$MODE" = race ] && [ -f "$RACE_MARKER" ]; then echo 'abc refs/tags/v1.3.0'; fi
     exit 0 ;;
   *) exit 99 ;;
 esac
@@ -159,7 +158,7 @@ esac
     try {
         const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: {
             ...process.env, PATH: `${dir}:${process.env.PATH}`, MODE: mode,
-            TAG: 'v1.3.0', GITHUB_SHA: 'fixture-sha', GITHUB_OUTPUT: output,
+            RACE_MARKER: path.join(dir, 'pushed'), TAG: 'v1.3.0', GITHUB_SHA: 'fixture-sha', GITHUB_OUTPUT: output,
         } });
         assert.equal(result.status, status, result.stderr);
         if (expected) assert.match(fs.readFileSync(output, 'utf8'), new RegExp(expected));
@@ -189,21 +188,6 @@ test('automatic pushes reject regression against previous main', async () => {
 });
 
 test.each([
-    ['new main version', 'push', 'refs/heads/main', 'success', 'true', true],
-    ['unchanged main version', 'push', 'refs/heads/main', 'success', '', false],
-    ['existing main tag', 'push', 'refs/heads/main', 'success', 'false', false],
-    ['invalid main version', 'push', 'refs/heads/main', 'failure', '', false],
-    ['manual existing tag', 'workflow_dispatch', 'refs/heads/main', 'skipped', '', true],
-    ['external tag push', 'push', 'refs/tags/v1.17.0', 'skipped', '', true],
-])('validation entry gate: %s', (_, event, ref, result, publish, expected) => {
-    const workflow = YAML.parse(fs.readFileSync('.github/workflows/release.yml', 'utf8'));
-    const expression = workflow.jobs['validate-tag'].if.replaceAll('needs.auto-tag', 'needs.autoTag');
-    const evaluate = new Function('github', 'needs', 'always', 'startsWith', 'return ' + expression);
-    assert.equal(evaluate({ event_name: event, ref }, { autoTag: { result, outputs: { publish } } },
-        () => true, (value, prefix) => value.startsWith(prefix)), expected);
-});
-
-test.each([
     ['unpublished tag', null, 404, 'true'],
     ['draft release', { draft: true }, null, 'true'],
     ['published release', { draft: false, published_at: 'today' }, null, 'false'],
@@ -223,4 +207,81 @@ test.each([
         await run;
         assert.deepEqual(setOutput.mock.calls, [['publish', expected]]);
     }
+});
+
+test.each(['new', 'existing', 'moved', 'api-error', 'workflow-mismatch'])(
+    'dispatch request uses the actual tag and fails closed: %s', async mode => {
+        const workflow = YAML.parse(fs.readFileSync('.github/workflows/auto-tag.yml', 'utf8'));
+        const script = workflow.jobs['dispatch-release'].steps.at(-1).with.script;
+        const execute = new Function('github', 'context', 'core', 'require', 'return (async () => {' + script + '})()');
+        vi.stubEnv('TAG', 'v1.16.3');
+        vi.stubEnv('SHA', 'expected-commit');
+        const config = fs.readFileSync('.github/workflows/release.yml', 'utf8');
+        const dispatch = vi.fn(async () => { if (mode === 'api-error') throw new Error('HTTP 403'); });
+        const github = {
+            paginate: async () => mode === 'existing' ? [{ head_branch: 'v1.16.3' }] : [],
+            rest: {
+                repos: {
+                    get: async () => ({ data: { default_branch: 'main' } }),
+                    getContent: async () => ({ data: { content: Buffer.from(mode === 'workflow-mismatch' ? 'old config' : config).toString('base64') } }),
+                },
+                actions: { listWorkflowRuns: () => {}, createWorkflowDispatch: dispatch },
+                git: {
+                    getRef: async () => ({ data: { object: { type: 'tag', sha: 'annotated-object' } } }),
+                    getTag: async () => ({ data: { object: { type: 'commit', sha: mode === 'moved' ? 'other' : 'expected-commit' } } }),
+                },
+            },
+        };
+        const run = execute(github, { repo: { owner: 'fixture', repo: 'repo' } }, { info: vi.fn() }, () => ({ readFileSync: () => config }));
+        if (['moved', 'api-error', 'workflow-mismatch'].includes(mode)) await assert.rejects(run);
+        else await run;
+        if (['new', 'api-error'].includes(mode)) assert.deepEqual(dispatch.mock.calls, [[{
+            owner: 'fixture', repo: 'repo', workflow_id: 'release.yml', ref: 'v1.16.3',
+        }]]);
+        else assert.equal(dispatch.mock.calls.length, 0);
+    });
+
+test.each([
+    ['valid annotated tag', 'refs/tags/v1.2.3', '', 'valid', 0],
+    ['branch ref', 'refs/heads/main', '', 'valid', 1],
+    ['mismatched input', 'refs/tags/v1.2.3', 'v9.0.0', 'valid', 1],
+    ['wrong commit', 'refs/tags/v1.2.3', '', 'wrong-commit', 1],
+    ['moved tag object', 'refs/tags/v1.2.3', '', 'moved', 1],
+    ['metadata mismatch', 'refs/tags/v1.2.3', '', 'metadata', 1],
+    ['not on main', 'refs/tags/v1.2.3', '', 'not-main', 1],
+    ['missing remote tag', 'refs/tags/v1.2.3', '', 'missing', 1],
+])('Release validation: %s (no real Git writes or API calls)', (_, ref, input, mode, expected) => {
+    const workflow = YAML.parse(fs.readFileSync('.github/workflows/release.yml', 'utf8'));
+    const script = workflow.jobs['validate-tag'].steps.find(s => s.id === 'resolve').run;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-release-ref-'));
+    fs.writeFileSync(path.join(dir, 'git'), `#!/bin/bash
+case "$1" in
+  check-ref-format) exit 0 ;;
+  fetch) [ "$MODE" != missing ]; exit $? ;;
+  rev-parse)
+    if [ "$2" = FETCH_HEAD ]; then echo annotated-object;
+    elif [ "$MODE" = wrong-commit ]; then echo other; else echo expected-commit; fi ;;
+  merge-base) [ "$MODE" != not-main ]; exit $? ;;
+  show) cat .github/workflows/release.yml ;;
+  ls-remote)
+    if [ "$MODE" = moved ]; then echo other; else printf 'annotated-object\\trefs/tags/v1.2.3\\n'; fi ;;
+  *) exit 99 ;;
+esac
+`, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'node'), '#!/bin/bash\n[ "$MODE" != metadata ]\n', { mode: 0o755 });
+    try {
+        const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: {
+            ...process.env, PATH: `${dir}:${process.env.PATH}`, MODE: mode,
+            TAG: 'v1.2.3', EXPECTED_SHA: 'expected-commit', REQUIRE_TAG_REF: 'true', INPUT_TAG: input,
+            GITHUB_REF: ref, GITHUB_EVENT_NAME: 'workflow_dispatch', RUNNER_TEMP: dir,
+            GITHUB_OUTPUT: path.join(dir, 'output'),
+        } });
+        assert.equal(result.status, expected, result.stderr);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('release eligibility rejects an older existing unpublished tag', async () => {
+    vi.stubEnv('RELEASE_ELIGIBILITY', 'true');
+    await assert.rejects(scenario({ automatic: true, exists: true,
+        releases: [{ tag_name: 'v999.0.0', published_at: 'today' }] }), /latest relevant published/);
 });

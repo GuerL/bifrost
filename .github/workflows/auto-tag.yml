@@ -1,0 +1,215 @@
+name: Auto Tag Bifrost
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: bifrost-auto-tag
+  cancel-in-progress: false
+
+jobs:
+  auto-tag:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ github.sha }}
+      publish: ${{ steps.create.outputs.created || 'false' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Validate version and check remote tag
+        id: version
+        run: node scripts/validate-version.js
+        env:
+          CHECK_REMOTE: 'true'
+          SKIP_PUBLISHED: 'true'
+          RELEASE_BASE_SHA: ${{ github.event.before }}
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Create annotated tag
+        id: create
+        if: steps.version.outputs.published == 'false' && steps.version.outputs.changed == 'true'
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Recover a push completed before a failed dispatch; never move a tag.
+          remote_commit=$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | tail -n 1 | cut -f1)
+          if [ -n "$remote_commit" ]; then
+            if [ "$remote_commit" != "$GITHUB_SHA" ]; then
+              echo "::error::Existing tag $TAG points to another commit."
+              exit 1
+            fi
+            echo "created=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$GITHUB_SHA" -m "Bifrost $TAG"
+          if push_output=$(git push --porcelain origin "refs/tags/$TAG"); then
+            # Only a new remote ref owns release orchestration. An identical ref
+            # created by another actor can also produce a successful push.
+            if awk -F '\t' '$1 == "*" { created=1 } END { exit !created }' <<< "$push_output"; then
+              echo "created=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "created=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # Another actor may have created the tag between validation and push.
+            remote_tag=$(git ls-remote --refs origin "refs/tags/$TAG")
+            if [ -n "$remote_tag" ]; then
+              echo "Tag $TAG now exists; the winning creator owns the release."
+              echo "created=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::Failed to push $TAG and it does not exist on origin."
+              exit 1
+            fi
+          fi
+
+  validate-tag:
+    needs: auto-tag
+    if: needs.auto-tag.outputs.publish == 'true'
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      publish: ${{ steps.publication.outputs.publish }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Resolve and validate exact tagged commit
+        id: resolve
+        shell: bash
+        env:
+          TAG: ${{ needs.auto-tag.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.auto-tag.outputs.sha }}
+          REQUIRE_TAG_REF: 'false'
+          INPUT_TAG: ''
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$REQUIRE_TAG_REF" = true ]; then
+            if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+              echo "::error::Release must be dispatched using an existing version tag as its ref."
+              exit 1
+            fi
+            if [ -n "$INPUT_TAG" ] && [ "$INPUT_TAG" != "$TAG" ]; then
+              echo "::error::Tag input must match the workflow reference."
+              exit 1
+            fi
+          fi
+          git check-ref-format "refs/tags/$TAG"
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          git fetch --no-tags origin "refs/tags/$TAG"
+          object=$(git rev-parse FETCH_HEAD)
+          sha=$(git rev-parse --verify "FETCH_HEAD^{commit}")
+          if [ "$sha" != "$EXPECTED_SHA" ]; then
+            echo "::error::Remote tag commit does not match the expected commit."
+            exit 1
+          fi
+          git merge-base --is-ancestor "$sha" origin/main || {
+            echo "::error::Release tags must point to commits reachable from main."
+            exit 1
+          }
+          # The tagged workflow must be exactly the reviewed orchestration configuration.
+          git show "$sha:.github/workflows/release.yml" > "$RUNNER_TEMP/tagged-release.yml"
+          cmp .github/workflows/release.yml "$RUNNER_TEMP/tagged-release.yml"
+          VALIDATION_REF="$sha" EXPECTED_TAG="$TAG" CHECK_REMOTE=true SKIP_PUBLISHED=true RELEASE_ELIGIBILITY=true node scripts/validate-version.js
+          remote_object=$(git ls-remote --refs origin "refs/tags/$TAG" | cut -f1)
+          if [ "$remote_object" != "$object" ]; then
+            echo "::error::Tag moved during validation."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Skip already published releases
+        id: publication
+        uses: actions/github-script@v9
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        with:
+          script: |
+            try {
+              const { data: release } = await github.rest.repos.getReleaseByTag({
+                ...context.repo, tag: process.env.TAG,
+              });
+              core.setOutput('publish', release.draft || !release.published_at ? 'true' : 'false');
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.setOutput('publish', 'true');
+            }
+
+
+  dispatch-release:
+    needs: validate-tag
+    if: needs.validate-tag.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate-tag.outputs.sha }}
+          persist-credentials: false
+      - name: Dispatch independent Release workflow on tag
+        uses: actions/github-script@v9
+        env:
+          TAG: ${{ needs.validate-tag.outputs.tag }}
+          SHA: ${{ needs.validate-tag.outputs.sha }}
+        with:
+          script: |
+            const { readFileSync } = require('node:fs');
+            const tag = process.env.TAG;
+            const sha = process.env.SHA;
+            const workflow_id = 'release.yml';
+            const { data: repo } = await github.rest.repos.get(context.repo);
+            const { data: workflow } = await github.rest.repos.getContent({
+              ...context.repo, path: '.github/workflows/release.yml', ref: repo.default_branch,
+            });
+            if (Buffer.from(workflow.content, 'base64').toString() !== readFileSync('.github/workflows/release.yml', 'utf8')) {
+              throw new Error('Default branch and tagged Release workflow configurations differ.');
+            }
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              ...context.repo, workflow_id, event: 'workflow_dispatch', head_sha: sha, per_page: 100,
+            });
+            if (runs.some(run => run.head_branch === tag)) {
+              core.info(`Release already requested for ${tag}; inspect that run or retry it manually.`);
+              return;
+            }
+            const { data: ref } = await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` });
+            let object = ref.object;
+            while (object.type === 'tag') {
+              const { data } = await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha });
+              object = data.object;
+            }
+            if (object.type !== 'commit' || object.sha !== sha) throw new Error('Release tag moved before dispatch.');
+            try {
+              await github.rest.actions.createWorkflowDispatch({ ...context.repo, workflow_id, ref: tag });
+            } catch (error) {
+              throw new Error(`Release dispatch for ${tag} failed: ${error.message}. Check Actions before retrying; the request may have been accepted.`);
+            }
+            core.info(`GitHub accepted Release dispatch for ${tag}. Publication is tracked in the separate Release run.`);

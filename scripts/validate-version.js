@@ -88,7 +88,7 @@ export async function validateCurrentVersion() {
         if (process.env.BASE_SHA && changed && exists) throw new Error(`Requested tag ${tag} already exists on origin. Choose a new version.`);
         const releases = process.env.SKIP_PUBLISHED === 'true' || (changed && !exists) ? await publishedVersions() : [];
         const published = process.env.SKIP_PUBLISHED === 'true' && releases.includes(version);
-        if (changed && !exists && !published) {
+        if ((changed && !exists && !published) || (process.env.RELEASE_ELIGIBILITY === 'true' && !published)) {
             const relevant = releases.filter(v => parseSemver(version).prerelease.length || !parseSemver(v).prerelease.length);
             const latest = relevant.sort(compareVersions).at(-1);
             if (latest) assertIncreasing(version, latest, 'latest relevant published release');
