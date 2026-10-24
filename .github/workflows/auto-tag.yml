@@ -34,16 +34,15 @@ jobs:
         run: node scripts/validate-version.js
         env:
           CHECK_REMOTE: 'true'
-          SKIP_PUBLISHED: 'true'
           RELEASE_BASE_SHA: ${{ github.event.before }}
           GITHUB_TOKEN: ${{ github.token }}
       - name: Create annotated tag or recover matching existing tag
         id: create
-        if: steps.version.outputs.published == 'false' && (steps.version.outputs.exists == 'true' || steps.version.outputs.changed == 'true')
+        if: steps.version.outputs.eligible == 'true' || steps.version.outputs.recoverable == 'true'
         shell: bash
         env:
           TAG: ${{ steps.version.outputs.tag }}
-          VERSION_CHANGED: ${{ steps.version.outputs.changed }}
+          RELEASE_ELIGIBLE: ${{ steps.version.outputs.eligible }}
         run: |
           set -euo pipefail
           # Match the exact ref names, independently of ls-remote output order.
@@ -61,8 +60,8 @@ jobs:
             exit 0
           fi
           # Recheck eligibility here too: a tag may disappear after the version check.
-          if [ "$VERSION_CHANGED" != true ]; then
-            echo "No version change and no existing tag; refusing to create $TAG on the latest commit."
+          if [ "$RELEASE_ELIGIBLE" != true ]; then
+            echo "Version was not eligible for a missing tag; refusing to create $TAG."
             echo "created=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -79,8 +78,15 @@ jobs:
             fi
           else
             # Another actor may have created the tag between validation and push.
-            remote_tag=$(git ls-remote --refs origin "refs/tags/$TAG")
-            if [ -n "$remote_tag" ]; then
+            remote_refs=$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}")
+            remote_object=$(awk -v ref="refs/tags/$TAG" '$2 == ref { print $1 }' <<< "$remote_refs")
+            remote_peeled=$(awk -v ref="refs/tags/$TAG^{}" '$2 == ref { print $1 }' <<< "$remote_refs")
+            remote_commit=${remote_peeled:-$remote_object}
+            if [ -n "$remote_object" ]; then
+              if [ "$remote_commit" != "$GITHUB_SHA" ]; then
+                echo "::error::Concurrent tag $TAG points to a different commit. Never move it."
+                exit 1
+              fi
               echo "Tag $TAG now exists; the winning creator owns the release."
               echo "created=false" >> "$GITHUB_OUTPUT"
             else
@@ -147,7 +153,7 @@ jobs:
           # The tagged workflow must be exactly the reviewed orchestration configuration.
           git show "$sha:.github/workflows/release.yml" > "$RUNNER_TEMP/tagged-release.yml"
           cmp .github/workflows/release.yml "$RUNNER_TEMP/tagged-release.yml"
-          VALIDATION_REF="$sha" EXPECTED_TAG="$TAG" CHECK_REMOTE=true SKIP_PUBLISHED=true RELEASE_ELIGIBILITY=true node scripts/validate-version.js
+          VALIDATION_REF="$sha" EXPECTED_TAG="$TAG" CHECK_REMOTE=true RELEASE_ELIGIBILITY=true node scripts/validate-version.js
           remote_object=$(git ls-remote --refs origin "refs/tags/$TAG" | cut -f1)
           if [ "$remote_object" != "$object" ]; then
             echo "::error::Tag moved during validation."

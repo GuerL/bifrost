@@ -87,14 +87,22 @@ export async function validateCurrentVersion() {
         // A failed remote lookup must fail validation, never masquerade as an absent tag.
         const exists = git('ls-remote', '--refs', 'origin', `refs/tags/${tag}`) !== '';
         if (process.env.BASE_SHA && changed && exists) throw new Error(`Requested tag ${tag} already exists on origin. Choose a new version.`);
-        const releases = process.env.SKIP_PUBLISHED === 'true' || (changed && !exists) ? await publishedVersions() : [];
-        const published = process.env.SKIP_PUBLISHED === 'true' && releases.includes(version);
-        if ((changed && !exists && !published) || (process.env.RELEASE_ELIGIBILITY === 'true' && !published)) {
-            const relevant = releases.filter(v => parseSemver(version).prerelease.length || !parseSemver(v).prerelease.length);
-            const latest = relevant.sort(compareVersions).at(-1);
-            if (latest) assertIncreasing(version, latest, 'latest relevant published release');
+        // Always read publication state, including unchanged versions and recovery runs.
+        const releases = await publishedVersions();
+        const published = releases.includes(version);
+        const latest = releases.sort(compareVersions).at(-1);
+        const newer = !latest || compareVersions(version, latest) > 0;
+        const eligible = !published && newer && !exists;
+        // Existing tags can recover a failed dispatch, but must pass exact commit validation.
+        const recoverable = !published && newer && exists;
+        if (!published && !newer && (!process.env.BASE_SHA || changed || process.env.RELEASE_ELIGIBILITY === 'true')) {
+            assertIncreasing(version, latest, 'latest published release');
         }
-        if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `exists=${exists}\npublished=${published}\n`);
+        if (process.env.RELEASE_ELIGIBILITY === 'true' && published) {
+            throw new Error(`Release ${tag} is already published.`);
+        }
+        if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT,
+            `exists=${exists}\npublished=${published}\neligible=${eligible}\nrecoverable=${recoverable}\n`);
     }
     if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed}\ntag=${tag}\nprerelease=${parseSemver(version).prerelease.length > 0}\n`);
     console.log(`Validated ${tag}${process.env.BASE_SHA ? ` (version ${changed ? 'changed' : 'unchanged'})` : ''}`);

@@ -35,6 +35,8 @@ test('independent tag dispatch orchestration and preserved build configuration',
     const resolve = release.jobs['validate-tag'].steps.find(s => s.id === 'resolve');
     assert.equal(resolve.env.TAG, '${{ github.ref_name }}');
     assert.equal(resolve.env.EXPECTED_SHA, '${{ github.sha }}');
+    assert.equal(auto.jobs['validate-tag'].steps.find(s => s.id === 'resolve').run,
+        resolve.run.replace('SKIP_PUBLISHED=true ', ''));
     assert.match(resolve.run, /FETCH_HEAD\^\{commit\}/);
     assert.match(resolve.run, /git merge-base --is-ancestor/);
     assert.match(resolve.run, /remote_object.*git ls-remote/);
@@ -73,7 +75,7 @@ async function scenario({ base, exists = false, releases = [], remoteError = fal
     vi.stubEnv('EXPECTED_TAG', '');
     vi.stubEnv('VALIDATION_REF', '');
     vi.stubEnv('CHECK_REMOTE', 'true');
-    vi.stubEnv('SKIP_PUBLISHED', automatic ? 'true' : '');
+    vi.stubEnv('RELEASE_ELIGIBILITY', process.env.RELEASE_ELIGIBILITY || '');
     vi.stubEnv('GITHUB_REPOSITORY', 'fixture/repo');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-version-'));
     const output = path.join(dir, 'output');
@@ -96,17 +98,17 @@ test('unchanged PR passes even when its existing tag is published', async () => 
     const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
     const result = await scenario({ base: version, exists: true });
     assert.match(result.output, /exists=true/);
-    assert.equal(result.api.mock.calls.length, 0);
+    assert.equal(result.api.mock.calls.length, 1);
 });
 test('version-changing PR rejects occupied tags and downgrades', async () => {
     await assert.rejects(scenario({ base: '0.1.0', exists: true }), /already exists/);
     await assert.rejects(scenario({ base: '999.0.0' }), /PR base/);
 });
 test('new tag requires a newer published version; drafts and unrelated tags are ignored', async () => {
-    await assert.rejects(scenario({ releases: [{ tag_name: 'v999.0.0', published_at: 'today' }] }), /latest relevant published/);
+    await assert.rejects(scenario({ releases: [{ tag_name: 'v999.0.0', published_at: 'today' }] }), /latest published/);
     const result = await scenario({ base: '0.1.0', releases: [
         { tag_name: 'v999.0.0', draft: true, published_at: 'today' },
-        { tag_name: 'v999.0.0-alpha.1', published_at: 'today' },
+        { tag_name: 'v0.1.0-alpha.1', published_at: 'today' },
         { tag_name: 'unrelated', published_at: 'today' },
         { tag_name: 'v0.1.0', published_at: 'today' },
     ] });
@@ -122,16 +124,17 @@ test('release comparison reads later API pages', async () => {
     await assert.rejects(scenario({ pages: [
         Array.from({ length: 100 }, () => ({ tag_name: 'unrelated' })),
         [{ tag_name: 'v999.0.0', published_at: 'today' }],
-    ] }), /latest relevant published/);
+    ] }), /latest published/);
 });
 
 test.each([
     ['success', 0, 'created=true'],
     ['race', 0, 'created=false'],
+    ['race-other', 1, null],
     ['up-to-date', 0, 'created=false'],
     ['recover', 0, 'created=true'],
     ['recover-lightweight', 0, 'created=true'],
-    ['unchanged-missing', 0, 'created=false'],
+    ['unchanged-missing', 0, 'created=true'],
     ['occupied', 1, null],
     ['push-error', 1, null],
     ['lookup-error', 1, null],
@@ -144,16 +147,17 @@ test.each([
 case "$1" in
   config|tag) exit 0 ;;
   push)
-    if [ "$MODE" = success ]; then printf '*\\trefs/tags/v1.3.0:refs/tags/v1.3.0\\t[new tag]\\n'; exit 0; fi
-    if [ "$MODE" = up-to-date ]; then printf '=\\trefs/tags/v1.3.0:refs/tags/v1.3.0\\t[up to date]\\n'; exit 0; fi
+    if [ "$MODE" = success ] || [ "$MODE" = unchanged-missing ]; then printf '*\\trefs/tags/v1.16.2:refs/tags/v1.16.2\\t[new tag]\\n'; exit 0; fi
+    if [ "$MODE" = up-to-date ]; then printf '=\\trefs/tags/v1.16.2:refs/tags/v1.16.2\\t[up to date]\\n'; exit 0; fi
     touch "$RACE_MARKER"
     exit 1 ;;
   ls-remote)
-    if [ "$MODE" = recover ]; then printf 'fixture-sha\\trefs/tags/v1.3.0^{}\\nobject\\trefs/tags/v1.3.0\\n'; fi
-    if [ "$MODE" = recover-lightweight ]; then printf 'fixture-sha\\trefs/tags/v1.3.0\\n'; fi
-    if [ "$MODE" = occupied ]; then printf 'other\\trefs/tags/v1.3.0\\n'; fi
+    if [ "$MODE" = recover ]; then printf 'fixture-sha\\trefs/tags/v1.16.2^{}\\nobject\\trefs/tags/v1.16.2\\n'; fi
+    if [ "$MODE" = recover-lightweight ]; then printf 'fixture-sha\\trefs/tags/v1.16.2\\n'; fi
+    if [ "$MODE" = occupied ]; then printf 'other\\trefs/tags/v1.16.2\\n'; fi
     if [ "$MODE" = lookup-error ]; then exit 1; fi
-    if [ "$MODE" = race ] && [ -f "$RACE_MARKER" ]; then echo 'abc refs/tags/v1.3.0'; fi
+    if [ "$MODE" = race-other ] && [ -f "$RACE_MARKER" ]; then echo 'other refs/tags/v1.16.2'; fi
+    if [ "$MODE" = race ] && [ -f "$RACE_MARKER" ]; then echo 'fixture-sha refs/tags/v1.16.2'; fi
     exit 0 ;;
   *) exit 99 ;;
 esac
@@ -161,8 +165,8 @@ esac
     try {
         const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: {
             ...process.env, PATH: `${dir}:${process.env.PATH}`, MODE: mode,
-            VERSION_CHANGED: ['recover', 'recover-lightweight', 'unchanged-missing'].includes(mode) ? 'false' : 'true',
-            RACE_MARKER: path.join(dir, 'pushed'), TAG: 'v1.3.0', GITHUB_SHA: 'fixture-sha', GITHUB_OUTPUT: output,
+            RELEASE_ELIGIBLE: ['recover', 'recover-lightweight'].includes(mode) ? 'false' : 'true',
+            RACE_MARKER: path.join(dir, 'pushed'), TAG: 'v1.16.2', GITHUB_SHA: 'fixture-sha', GITHUB_OUTPUT: output,
         } });
         assert.equal(result.status, status, result.stderr);
         if (expected) assert.match(fs.readFileSync(output, 'utf8'), new RegExp(expected));
@@ -172,20 +176,28 @@ esac
 
 test('automatic release skips a published version even if its tag is missing', async () => {
     const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
-    const result = await scenario({ automatic: true, releases: [{ tag_name: 'v' + version, published_at: 'today' }] });
+    const result = await scenario({ automatic: true, base: version, releaseBase: true, releases: [{ tag_name: 'v' + version, published_at: 'today' }] });
     assert.match(result.output, /exists=false/);
     assert.match(result.output, /published=true/);
+    assert.match(result.output, /eligible=false/);
+    assert.match(result.output, /recoverable=false/);
 });
 test('automatic release allows a new version and skips an existing tag', async () => {
-    assert.match((await scenario({ automatic: true, exists: true })).output, /exists=true/);
+    const recovery = await scenario({ automatic: true, exists: true, base: '1.16.2', releaseBase: true });
+    assert.match(recovery.output, /exists=true/);
+    assert.match(recovery.output, /eligible=false/);
+    assert.match(recovery.output, /recoverable=true/);
     const result = await scenario({ automatic: true });
     assert.match(result.output, /exists=false/);
     assert.match(result.output, /published=false/);
 });
 
-test('unchanged automatic version skips tagging even without a remote tag', async () => {
+test('unchanged 1.16.2 is eligible when 1.16.1 is the latest release', async () => {
     const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
-    assert.match((await scenario({ base: version, releaseBase: true, automatic: true })).output, /changed=false/);
+    assert.equal(version, '1.16.2');
+    const result = await scenario({ base: version, releaseBase: true, automatic: true,
+        releases: [{ tag_name: 'v1.16.1', published_at: 'today' }] });
+    for (const line of ['changed=false', 'exists=false', 'published=false', 'eligible=true', 'tag=v1.16.2']) assert.ok(result.output.includes(line), line);
 });
 test('automatic pushes reject regression against previous main', async () => {
     await assert.rejects(scenario({ base: '999.0.0', releaseBase: true, automatic: true }), /previous main commit/);
@@ -218,13 +230,13 @@ test.each(['new', 'existing', 'failed', 'cancelled', 'success', 'published', 'fa
         const workflow = YAML.parse(fs.readFileSync('.github/workflows/auto-tag.yml', 'utf8'));
         const script = workflow.jobs['dispatch-release'].steps.at(-1).with.script;
         const execute = new Function('github', 'context', 'core', 'require', 'return (async () => {' + script + '})()');
-        vi.stubEnv('TAG', 'v1.16.3');
+        vi.stubEnv('TAG', 'v1.16.2');
         vi.stubEnv('SHA', 'expected-commit');
         const config = fs.readFileSync('.github/workflows/release.yml', 'utf8');
         const dispatch = vi.fn(async () => { if (mode === 'api-error') throw new Error('HTTP 403'); });
         const github = {
             paginate: async () => ['existing', 'failed', 'cancelled', 'success', 'failed-published'].includes(mode) ? [{
-                head_branch: 'v1.16.3', status: mode === 'existing' ? 'in_progress' : 'completed',
+                head_branch: 'v1.16.2', status: mode === 'existing' ? 'in_progress' : 'completed',
                 conclusion: { failed: 'failure', cancelled: 'cancelled', success: 'success', 'failed-published': 'failure' }[mode],
             }] : [],
             rest: {
@@ -247,22 +259,23 @@ test.each(['new', 'existing', 'failed', 'cancelled', 'success', 'published', 'fa
         if (['moved', 'api-error', 'workflow-mismatch', 'success', 'publication-error'].includes(mode)) await assert.rejects(run);
         else await run;
         if (['new', 'api-error', 'failed', 'cancelled'].includes(mode)) assert.deepEqual(dispatch.mock.calls, [[{
-            owner: 'fixture', repo: 'repo', workflow_id: 'release.yml', ref: 'v1.16.3',
+            owner: 'fixture', repo: 'repo', workflow_id: 'release.yml', ref: 'v1.16.2',
         }]]);
         else assert.equal(dispatch.mock.calls.length, 0);
     });
 
 test.each([
-    ['valid annotated tag', 'refs/tags/v1.2.3', '', 'valid', 0],
+    ['automatic recovery validates v1.16.2', 'refs/heads/main', '', 'automatic', 0],
+    ['valid annotated tag', 'refs/tags/v1.16.2', '', 'valid', 0],
     ['branch ref', 'refs/heads/main', '', 'valid', 1],
-    ['mismatched input', 'refs/tags/v1.2.3', 'v9.0.0', 'valid', 1],
-    ['wrong commit', 'refs/tags/v1.2.3', '', 'wrong-commit', 1],
-    ['moved tag object', 'refs/tags/v1.2.3', '', 'moved', 1],
-    ['metadata mismatch', 'refs/tags/v1.2.3', '', 'metadata', 1],
-    ['not on main', 'refs/tags/v1.2.3', '', 'not-main', 1],
-    ['missing remote tag', 'refs/tags/v1.2.3', '', 'missing', 1],
+    ['mismatched input', 'refs/tags/v1.16.2', 'v9.0.0', 'valid', 1],
+    ['wrong commit', 'refs/tags/v1.16.2', '', 'wrong-commit', 1],
+    ['moved tag object', 'refs/tags/v1.16.2', '', 'moved', 1],
+    ['metadata mismatch', 'refs/tags/v1.16.2', '', 'metadata', 1],
+    ['not on main', 'refs/tags/v1.16.2', '', 'not-main', 1],
+    ['missing remote tag', 'refs/tags/v1.16.2', '', 'missing', 1],
 ])('Release validation: %s (no real Git writes or API calls)', (_, ref, input, mode, expected) => {
-    const workflow = YAML.parse(fs.readFileSync('.github/workflows/release.yml', 'utf8'));
+    const workflow = YAML.parse(fs.readFileSync(`.github/workflows/${mode === 'automatic' ? 'auto-tag' : 'release'}.yml`, 'utf8'));
     const script = workflow.jobs['validate-tag'].steps.find(s => s.id === 'resolve').run;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-release-ref-'));
     fs.writeFileSync(path.join(dir, 'git'), `#!/bin/bash
@@ -275,7 +288,7 @@ case "$1" in
   merge-base) [ "$MODE" != not-main ]; exit $? ;;
   show) cat .github/workflows/release.yml ;;
   ls-remote)
-    if [ "$MODE" = moved ]; then echo other; else printf 'annotated-object\\trefs/tags/v1.2.3\\n'; fi ;;
+    if [ "$MODE" = moved ]; then echo other; else printf 'annotated-object\\trefs/tags/v1.16.2\\n'; fi ;;
   *) exit 99 ;;
 esac
 `, { mode: 0o755 });
@@ -283,7 +296,7 @@ esac
     try {
         const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: {
             ...process.env, PATH: `${dir}:${process.env.PATH}`, MODE: mode,
-            TAG: 'v1.2.3', EXPECTED_SHA: 'expected-commit', REQUIRE_TAG_REF: 'true', INPUT_TAG: input,
+            TAG: 'v1.16.2', EXPECTED_SHA: 'expected-commit', REQUIRE_TAG_REF: mode === 'automatic' ? 'false' : 'true', INPUT_TAG: input,
             GITHUB_REF: ref, GITHUB_EVENT_NAME: 'workflow_dispatch', RUNNER_TEMP: dir,
             GITHUB_OUTPUT: path.join(dir, 'output'),
         } });
@@ -294,19 +307,28 @@ esac
 test('release eligibility rejects an older existing unpublished tag', async () => {
     vi.stubEnv('RELEASE_ELIGIBILITY', 'true');
     await assert.rejects(scenario({ automatic: true, exists: true,
-        releases: [{ tag_name: 'v999.0.0', published_at: 'today' }] }), /latest relevant published/);
+        releases: [{ tag_name: 'v999.0.0', published_at: 'today' }] }), /latest published/);
 });
 
 
 test.each([
     [false, false, false], [false, true, true], [true, false, true], [true, true, true],
-])('tag preparation gate: changed=%s exists=%s prepares=%s', (changed, exists, expected) => {
+])('tag preparation gate: eligible=%s recoverable=%s prepares=%s', (eligible, recoverable, expected) => {
     const workflow = YAML.parse(fs.readFileSync('.github/workflows/auto-tag.yml', 'utf8'));
     const expression = workflow.jobs['auto-tag'].steps.find(s => s.id === 'create').if;
     const evaluate = new Function('steps', 'return ' + expression);
-    for (const published of [false, true]) {
-        assert.equal(evaluate({ version: { outputs: {
-            published: String(published), changed: String(changed), exists: String(exists),
-        } } }), expected && !published);
-    }
+    assert.equal(evaluate({ version: { outputs: {
+        eligible: String(eligible), recoverable: String(recoverable),
+    } } }), expected);
+});
+
+test.each(['1.16.3', '1.17.0-alpha.1'])('unchanged 1.16.2 refuses recovery after newer publication %s', async latest => {
+    await assert.rejects(scenario({ base: '1.16.2', releaseBase: true, automatic: true,
+        releases: [{ tag_name: `v${latest}`, published_at: 'today' }] }), /latest published release/);
+});
+
+test('post-tag validation refuses a release published during orchestration', async () => {
+    vi.stubEnv('RELEASE_ELIGIBILITY', 'true');
+    await assert.rejects(scenario({ exists: true,
+        releases: [{ tag_name: 'v1.16.2', published_at: 'today' }] }), /already published/);
 });
