@@ -167,11 +167,36 @@ jobs:
             tauri_timeout: 45
 
     steps:
+      - name: Require validated release inputs
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
+          RELEASE_SHA: ${{ needs.validate-tag.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # An empty checkout ref defaults to the triggering ref. Fail before checkout.
+          if [[ "$RELEASE_TAG" != v* ]] || ! git check-ref-format "refs/tags/$RELEASE_TAG"; then
+            echo "::error::A validated release tag is required."
+            exit 1
+          fi
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::A validated release commit SHA is required."
+            exit 1
+          }
+
       - name: Checkout
         uses: actions/checkout@v5
         with:
           ref: ${{ needs.validate-tag.outputs.sha }}
           persist-credentials: false
+
+      - name: Verify release checkout
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.validate-tag.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
