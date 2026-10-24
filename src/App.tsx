@@ -6678,7 +6678,7 @@ export default function App() {
                                             aria-label={`Close ${openTab.name}`}
                                             title={`Close tab (${shortcutLabel("closeTab")})`}
                                         >
-                                            ×
+                                            <span className="pg-request-tab-close-icon" aria-hidden="true">×</span>
                                         </button>
                                         </div>
                                         {showDropAfter && <div style={openTabDropMarkerStyle("after")} />}

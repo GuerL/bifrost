@@ -892,6 +892,9 @@ button.pg-app-select-trigger:hover:not(:disabled) {
 }
 
 button.pg-request-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 28px;
   height: 28px;
   flex-shrink: 0;
@@ -911,6 +914,17 @@ button.pg-request-tab-close:hover:not(:disabled) {
   color: var(--pg-text);
 }
 
+.pg-request-tab-close-icon {
+  display: block;
+  transform: scale(1);
+  transform-origin: center center;
+  transition: transform 280ms ease-in-out;
+}
+
+button.pg-request-tab-close:hover:not(:disabled) .pg-request-tab-close-icon {
+  transform: scale(1.15);
+}
+
 /* Inset rings remain visible inside the rounded, clipped tab surface. */
 :root[data-visual-identity] .pg-request-tab > button:focus-visible {
   outline: 2px solid var(--pg-primary);
@@ -919,7 +933,12 @@ button.pg-request-tab-close:hover:not(:disabled) {
 
 @media (prefers-reduced-motion: reduce) {
   .pg-request-tab,
-  button.pg-request-tab-close {
+  button.pg-request-tab-close,
+  .pg-request-tab-close-icon {
     transition: none;
+  }
+
+  button.pg-request-tab-close:hover:not(:disabled) .pg-request-tab-close-icon {
+    transform: none;
   }
 }
