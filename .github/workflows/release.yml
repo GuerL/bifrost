@@ -4,87 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing application tag to release (for example v1.3.0)
-        required: true
+        description: Optional compatibility input; must match the selected version tag ref
+        required: false
         type: string
-  push:
-    branches: [main]
-    tags:
-      - "v*"
 
-permissions:
-  contents: write
+permissions: {}
 
-# Serialize all entry points, including tag pushes and manual retries.
+# Serialize publication, including manual retries; never cancel a running release.
 concurrency:
   group: bifrost-release
   cancel-in-progress: false
 
 jobs:
-  auto-tag:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    timeout-minutes: 5
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-      sha: ${{ github.sha }}
-      publish: ${{ steps.create.outputs.created || 'false' }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          package-manager-cache: false
-      - name: Validate version and check remote tag
-        id: version
-        run: node scripts/validate-version.js
-        env:
-          CHECK_REMOTE: 'true'
-          SKIP_PUBLISHED: 'true'
-          RELEASE_BASE_SHA: ${{ github.event.before }}
-          GITHUB_TOKEN: ${{ github.token }}
-      - name: Create annotated tag
-        id: create
-        if: steps.version.outputs.exists == 'false' && steps.version.outputs.published == 'false' && steps.version.outputs.changed == 'true'
-        shell: bash
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" "$GITHUB_SHA" -m "Bifrost $TAG"
-          if push_output=$(git push --porcelain origin "refs/tags/$TAG"); then
-            # Only a new remote ref owns release orchestration. An identical ref
-            # created by another actor can also produce a successful push.
-            if awk -F '\t' '$1 == "*" { created=1 } END { exit !created }' <<< "$push_output"; then
-              echo "created=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "created=false" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            # Another actor may have created the tag between validation and push.
-            remote_tag=$(git ls-remote --refs origin "refs/tags/$TAG")
-            if [ -n "$remote_tag" ]; then
-              echo "Tag $TAG now exists; the winning creator owns the release."
-              echo "created=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "::error::Failed to push $TAG and it does not exist on origin."
-              exit 1
-            fi
-          fi
-
   validate-tag:
-    needs: auto-tag
-    if: >-
-      always() &&
-      ((needs.auto-tag.result == 'success' && needs.auto-tag.outputs.publish == 'true') ||
-       (needs.auto-tag.result == 'skipped' &&
-        (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))))
     timeout-minutes: 5
     runs-on: ubuntu-latest
     permissions:
@@ -98,7 +30,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          persist-credentials: false
+          persist-credentials: true
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -107,22 +39,45 @@ jobs:
         id: resolve
         shell: bash
         env:
-          TAG: ${{ needs.auto-tag.outputs.tag || inputs.tag || github.ref_name }}
-          EXPECTED_SHA: ${{ needs.auto-tag.outputs.sha }}
+          TAG: ${{ github.ref_name }}
+          EXPECTED_SHA: ${{ github.sha }}
+          REQUIRE_TAG_REF: 'true'
+          INPUT_TAG: ${{ inputs.tag }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if [ "$REQUIRE_TAG_REF" = true ]; then
+            if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+              echo "::error::Release must be dispatched using an existing version tag as its ref."
+              exit 1
+            fi
+            if [ -n "$INPUT_TAG" ] && [ "$INPUT_TAG" != "$TAG" ]; then
+              echo "::error::Tag input must match the workflow reference."
+              exit 1
+            fi
+          fi
           git check-ref-format "refs/tags/$TAG"
-          sha=$(git rev-parse --verify "refs/tags/$TAG^{commit}")
-          if [ -n "$EXPECTED_SHA" ] && [ "$sha" != "$EXPECTED_SHA" ]; then
-            echo "::error::Tag commit does not match the automatic tagging job."
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          git fetch --no-tags origin "refs/tags/$TAG"
+          object=$(git rev-parse FETCH_HEAD)
+          sha=$(git rev-parse --verify "FETCH_HEAD^{commit}")
+          if [ "$sha" != "$EXPECTED_SHA" ]; then
+            echo "::error::Remote tag commit does not match the expected commit."
             exit 1
           fi
-          # Validate data from the tag using the workflow's validator, including older tags.
           git merge-base --is-ancestor "$sha" origin/main || {
             echo "::error::Release tags must point to commits reachable from main."
             exit 1
           }
-          VALIDATION_REF="$sha" EXPECTED_TAG="$TAG" node scripts/validate-version.js
+          # The tagged workflow must be exactly the reviewed orchestration configuration.
+          git show "$sha:.github/workflows/release.yml" > "$RUNNER_TEMP/tagged-release.yml"
+          cmp .github/workflows/release.yml "$RUNNER_TEMP/tagged-release.yml"
+          VALIDATION_REF="$sha" EXPECTED_TAG="$TAG" CHECK_REMOTE=true SKIP_PUBLISHED=true RELEASE_ELIGIBILITY=true node scripts/validate-version.js
+          remote_object=$(git ls-remote --refs origin "refs/tags/$TAG" | cut -f1)
+          if [ "$remote_object" != "$object" ]; then
+            echo "::error::Tag moved during validation."
+            exit 1
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Skip already published releases
@@ -145,6 +100,8 @@ jobs:
   publish-tauri:
     needs: validate-tag
     if: always() && needs.validate-tag.result == 'success' && needs.validate-tag.outputs.publish == 'true'
+    permissions:
+      contents: write
     timeout-minutes: 60
     name: Build and Publish (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
@@ -167,36 +124,11 @@ jobs:
             tauri_timeout: 45
 
     steps:
-      - name: Require validated release inputs
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
-          RELEASE_SHA: ${{ needs.validate-tag.outputs.sha }}
-        run: |
-          set -euo pipefail
-          # An empty checkout ref defaults to the triggering ref. Fail before checkout.
-          if [[ "$RELEASE_TAG" != v* ]] || ! git check-ref-format "refs/tags/$RELEASE_TAG"; then
-            echo "::error::A validated release tag is required."
-            exit 1
-          fi
-          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "::error::A validated release commit SHA is required."
-            exit 1
-          }
-
       - name: Checkout
         uses: actions/checkout@v5
         with:
           ref: ${{ needs.validate-tag.outputs.sha }}
           persist-credentials: false
-
-      - name: Verify release checkout
-        shell: bash
-        env:
-          RELEASE_SHA: ${{ needs.validate-tag.outputs.sha }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
