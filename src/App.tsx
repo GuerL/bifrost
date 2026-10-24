@@ -6151,7 +6151,7 @@ export default function App() {
                 style={{
                     height: "calc(100vh - var(--pg-topbar-height))",
                     padding: "8px 12px 4px",
-                    fontFamily: "system-ui",
+                    fontFamily: "inherit",
                     display: "flex",
                     flexDirection: "column",
                     gap: 4,
@@ -9330,10 +9330,10 @@ function draftTabContainerStyle(active: boolean): React.CSSProperties {
         alignItems: "center",
         borderRadius: 9,
         overflow: "hidden",
-        border: active ? "1px solid var(--pg-tab-active-border)" : "1px solid var(--pg-tab-track-border)",
+        border: "1px solid transparent",
         background: active ? "var(--pg-tab-active-bg)" : "var(--pg-tab-track-bg)",
         minWidth: 160,
-        boxShadow: active ? "0 3px 10px rgba(var(--pg-primary-rgb), 0.2)" : "none",
+        boxShadow: "none",
     };
 }
 

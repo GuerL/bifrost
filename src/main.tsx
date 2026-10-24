@@ -4,6 +4,8 @@ import App from "./App";
 import { AppToaster } from "./helpers/Toast.tsx";
 import { ThemeProvider } from "./helpers/Theme.tsx";
 import "./App.css";
+import "./design/qvb-tokens.css";
+import "./design/bifrost-qvb.css";
 
 function detectPlatform(): "macos" | "windows" | "linux" | "unknown" {
   if (typeof navigator === "undefined") {
@@ -22,6 +24,10 @@ function detectPlatform(): "macos" | "windows" | "linux" | "unknown" {
   }
   return "unknown";
 }
+
+// Reversible visual comparison; no request data or theme preference is changed.
+document.documentElement.dataset.visualIdentity =
+  new URLSearchParams(window.location.search).get("identity") === "legacy" ? "legacy" : "qvb";
 
 const platform = detectPlatform();
 document.documentElement.dataset.platform = platform;

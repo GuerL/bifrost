@@ -24,3 +24,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Generated visual test artifacts
+design/qvb/v1/screenshots/
+public/design-review/

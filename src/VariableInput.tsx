@@ -337,7 +337,7 @@ export default function VariableInput({
                 display: "flex",
                 position: "relative",
                 borderRadius: 8,
-                border: isFocused ? "1px solid rgba(var(--pg-primary-rgb), 0.92)" : "1px solid var(--pg-border)",
+                border: isFocused ? "1px solid rgba(var(--pg-primary-rgb), 0.92)" : "1px solid var(--pg-control-border)",
                 background: disabled
                     ? "var(--pg-surface-overlay-disabled)"
                     : "var(--pg-control-bg)",

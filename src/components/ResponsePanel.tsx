@@ -1238,7 +1238,7 @@ function responsePreStyle(isJson: boolean, hasBodyModeControls: boolean): React.
         flex: 1,
         overflow: "auto",
         borderRadius: 12,
-        border: isJson ? "1px solid rgba(var(--pg-primary-rgb), 0.3)" : "1px solid var(--pg-border-soft)",
+        border: "1px solid var(--pg-border-soft)",
         padding: hasBodyModeControls ? "42px 12px 12px" : 12,
         boxSizing: "border-box",
         fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
@@ -1246,7 +1246,7 @@ function responsePreStyle(isJson: boolean, hasBodyModeControls: boolean): React.
         lineHeight: 1.5,
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
-        boxShadow: isJson ? "inset 0 0 0 1px rgba(var(--pg-primary-rgb), 0.12)" : "none",
+        boxShadow: "none",
     };
 }
 
