@@ -6600,7 +6600,7 @@ export default function App() {
                             style={{
                                 display: "flex",
                                 alignItems: "center",
-                                gap: 8,
+                                gap: 4,
                                 overflowX: "auto",
                                 padding: "3px 3px",
                                 borderRadius: 10,
@@ -6649,8 +6649,10 @@ export default function App() {
                                         style={openTabDropWrapStyle(showDropBefore, showDropAfter)}
                                     >
                                         {showDropBefore && <div style={openTabDropMarkerStyle("before")} />}
-                                        <div style={draftTabContainerStyle(active)}>
+                                        <div className="pg-request-tab" data-active={active} style={draftTabContainerStyle()}>
                                         <button
+                                            className="pg-request-tab-select"
+                                            aria-pressed={active}
                                             onMouseDown={(e) => beginOpenTabDrag(e, openTab.requestId)}
                                             onClick={() => {
                                                 setSelectedRequestId(openTab.requestId);
@@ -6672,7 +6674,8 @@ export default function App() {
                                             onClick={() =>
                                                 requestCloseTab(openTab.requestId)
                                             }
-                                            style={draftTabCloseButtonStyle()}
+                                            className="pg-request-tab-close"
+                                            aria-label={`Close ${openTab.name}`}
                                             title={`Close tab (${shortcutLabel("closeTab")})`}
                                         >
                                             ×
@@ -9325,14 +9328,13 @@ function applicationFooterStyle(): React.CSSProperties {
     };
 }
 
-function draftTabContainerStyle(active: boolean): React.CSSProperties {
+function draftTabContainerStyle(): React.CSSProperties {
     return {
         display: "flex",
         alignItems: "center",
         borderRadius: 9,
         overflow: "hidden",
         border: "1px solid transparent",
-        background: active ? "var(--pg-tab-active-bg)" : "var(--pg-tab-track-bg)",
         minWidth: 160,
         boxShadow: "none",
     };
@@ -9378,22 +9380,6 @@ function tabSpinnerStyle(): React.CSSProperties {
         width: 10,
         height: 10,
         borderWidth: 1.5,
-    };
-}
-
-function draftTabCloseButtonStyle(): React.CSSProperties {
-    return {
-        width: 28,
-        height: 28,
-        border: "none",
-        borderLeft: "1px solid var(--pg-tab-track-border)",
-        background: "transparent",
-        color: "var(--pg-text-dim)",
-        padding: 0,
-        borderRadius: 0,
-        boxShadow: "none",
-        lineHeight: 1,
-        fontSize: 14,
     };
 }
 
