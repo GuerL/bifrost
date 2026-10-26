@@ -12,6 +12,52 @@ const fixture = (value: unknown) => {
 };
 
 describe("response JSONPath", () => {
+    it.each(["", "Quentin", 'escaped\n\t"\\', "é🦄漢字", 42, -12.5, 1e25, true, false, null])("copies primitive values without their property keys: %j", value => {
+        const { text, index } = fixture({ selected: value, sibling: 7 });
+        const expected = typeof value === "string" ? value : JSON.stringify(value);
+        for (const offset of [text.indexOf('"selected"'), text.indexOf(JSON.stringify(value))]) {
+            expect(index.copyAt(offset)).toEqual({ text: expected, container: false });
+            expect(index.pathAt(offset)).toBe("$.selected");
+        }
+    });
+
+    it.each([{}, [], { nested: [{ value: "a" }, null, true, 3], empty: {} }, [{ child: [1, 2] }, []]].map(value => ({ value })))("copies full formatted containers at keys and closing delimiters: $value", ({ value }) => {
+        const { text, index } = fixture({ selected: value, sibling: "other" });
+        const node = index.containers.find(node => index.pathAt(node.start) === "$.selected")!;
+        for (const offset of [node.start, node.valueStart, node.end - 1]) {
+            expect(index.copyAt(offset)).toEqual({ text: JSON.stringify(value, null, 2), container: true });
+            expect(index.pathAt(offset)).toBe("$.selected");
+        }
+        expect(index.copyAt(text.indexOf('"other"'))).toEqual({ text: "other", container: false });
+    });
+
+    it.each([null, "", "root", 1, false, {}, [], [1, { a: true }]].map(value => ({ value })))("copies root values: $value", ({ value }) => {
+        const { index } = fixture(value);
+        expect(index.copyAt(0)).toEqual({ text: typeof value === "string" ? value : JSON.stringify(value, null, 2), container: value !== null && typeof value === "object" });
+    });
+
+    it("uses exact special-key targets, including __proto__, and rejects invalid offsets", () => {
+        const body = JSON.parse('{"__proto__":{"value":1},"a.b":["one","two"],"a [\\\"b\\\"]":false}');
+        const { text, index } = fixture(body);
+        expect(index.copyAt(text.indexOf('"__proto__"'))?.text).toBe('{\n  "value": 1\n}');
+        expect(index.copyAt(text.indexOf('"two"'))?.text).toBe("two");
+        expect(index.pathAt(text.indexOf('"two"'))).toBe('$["a.b"][1]');
+        expect(index.copyAt(text.indexOf('false'))?.text).toBe("false");
+        for (const offset of [-1, text.length, NaN, 0.5]) expect(index.copyAt(offset)).toBeNull();
+    });
+
+    it("copies large subtrees independently of their visible fold state", () => {
+        const value = Array.from({ length: 10000 }, (_, i) => ({ i, text: "value" }));
+        const { text, index } = fixture({ items: value });
+        expect(index.copyAt(text.indexOf('"items"'))?.text).toBe(JSON.stringify(value, null, 2));
+    });
+
+    it("uses the viewer's canonical parsed representation for duplicate keys", () => {
+        const value = JSON.parse('{"key":1,"key":2}');
+        const { index } = fixture(value);
+        expect(index.copyAt(0)?.text).toBe('{\n  "key": 2\n}');
+    });
+
     it("formats identifiers, numeric indices, and JSON-escaped special keys", () => {
         expect(jsonPathFromSegments(["users", 0, "roles", 1])).toBe("$.users[0].roles[1]");
         for (const key of ["first name", "user.name", "special-key", "123field", 'a"b', "a\\b", "", "line\nfeed", "é", "[0]"]) {

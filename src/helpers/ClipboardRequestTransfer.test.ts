@@ -1,8 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
     parseBifrostClipboardPayload,
     serializeRequestForClipboard,
+    copyTextToClipboard,
 } from "./ClipboardRequestTransfer.ts";
+
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: vi.fn().mockResolvedValue(undefined) }));
+
+it("writes an empty JSON string value through the existing desktop clipboard helper", async () => {
+    await copyTextToClipboard("");
+    expect(writeText).toHaveBeenCalledWith("");
+});
 
 describe("parseBifrostClipboardPayload", () => {
     it("accepts multipart file metadata serialized as null", () => {

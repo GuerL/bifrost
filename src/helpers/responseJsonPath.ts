@@ -3,6 +3,7 @@ type JsonPathNode = {
     end: number;
     parent: JsonPathNode | null;
     segment: string | number | null;
+    value: unknown;
 };
 
 function propertyAccessors(segments: readonly (string | number)[]): string {
@@ -27,6 +28,8 @@ export type ResponseJsonIndex = {
     containers: JsonContainer[];
     segmentsAt: (offset: number) => (string | number)[] | null;
     pathAt: (offset: number) => string | null;
+    isContainerAt: (offset: number) => boolean;
+    copyAt: (offset: number) => { text: string; container: boolean } | null;
 };
 
 /** Index the viewer's canonical, two-space JSON using structure, never token matching.
@@ -44,7 +47,7 @@ export function indexResponseJson(text: string): ResponseJsonIndex | null {
     const containers: JsonContainer[] = [];
     let cursor = 0;
     function visit(value: unknown, parent: JsonPathNode | null, segment: string | number | null, depth: number, keyStart?: number) {
-        const node: JsonPathNode = { start: keyStart ?? cursor, end: 0, parent, segment };
+        const node: JsonPathNode = { start: keyStart ?? cursor, end: 0, parent, segment, value };
         nodes.push(node);
         if (value !== null && typeof value === "object") {
             const array = Array.isArray(value);
@@ -73,7 +76,7 @@ export function indexResponseJson(text: string): ResponseJsonIndex | null {
         // Extremely deep input must not prevent the response from being displayed.
         return null;
     }
-    function segmentsAt(offset: number): (string | number)[] | null {
+    function nodeAt(offset: number): JsonPathNode | null {
         if (!Number.isInteger(offset) || offset < 0 || offset >= text.length) return null;
         // Last node starting at/before the clicked offset, then its containing ancestor.
         let low = 0, high = nodes.length;
@@ -84,6 +87,10 @@ export function indexResponseJson(text: string): ResponseJsonIndex | null {
         }
         let node: JsonPathNode | null = nodes[low - 1];
         while (node && offset >= node.end) node = node.parent;
+        return node;
+    }
+    function segmentsAt(offset: number): (string | number)[] | null {
+        let node = nodeAt(offset);
         if (!node) return null;
         const segments: (string | number)[] = [];
         while (node.parent) {
@@ -95,6 +102,18 @@ export function indexResponseJson(text: string): ResponseJsonIndex | null {
     return {
         containers,
         segmentsAt,
+        isContainerAt(offset) {
+            const node = nodeAt(offset);
+            return !!node && node.value !== null && typeof node.value === "object";
+        },
+        copyAt(offset) {
+            const node = nodeAt(offset);
+            if (!node) return null;
+            return {
+                text: typeof node.value === "string" ? node.value : JSON.stringify(node.value, null, 2),
+                container: node.value !== null && typeof node.value === "object",
+            };
+        },
         pathAt(offset) {
             const segments = segmentsAt(offset);
             return segments === null ? null : jsonPathFromSegments(segments);

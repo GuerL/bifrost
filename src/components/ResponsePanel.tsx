@@ -370,7 +370,7 @@ export default function ResponsePanel({
             const newline = text.indexOf("\n", contentEnd);
             const lineEnd = newline < 0 ? text.length : newline;
             const label = range ? jsonPathIndex?.pathAt(range.node.start) ?? "$" : "";
-            rows.push(<span className="pg-json-row" key={lineStart}>
+            rows.push(<span className="pg-json-row" key={lineStart} tabIndex={-1} data-json-node-offset={contentStart}>
                 <span className="pg-json-indent">{renderText(lineStart, contentStart)}</span>
                 <span className="pg-json-disclosure-slot">{range && <button type="button" className="pg-json-disclosure"
                     aria-label={`${range.collapsed ? "Expand" : "Collapse"} ${label}`} aria-expanded={!range.collapsed}
@@ -594,6 +594,7 @@ export default function ResponsePanel({
                                         className="bf-code-surface"
                                         tabIndex={0}
                                         aria-label="Response body"
+                                        aria-description={jsonPathIndex ? "Use Up and Down arrows to focus JSON lines. Press Shift+F10 for copy actions on the focused line." : undefined}
                                         style={{ ...responsePreStyle(bodyView.canPreview || !!jsonPathIndex?.containers.some(node => node.count > 0)) }}
                                     >
                                         {findOpen && hasFindQuery

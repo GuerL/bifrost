@@ -72,7 +72,7 @@ describe("response JSON disclosure integration", () => {
     ])("preserves formatted lines and reserves a disclosure slot at every depth: %j", body => {
         const formatted = JSON.stringify(body, null, 2);
         const html = render(JSON.stringify(body));
-        const rows = [...html.matchAll(/<span class="pg-json-row">([\s\S]*?)(?=<span class="pg-json-row">|<\/pre>)/g)];
+        const rows = [...html.matchAll(/<span class="pg-json-row"[^>]*>([\s\S]*?)(?=<span class="pg-json-row"|<\/pre>)/g)];
         expect(rows).toHaveLength(formatted.split("\n").length);
         expect(html.match(/class="pg-json-disclosure-slot"/g)).toHaveLength(rows.length);
         const visibleText = rows.map(([, row]) => row
