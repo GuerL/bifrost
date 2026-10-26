@@ -33,12 +33,27 @@ export default function JsonTreeOptions({ folds, maximumDepth, onDepthChange }: 
         const outside = (event: PointerEvent) => {
             if (!popupRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) close();
         };
+        // A pointer press can blur a button without focusing another element
+        // (notably in WebKit). Only a confirmed outside focus destination dismisses.
+        const focusOutside = (event: FocusEvent) => {
+            if (!popupRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) close();
+        };
+        const escape = (event: KeyboardEvent) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation(); // Keep Escape from also closing response search.
+            close(true);
+        };
         const dismiss = () => close();
         document.addEventListener("pointerdown", outside);
+        document.addEventListener("focusin", focusOutside);
+        document.addEventListener("keydown", escape);
         window.addEventListener("resize", dismiss);
         window.addEventListener("blur", dismiss);
         return () => {
             document.removeEventListener("pointerdown", outside);
+            document.removeEventListener("focusin", focusOutside);
+            document.removeEventListener("keydown", escape);
             window.removeEventListener("resize", dismiss);
             window.removeEventListener("blur", dismiss);
         };
@@ -59,11 +74,7 @@ export default function JsonTreeOptions({ folds, maximumDepth, onDepthChange }: 
         </button>
         {position && createPortal(<div ref={popupRef} id={id} role="dialog" aria-label="JSON tree options"
             className="pg-json-tree-popup" style={position}
-            onBlur={event => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node) && event.relatedTarget !== triggerRef.current) close();
-            }}
             onKeyDown={event => {
-                if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); }
                 if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
                     event.preventDefault(); event.stopPropagation();
                     const buttons = [...popupRef.current!.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
