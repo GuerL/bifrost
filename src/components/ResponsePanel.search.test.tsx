@@ -10,14 +10,6 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(true)
 vi.mock("../helpers/ClipboardRequestTransfer.ts", () => ({ copyTextToClipboard: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("../helpers/Toast.tsx", () => ({ notifyError: vi.fn(), notifySuccess: vi.fn() }));
 
-// Keep the depth control accessible in jsdom without testing Radix's pointer handling.
-vi.mock("./AppSelect.tsx", () => ({ default: ({ value, options, onValueChange, ariaLabel }: {
-    value: string; options: { value: string; label: string; disabled?: boolean }[];
-    onValueChange: (value: string) => void; ariaLabel: string;
-}) => <select aria-label={ariaLabel} value={value} onChange={event => onValueChange(event.target.value)}>
-    {options.map(option => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
-</select> }));
-
 let host: HTMLDivElement;
 let root: Root;
 let response: HttpResponseDto;
@@ -28,14 +20,11 @@ function render(requestId = "a") {
         activeTab="body" onTabChange={() => {}} />));
 }
 function click(label: string) {
-    const button = host.querySelector(`[aria-label="${label}"]`) ?? [...host.querySelectorAll("button")].find(button => button.textContent === label);
-    if (!["Collapse All", "Expand All"].includes(label)) expect(button, label).toBeTruthy();
-    if (!button && ["Collapse All", "Expand All"].includes(label)) {
-        const select = host.querySelector("select")!;
-        act(() => { select.value = label === "Collapse All" ? "collapse" : "expand"; select.dispatchEvent(new Event("change", { bubbles: true })); });
-        return;
-    }
+    if (["Collapse All", "Expand All"].includes(label) && !document.querySelector('[role="dialog"]')) click("JSON tree options");
+    const button = document.querySelector(`[aria-label="${label}"]`) ?? [...document.querySelectorAll("button")].find(button => button.textContent === label);
+    expect(button, label).toBeTruthy();
     act(() => (button as HTMLButtonElement).click());
+    if (["Collapse All", "Expand All"].includes(label)) act(() => button!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
 }
 function query(value: string) {
     const input = host.querySelector("input")!;
@@ -161,18 +150,21 @@ describe("structured response search", () => {
         query("Needle"); click("Next match"); click("Expand All"); query("");
         expect(collapsed("$.branch")).toBe(false);
     });
-    it("keeps depth presets unchanged by search and applies depth changes during search", () => {
-        const depth = host.querySelector("select")!;
-        const setDepth = (value: string) => act(() => {
-            depth.value = value; depth.dispatchEvent(new Event("change", { bubbles: true }));
-        });
+    it("keeps numeric depth unchanged by search and applies depth changes during search", () => {
+        const setDepth = (value: string) => {
+            click("JSON tree options");
+            while (document.querySelector("output")!.textContent !== value) {
+                click(Number(document.querySelector("output")!.textContent) > Number(value) ? "Decrease JSON depth" : "Increase JSON depth");
+            }
+            act(() => document.querySelector('[role="dialog"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+        };
         setDepth("2"); open("Needle"); click("Next match"); click("Next match");
-        expect(depth.value).toBe("2");
+        expect(host.querySelector(".pg-json-tree-trigger")?.textContent).toBe("Tree · Depth 2");
         expect(collapsed("$.branch.needleKey")).toBe(false);
         query(""); expect(collapsed("$.branch.needleKey")).toBe(true);
         query("Needle"); click("Next match"); click("Next match");
         setDepth("1"); expect(collapsed("$.branch")).toBe(true);
-        query(""); expect(depth.value).toBe("1");
+        query(""); expect(host.querySelector(".pg-json-tree-trigger")?.textContent).toBe("Tree · Depth 1");
         expect(collapsed("$.branch")).toBe(true);
     });
     it("maps decoded escaped text back to JSON source and preserves keyboard navigation", () => {

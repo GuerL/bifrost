@@ -2,13 +2,27 @@ import type { JsonContainer } from "./responseJsonPath.ts";
 
 // Offsets identify structural nodes within one immutable response snapshot.
 // The default lets bulk actions remain O(1); overrides preserve nested choices.
-export type JsonDepthPreset = 1 | 2 | 3 | "all";
-export type JsonFoldState = { collapsed: boolean; depth?: 1 | 2 | 3; overrides: ReadonlySet<number> };
+export type JsonExpansionDepth = number | "all";
+export type JsonFoldState = { collapsed: boolean; depth?: number; overrides: ReadonlySet<number> };
 export const expandedJson: JsonFoldState = { collapsed: false, overrides: new Set() };
-export function applyJsonDepth(depth: JsonDepthPreset): JsonFoldState {
-    return depth === "all" ? expandedJson : { collapsed: true, depth, overrides: new Set() };
+export function applyJsonDepth(depth: JsonExpansionDepth, previous: JsonFoldState = expandedJson): JsonFoldState {
+    // Retain the last numeric choice even through All and subsequent manual folds.
+    if (depth === "all") return previous.depth === undefined ? expandedJson : { ...expandedJson, depth: previous.depth };
+    return { collapsed: true, depth: Math.max(1, Math.floor(depth)), overrides: new Set() };
 }
-export function jsonDepthSelection(state: JsonFoldState): JsonDepthPreset | "custom" {
+
+export function maximumJsonExpansionDepth(containers: readonly JsonContainer[]): number {
+    // Root depth is zero. Empty containers have no content to reveal.
+    let maximum = 1;
+    for (const node of containers) if (node.count > 0) maximum = Math.max(maximum, node.depth + 1);
+    return maximum;
+}
+
+export function jsonAdjustmentDepth(state: JsonFoldState, maximum: number): number {
+    const selected = state.collapsed ? state.depth ?? 1 : state.depth ?? maximum;
+    return Math.min(maximum, Math.max(1, jsonDepthSelection(state) === "all" ? maximum : selected));
+}
+export function jsonDepthSelection(state: JsonFoldState): JsonExpansionDepth | "custom" {
     return state.overrides.size ? "custom" : state.collapsed ? state.depth ?? 1 : "all";
 }
 export function isJsonCollapsed(state: JsonFoldState, node: JsonContainer): boolean {

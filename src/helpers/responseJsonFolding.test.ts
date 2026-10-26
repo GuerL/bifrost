@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyJsonDepth, jsonDepthSelection, expandedJson, isJsonCollapsed, toggleJsonFold, visibleJsonContainers } from "./responseJsonFolding.ts";
+import { applyJsonDepth, jsonAdjustmentDepth, maximumJsonExpansionDepth, jsonDepthSelection, expandedJson, isJsonCollapsed, toggleJsonFold, visibleJsonContainers } from "./responseJsonFolding.ts";
 import { indexResponseJson } from "./responseJsonPath.ts";
 
 const fixture = (value: unknown) => {
@@ -138,5 +138,49 @@ describe("JSON depth presets", () => {
             expect(visible.filter(range => range.node.count === 0)).toEqual([]);
             if (depth === 3 || depth === "all") expect(visible.every(range => !range.collapsed)).toBe(true);
         }
+    });
+});
+
+
+describe("dynamic JSON expansion depth", () => {
+    it.each([
+        [null, 1], [42, 1], ["text", 1], [{}, 1], [[], 1],
+        [{ value: 1, empty: {} }, 1], [[1, [], {}], 1],
+        [{ child: { value: 1 } }, 2],
+        [{ child: { empty: [] } }, 2],
+        [[{ child: [1, {}] }], 3],
+    ])("derives meaningful depth from nonempty containers: %j", (value, maximum) => {
+        const { index } = fixture(value);
+        expect(maximumJsonExpansionDepth(index.containers)).toBe(maximum);
+        expect(visibleJsonContainers(index.containers, applyJsonDepth(maximum as number)).every(node => !node.collapsed)).toBe(true);
+    });
+
+    it("supports hundreds of levels with no preset ceiling and no extra leaf level", () => {
+        let value: unknown = [1];
+        for (let i = 0; i < 300; i++) value = i % 2 ? { child: value } : [value];
+        const { index } = fixture(value);
+        const maximum = maximumJsonExpansionDepth(index.containers);
+        expect(maximum).toBe(301);
+        for (const depth of [1, 11, 250, 300, 301]) {
+            const state = applyJsonDepth(depth);
+            expect(jsonDepthSelection(state)).toBe(depth);
+            expect(visibleJsonContainers(index.containers, state).filter(node => node.collapsed)).toHaveLength(depth === maximum ? 0 : 1);
+        }
+    });
+
+    it("retains the last explicit depth through Custom and All, and clamps adjustment to the response", () => {
+        const { index } = fixture({ child: [{ value: 1 }] });
+        let state = toggleJsonFold(applyJsonDepth(11), index.containers[0]);
+        expect(jsonDepthSelection(state)).toBe("custom");
+        expect(state.depth).toBe(11);
+        expect(jsonAdjustmentDepth(state, 20)).toBe(11);
+        expect(jsonAdjustmentDepth(state, 3)).toBe(3);
+        state = applyJsonDepth("all", state);
+        expect(jsonDepthSelection(state)).toBe("all");
+        expect(jsonAdjustmentDepth(state, 20)).toBe(20);
+        state = toggleJsonFold(state, index.containers[0]);
+        expect(jsonDepthSelection(state)).toBe("custom");
+        expect(jsonAdjustmentDepth(state, 20)).toBe(11);
+        expect(jsonAdjustmentDepth({ collapsed: true, overrides: new Set() }, 20)).toBe(1);
     });
 });

@@ -1,5 +1,5 @@
-import { isJsonCollapsed, applyJsonDepth, jsonDepthSelection, expandedJson, resolveJsonFoldSnapshot, toggleJsonFold, visibleJsonContainers, type JsonDepthPreset, type JsonFoldState, type JsonFoldSnapshot } from "../helpers/responseJsonFolding.ts";
-import AppSelect from "./AppSelect.tsx";
+import { isJsonCollapsed, applyJsonDepth, expandedJson, resolveJsonFoldSnapshot, toggleJsonFold, visibleJsonContainers, maximumJsonExpansionDepth, type JsonExpansionDepth, type JsonFoldState, type JsonFoldSnapshot } from "../helpers/responseJsonFolding.ts";
+import JsonTreeOptions from "./JsonTreeOptions.tsx";
 import { editorSurfaceStyle } from "../design/editorTheme.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -100,6 +100,7 @@ export default function ResponsePanel({
         () => bodyView.isJson ? indexResponseJson(bodyView.displayText) : null,
         [bodyView.displayText, bodyView.isJson]
     );
+    const maximumJsonDepth = useMemo(() => maximumJsonExpansionDepth(jsonPathIndex?.containers ?? []), [jsonPathIndex]);
     const [foldSnapshot, setFoldSnapshot] = useState<JsonFoldSnapshot>({ response, requestId, text: bodyView.displayText, state: expandedJson });
     const currentFoldSnapshot = resolveJsonFoldSnapshot(foldSnapshot, response, requestId, bodyView.displayText);
     const folds = currentFoldSnapshot.state;
@@ -151,7 +152,10 @@ export default function ResponsePanel({
         setFolds(collapsed === isJsonCollapsed(folds, node) ? toggleJsonFold(folds, node) : folds);
         setRevealed(previous => new Set([...previous].filter(offset => offset !== node.valueStart)));
     };
-    const applyDepth = (depth: JsonDepthPreset) => { setFolds(applyJsonDepth(depth)); setRevealed(new Set()); };
+    const applyDepth = (depth: JsonExpansionDepth) => {
+        setFolds(applyJsonDepth(depth === "all" ? depth : Math.min(maximumJsonDepth, Math.max(1, depth)), folds));
+        setRevealed(new Set());
+    };
     const bodyHighlightSegments = useMemo(
         () => buildHighlightSegments(bodyView.displayText, bodySearchMatches),
         [bodyView.displayText, bodySearchMatches]
@@ -583,16 +587,8 @@ export default function ResponsePanel({
                                     <div className="pg-json-fold-toolbar">
                                         <span className="pg-response-format">JSON</span>
                                         {jsonPathIndex?.containers.some(node => node.count > 0) && (
-                                            <AppSelect ariaLabel="JSON tree options" triggerLabel={jsonDepthSelection(folds) === "custom" ? "Tree · Custom" : "Tree"}
-                                                value={String(jsonDepthSelection(folds))}
-                                                options={[
-                                                    { value: "collapse", label: "Collapse All" },
-                                                    { value: "expand", label: "Expand All" },
-                                                    { value: "1", label: "Depth 1" }, { value: "2", label: "Depth 2" },
-                                                    { value: "3", label: "Depth 3" }, { value: "all", label: "Depth All" },
-                                                    ...(jsonDepthSelection(folds) === "custom" ? [{ value: "custom", label: "Custom", disabled: true }] : []),
-                                                ]}
-                                                onValueChange={value => applyDepth(value === "expand" || value === "all" ? "all" : value === "collapse" ? 1 : Number(value) as JsonDepthPreset)} />
+                                            <JsonTreeOptions key={requestId ?? "response"}
+                                                folds={folds} maximumDepth={maximumJsonDepth} onDepthChange={applyDepth} />
                                         )}
                                     </div>
                                 )}

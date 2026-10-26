@@ -53,8 +53,8 @@ async function key(element: HTMLElement, value: string, shiftKey = false) {
 }
 async function treeAction(label: string) {
     await key(button("JSON tree options"), "ArrowDown");
-    const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(item => item.textContent?.includes(label))!;
-    await click(option);
+    await click(button(label));
+    await key(document.activeElement as HTMLElement, "Escape");
 }
 async function context(token: string, target?: HTMLElement) {
     const offset = formatted.indexOf(token);
@@ -292,17 +292,16 @@ describe("response JSON contextual copy actions", () => {
 
 describe("JSON tree options toolbar", () => {
     async function selectDepth(label: string) {
-        const trigger = host.querySelector<HTMLButtonElement>('[aria-label="JSON tree options"]')!;
-        // Radix scrolls the active option; jsdom does not implement element geometry.
-        const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
-        try {
-            await click(trigger);
-            const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'))
-                .find(element => element.textContent?.replace("✓", "").trim() === `Depth ${label}`)!;
-            expect(option).toBeDefined();
-            await click(option);
-            await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
-        } finally { scroll.mockRestore(); }
+        const trigger = button("JSON tree options");
+        await key(trigger, "ArrowDown");
+        if (label === "All") await click(button("Expand All"));
+        else {
+            const target = Number(label);
+            while (Number(document.querySelector("output")!.textContent) !== target) {
+                await click(button(Number(document.querySelector("output")!.textContent) > target ? "Decrease JSON depth" : "Increase JSON depth"));
+            }
+        }
+        await key(document.activeElement as HTMLElement, "Escape");
         return trigger;
     }
 
@@ -311,26 +310,34 @@ describe("JSON tree options toolbar", () => {
         const trigger = button("JSON tree options");
         trigger.focus();
         await key(trigger, "ArrowDown");
-        expect(document.querySelector('[role="listbox"]')).toBeTruthy();
-        expect(document.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain("Depth All");
+        expect(document.querySelector('[role="dialog"]')).toBeTruthy();
+        expect(document.querySelector("output")?.textContent).toBe("2");
+        expect(trigger.textContent).toBe("Tree · All");
+        expect(document.activeElement).toBe(button("Collapse All"));
+        await key(document.activeElement as HTMLElement, "ArrowDown");
+        expect(document.activeElement).toBe(button("Expand All"));
+        await key(document.activeElement as HTMLElement, "End");
+        expect(document.activeElement).toBe(button("Decrease JSON depth"));
+        await key(document.activeElement as HTMLElement, "Home");
+        expect(document.activeElement).toBe(button("Collapse All"));
         await key(document.activeElement as HTMLElement, "Escape");
         await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
-        expect(document.querySelector('[role="listbox"]')).toBeNull();
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
         expect(document.activeElement).toBe(trigger);
         await key(trigger, "ArrowDown");
         await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
         await act(async () => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
-        expect(document.querySelector('[role="listbox"]')).toBeNull();
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
     });
 
-    it("synchronizes presets, bulk actions and manual previews while preserving copy actions", async () => {
+    it("synchronizes numeric depth, bulk actions and manual previews while preserving copy actions", async () => {
         HTMLElement.prototype.scrollIntoView ??= () => {};
         await render({ parent: [{ child: { values: [42] } }], empty: {}, primitive: true });
         const trigger = host.querySelector<HTMLButtonElement>('[aria-label="JSON tree options"]')!;
-        expect(trigger.textContent).toBe("Tree");
+        expect(trigger.textContent).toBe("Tree · All");
         for (const depth of ["1", "2", "3", "All", "1", "3"]) {
             await selectDepth(depth);
-            expect(trigger.textContent).toBe("Tree");
+            expect(trigger.textContent).toBe(depth === "All" ? "Tree · All" : `Tree · Depth ${depth}`);
             expect(button("Collapse $").getAttribute("aria-expanded")).toBe("true");
             const collapsedPath = { "1": "$.parent", "2": "$.parent[0]", "3": "$.parent[0].child" }[depth];
             if (collapsedPath) expect(button(`Expand ${collapsedPath}`).getAttribute("aria-expanded")).toBe("false");
@@ -348,15 +355,89 @@ describe("JSON tree options toolbar", () => {
         await click(preview);
         expect(trigger.textContent).toBe("Tree · Custom");
         await treeAction("Collapse All");
-        expect(trigger.textContent).toBe("Tree");
+        expect(trigger.textContent).toBe("Tree · Depth 1");
         await treeAction("Expand All");
-        expect(trigger.textContent).toBe("Tree");
+        expect(trigger.textContent).toBe("Tree · All");
         await context("42");
         await click(button("Copy Value"));
         expect(copyTextToClipboard).toHaveBeenLastCalledWith("42");
     });
 
-    it("resets the preset when receiving another response or switching request tabs and modes", async () => {
+    it.each(["object", "array"])("adjusts beyond ten levels, disables limits and keeps focus in a deep %s tree", async kind => {
+        let value: unknown = { leaf: 42 };
+        for (let i = 0; i < 11; i++) value = kind === "array" ? [value] : { child: value };
+        await render(value);
+        const trigger = button("JSON tree options");
+        await key(trigger, "ArrowDown");
+        const output = document.querySelector("output")!;
+        expect(output.textContent).toBe("12");
+        expect(button("Increase JSON depth").disabled).toBe(true);
+        await click(button("Collapse All"));
+        expect(trigger.textContent).toBe("Tree · Depth 1");
+        expect(button("Decrease JSON depth").disabled).toBe(true);
+        const increase = button("Increase JSON depth");
+        increase.focus();
+        for (let depth = 2; depth <= 11; depth++) {
+            await click(increase);
+            expect(output.textContent).toBe(String(depth));
+            expect(trigger.textContent).toBe(`Tree · Depth ${depth}`);
+            expect(document.activeElement).toBe(increase);
+        }
+        expect(host.querySelector(".pg-json-fold-preview")).toBeTruthy();
+        await click(increase);
+        expect(output.textContent).toBe("12");
+        expect(increase.disabled).toBe(true);
+        expect(document.activeElement).toBe(increase);
+        expect(host.querySelector(".pg-json-fold-preview")).toBeNull();
+        await click(button("Decrease JSON depth"));
+        expect(trigger.textContent).toBe("Tree · Depth 11");
+        await click(button("Expand All"));
+        expect(trigger.textContent).toBe("Tree · All");
+        expect(output.textContent).toBe("12");
+        await key(document.activeElement as HTMLElement, "Escape");
+        await click(host.querySelector<HTMLElement>(".pg-json-fold-preview") ?? button("Collapse $"));
+        expect(trigger.textContent).toBe("Tree · Custom");
+        await key(trigger, "ArrowDown");
+        expect(document.querySelector("output")?.textContent).toBe("11");
+        expect(document.querySelectorAll("option")).toHaveLength(0);
+        await click(button("Decrease JSON depth"));
+        expect(trigger.textContent).toBe("Tree · Depth 10");
+    });
+
+    it.each([{ value: 1, empty: {} }, [1, [], {}]])("does not offer a redundant leaf or empty-container depth: %j", async value => {
+        await render(value);
+        await key(button("JSON tree options"), "ArrowDown");
+        expect(document.querySelector("output")?.textContent).toBe("1");
+        expect(button("Increase JSON depth").disabled).toBe(true);
+        expect(button("Decrease JSON depth").disabled).toBe(true);
+        await click(button("Collapse All"));
+        expect(button("Collapse $").getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("dismisses when keyboard focus leaves the nonmodal popover", async () => {
+        await render({ child: [1] });
+        await key(button("JSON tree options"), "ArrowDown");
+        await act(async () => button("Find in response").focus());
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
+        expect(document.activeElement).toBe(button("Find in response"));
+    });
+
+    it("recalculates and bounds depth when an open popover receives a shallower response", async () => {
+        await render({ child: { child: { value: 1 } } });
+        await key(button("JSON tree options"), "ArrowDown");
+        await click(button("Decrease JSON depth"));
+        expect(document.querySelector("output")?.textContent).toBe("2");
+        await render({ value: 1 });
+        expect(button("JSON tree options").textContent).toBe("Tree · All");
+        expect(document.querySelector("output")?.textContent).toBe("1");
+        expect(button("Increase JSON depth").disabled).toBe(true);
+        expect(button("Decrease JSON depth").disabled).toBe(true);
+        await render(null);
+        expect(host.querySelector(".pg-json-tree-trigger")).toBeNull();
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
+    });
+
+    it("resets the depth when receiving another response or switching request tabs and modes", async () => {
         HTMLElement.prototype.scrollIntoView ??= () => {};
         const response = { body_text: '{"child":[{"nested":[1]}]}', status: 200, headers: [], duration_ms: 1 };
         const show = async (nextResponse = response, requestId = "first") => {
@@ -367,15 +448,15 @@ describe("JSON tree options toolbar", () => {
         await show();
         await selectDepth("2");
         await show();
-        expect(host.querySelector('[aria-label="JSON tree options"]')?.textContent).toBe("Tree");
+        expect(host.querySelector('[aria-label="JSON tree options"]')?.textContent).toBe("Tree · Depth 2");
         await show(response, "second");
-        expect(host.querySelector('[aria-label="JSON tree options"]')?.textContent).toBe("Tree");
+        expect(host.querySelector('[aria-label="JSON tree options"]')?.textContent).toBe("Tree · All");
         await selectDepth("1");
         await show({ ...response });
-        expect(host.querySelector('[aria-label="JSON tree options"]')?.textContent).toBe("Tree");
+        expect(host.querySelector('[aria-label="JSON tree options"]')?.textContent).toBe("Tree · All");
         await show({ ...response, body_text: "plain text" });
         expect(host.querySelector('[aria-label="JSON tree options"]')).toBeNull();
         await show();
-        expect(host.querySelector('[aria-label="JSON tree options"]')?.textContent).toBe("Tree");
+        expect(host.querySelector('[aria-label="JSON tree options"]')?.textContent).toBe("Tree · All");
     });
 });
