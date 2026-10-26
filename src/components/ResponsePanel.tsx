@@ -1,4 +1,4 @@
-import { applyJsonDepth, jsonDepthSelection, expandedJson, resolveJsonFoldSnapshot, toggleJsonFold, visibleJsonContainers, type JsonDepthPreset, type JsonFoldState, type JsonFoldSnapshot } from "../helpers/responseJsonFolding.ts";
+import { isJsonCollapsed, applyJsonDepth, jsonDepthSelection, expandedJson, resolveJsonFoldSnapshot, toggleJsonFold, visibleJsonContainers, type JsonDepthPreset, type JsonFoldState, type JsonFoldSnapshot } from "../helpers/responseJsonFolding.ts";
 import AppSelect from "./AppSelect.tsx";
 import { editorSurfaceStyle } from "../design/editorTheme.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { HttpErrorDiagnosticDto, HttpResponseDto } from "../types.ts";
 import type { ScriptTestResult } from "../helpers/RequestScriptsRuntime.ts";
 import ResponseBodyContextMenu from "./ResponseBodyContextMenu.tsx";
-import { indexResponseJson } from "../helpers/responseJsonPath.ts";
+import { indexResponseJson, type JsonContainer } from "../helpers/responseJsonPath.ts";
 import FindBar from "./FindBar.tsx";
 import { copyTextToClipboard } from "../helpers/ClipboardRequestTransfer.ts";
 import { notifyError, notifySuccess } from "../helpers/Toast.tsx";
@@ -105,7 +105,7 @@ export default function ResponsePanel({
     const folds = currentFoldSnapshot.state;
     if (currentFoldSnapshot !== foldSnapshot) setFoldSnapshot(currentFoldSnapshot);
     const setFolds = (state: JsonFoldState) => setFoldSnapshot({ response, requestId, text: bodyView.displayText, state });
-    const foldRanges = useMemo(() => visibleJsonContainers(jsonPathIndex?.containers ?? [], folds), [jsonPathIndex, folds]);
+
     const cookies = useMemo(() => extractCookies(response), [response]);
     const isBinaryResponse = response?.body?.kind === "binary";
     const canSaveResponse = !!response?.body?.body_id && response.body.available && response.body.downloadable;
@@ -128,14 +128,41 @@ export default function ResponsePanel({
     const matchElementsRef = useRef<Array<HTMLSpanElement | null>>([]);
 
     const bodySearchMatches = useMemo(
-        () => findTextMatches(bodyView.displayText, findQuery, findCaseSensitive),
-        [bodyView.displayText, findCaseSensitive, findQuery]
+        () => jsonPathIndex
+            ? jsonPathIndex.searchFields.flatMap(field => findTextMatches(field.text, findQuery, findCaseSensitive)
+                .map(match => ({ start: field.offsets[match.start], end: field.offsets[match.end] })))
+            : findTextMatches(bodyView.displayText, findQuery, findCaseSensitive),
+        [bodyView.displayText, jsonPathIndex, findCaseSensitive, findQuery]
     );
+    const [revealed, setRevealed] = useState<ReadonlySet<number>>(new Set());
+    const searchVisible = findOpen && findQuery.trim().length > 0;
+    const effectiveFolds = useMemo(() => {
+        if (!searchVisible || !revealed.size) return folds;
+        const overrides = new Set(folds.overrides);
+        for (const node of jsonPathIndex?.containers ?? []) {
+            if (revealed.has(node.valueStart) && isJsonCollapsed(folds, node)) {
+                if (overrides.has(node.valueStart)) overrides.delete(node.valueStart);
+                else overrides.add(node.valueStart);
+            }
+        }
+        return { ...folds, overrides };
+    }, [folds, revealed, searchVisible, jsonPathIndex]);
+    const foldRanges = useMemo(() => visibleJsonContainers(jsonPathIndex?.containers ?? [], effectiveFolds), [jsonPathIndex, effectiveFolds]);
+    const toggleFold = (node: JsonContainer) => {
+        // Commit only the deliberate choice; automatic ancestor expansion stays temporary.
+        const collapsed = isJsonCollapsed(effectiveFolds, node);
+        setFolds(collapsed === isJsonCollapsed(folds, node) ? toggleJsonFold(folds, node) : folds);
+        setRevealed(previous => new Set([...previous].filter(offset => offset !== node.valueStart)));
+    };
+    const applyDepth = (depth: JsonDepthPreset) => { setFolds(applyJsonDepth(depth)); setRevealed(new Set()); };
     const bodyHighlightSegments = useMemo(
         () => buildHighlightSegments(bodyView.displayText, bodySearchMatches),
         [bodyView.displayText, bodySearchMatches]
     );
     const hasFindQuery = findQuery.trim().length > 0;
+    useEffect(() => {
+        if (!findOpen) setRevealed(new Set());
+    }, [findOpen]);
 
     const scrollMatchIntoView = useCallback((index: number) => {
         window.requestAnimationFrame(() => {
@@ -192,7 +219,16 @@ export default function ResponsePanel({
     useEffect(() => {
         setActiveMatchIndex(-1);
         matchElementsRef.current = [];
-    }, [findCaseSensitive, findQuery, bodyView.displayText]);
+        setRevealed(new Set());
+    }, [findCaseSensitive, findQuery, bodyView.displayText, response, requestId]);
+
+    useEffect(() => {
+        const match = bodySearchMatches[activeMatchIndex];
+        if (!searchVisible || !match || !jsonPathIndex) return;
+        setRevealed(previous => new Set([...previous, ...jsonPathIndex.containers
+            .filter(node => node.valueStart < match.start && match.start < node.end)
+            .map(node => node.valueStart)]));
+    }, [activeMatchIndex, bodySearchMatches, jsonPathIndex, searchVisible]);
 
     useEffect(() => {
         if (bodySearchMatches.length === 0) return;
@@ -204,7 +240,7 @@ export default function ResponsePanel({
         if (activeMatchIndex < 0) return;
         const activeElement = matchElementsRef.current[activeMatchIndex];
         activeElement?.scrollIntoView({ block: "center", inline: "nearest" });
-    }, [activeMatchIndex, bodySearchMatches.length]);
+    }, [activeMatchIndex, bodySearchMatches.length, effectiveFolds]);
 
     useEffect(() => {
         function onKeyDown(event: KeyboardEvent) {
@@ -352,7 +388,25 @@ export default function ResponsePanel({
                 if (token.start >= end) break;
                 const from = Math.max(start, token.start);
                 const to = Math.min(end, tokenEnd);
-                spans.push(<span key={from} data-json-offset={from} style={jsonTokenStyle(token.type)}>{token.text.slice(from - token.start, to - token.start)}</span>);
+                const pieces = [];
+                let position = from;
+                let low = 0, high = bodySearchMatches.length;
+                while (low < high) {
+                    const mid = (low + high) >>> 1;
+                    if (bodySearchMatches[mid].end <= from) low = mid + 1;
+                    else high = mid;
+                }
+                if (searchVisible) for (let i = low; i < bodySearchMatches.length && bodySearchMatches[i].start < to; i++) {
+                    const match = bodySearchMatches[i];
+                    const start = Math.max(from, match.start), end = Math.min(to, match.end);
+                    if (position < start) pieces.push(text.slice(position, start));
+                    pieces.push(<span key={i} data-search-match={i} data-search-active={i === activeMatchIndex}
+                        ref={element => { matchElementsRef.current[i] = element; }}
+                        style={findMatchStyle(i === activeMatchIndex)}>{text.slice(start, end)}</span>);
+                    position = end;
+                }
+                if (position < to) pieces.push(text.slice(position, to));
+                spans.push(<span key={from} data-json-offset={from} style={jsonTokenStyle(token.type)}>{pieces}</span>);
                 if (tokenEnd > end) break;
                 tokenIndex++;
             }
@@ -375,7 +429,7 @@ export default function ResponsePanel({
                 <span className="pg-json-indent">{renderText(lineStart, contentStart)}</span>
                 <span className="pg-json-disclosure-slot">{range && <button type="button" className="pg-json-disclosure"
                     aria-label={`${range.collapsed ? "Expand" : "Collapse"} ${label}`} aria-expanded={!range.collapsed}
-                    onClick={event => { event.stopPropagation(); setFolds(toggleJsonFold(folds, range.node)); }}
+                    onClick={event => { event.stopPropagation(); toggleFold(range.node); }}
                     onContextMenu={event => event.stopPropagation()}>
                     <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d={range.collapsed ? "M3 1L7 5L3 9" : "M1 3L5 7L9 3"} fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
                 </button>}</span>
@@ -384,7 +438,7 @@ export default function ResponsePanel({
                     {range?.collapsed && <><button type="button" className="pg-json-fold-preview"
                         aria-label={`Expand ${range.node.array ? "array" : "object"} ${label}`} aria-expanded={false}
                         data-json-offset={range.node.valueStart} data-json-anchor=""
-                        onClick={event => { event.stopPropagation(); setFolds(toggleJsonFold(folds, range.node)); }}
+                        onClick={event => { event.stopPropagation(); toggleFold(range.node); }}
                     >{range.node.array ? "[…]" : "{…}"}</button><span className="pg-json-fold-count" data-json-offset={range.node.valueStart} data-json-anchor=""> {range.node.count} {range.node.array ? (range.node.count === 1 ? "item" : "items") : (range.node.count === 1 ? "key" : "keys")}</span>{renderText(range.end, lineEnd)}</>}
                     {newline >= 0 && renderText(newline, newline + 1)}
                 </span>
@@ -558,18 +612,17 @@ export default function ResponsePanel({
                             )}
                             {jsonPathIndex?.containers.some(node => node.count > 0) && bodyMode === "raw" && (
                                 <div className="pg-json-fold-toolbar">
-                                    <button disabled={findOpen && hasFindQuery} onClick={() => setFolds(applyJsonDepth(1))}>Collapse All</button>
-                                    <button disabled={findOpen && hasFindQuery} onClick={() => setFolds(applyJsonDepth("all"))}>Expand All</button>
+                                    <button onClick={() => applyDepth(1)}>Collapse All</button>
+                                    <button onClick={() => applyDepth("all")}>Expand All</button>
                                     <div className="pg-json-depth">
                                         <span>Depth</span>
                                         <AppSelect ariaLabel="JSON expansion depth" value={String(jsonDepthSelection(folds))}
-                                            disabled={findOpen && hasFindQuery}
                                             options={[
                                                 { value: "1", label: "1" }, { value: "2", label: "2" },
                                                 { value: "3", label: "3" }, { value: "all", label: "All" },
                                                 ...(jsonDepthSelection(folds) === "custom" ? [{ value: "custom", label: "Custom", disabled: true }] : []),
                                             ]}
-                                            onValueChange={value => setFolds(applyJsonDepth(value === "all" ? "all" : Number(value) as JsonDepthPreset))} />
+                                            onValueChange={value => applyDepth(value === "all" ? "all" : Number(value) as JsonDepthPreset)} />
                                     </div>
                                 </div>
                             )}
@@ -609,7 +662,7 @@ export default function ResponsePanel({
                                         aria-description={jsonPathIndex ? "Use Up and Down arrows to focus JSON lines. Press Shift+F10 for copy actions on the focused line." : undefined}
                                         style={{ ...responsePreStyle(bodyView.canPreview || !!jsonPathIndex?.containers.some(node => node.count > 0)) }}
                                     >
-                                        {findOpen && hasFindQuery
+                                        {findOpen && hasFindQuery && !bodyView.isJson
                                             ? bodyHighlightSegments.map((segment, index) =>
                                                 segment.matchIndex === null ? (
                                                     <span key={`segment-${index}`} data-json-offset={segment.start}>{segment.text}</span>

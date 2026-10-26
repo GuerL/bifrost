@@ -26,6 +26,7 @@ export type JsonContainer = { start: number; valueStart: number; end: number; co
 
 export type ResponseJsonIndex = {
     containers: JsonContainer[];
+    searchFields: { text: string; offsets: number[] }[];
     segmentsAt: (offset: number) => (string | number)[] | null;
     pathAt: (offset: number) => string | null;
     isContainerAt: (offset: number) => boolean;
@@ -45,6 +46,22 @@ export function indexResponseJson(text: string): ResponseJsonIndex | null {
     }
     const nodes: JsonPathNode[] = [];
     const containers: JsonContainer[] = [];
+    const searchFields: ResponseJsonIndex["searchFields"] = [];
+    function addField(value: unknown, start: number) {
+        const encoded = JSON.stringify(value);
+        if (typeof value !== "string") {
+            searchFields.push({ text: encoded, offsets: Array.from({ length: encoded.length + 1 }, (_, i) => start + i) });
+            return;
+        }
+        // Map decoded characters back to their exact JSON source spans, including escapes.
+        const offsets: number[] = [];
+        for (let i = 1; i < encoded.length - 1;) {
+            offsets.push(start + i);
+            i += encoded[i] === "\\" ? (encoded[i + 1] === "u" ? 6 : 2) : 1;
+        }
+        offsets.push(start + encoded.length - 1);
+        searchFields.push({ text: value, offsets });
+    }
     let cursor = 0;
     function visit(value: unknown, parent: JsonPathNode | null, segment: string | number | null, depth: number, keyStart?: number) {
         const node: JsonPathNode = { start: keyStart ?? cursor, end: 0, parent, segment, value };
@@ -58,6 +75,7 @@ export function indexResponseJson(text: string): ResponseJsonIndex | null {
             entries.forEach(([key, child], index) => {
                 cursor += 1 + (depth + 1) * 2; // Newline and indentation.
                 const start = cursor;
+                if (!array) addField(key, cursor);
                 if (!array) cursor += JSON.stringify(key).length + 2; // Key and ': '.
                 visit(child, node, array ? index : key, depth + 1, start);
                 if (index < entries.length - 1) cursor++; // Comma.
@@ -66,6 +84,7 @@ export function indexResponseJson(text: string): ResponseJsonIndex | null {
             cursor++; // Closing brace/bracket.
             container.end = cursor;
         } else {
+            addField(value, cursor);
             cursor += JSON.stringify(value).length;
         }
         node.end = cursor;
@@ -101,6 +120,7 @@ export function indexResponseJson(text: string): ResponseJsonIndex | null {
     }
     return {
         containers,
+        searchFields,
         segmentsAt,
         isContainerAt(offset) {
             const node = nodeAt(offset);
