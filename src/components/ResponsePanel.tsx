@@ -1,3 +1,4 @@
+import { responseSaveErrorMessage } from "../helpers/responseSaving.ts";
 import { isJsonCollapsed, applyJsonDepth, expandedJson, resolveJsonFoldSnapshot, toggleJsonFold, visibleJsonContainers, maximumJsonExpansionDepth, type JsonExpansionDepth, type JsonFoldState, type JsonFoldSnapshot } from "../helpers/responseJsonFolding.ts";
 import JsonTreeOptions from "./JsonTreeOptions.tsx";
 import { editorSurfaceStyle } from "../design/editorTheme.ts";
@@ -311,7 +312,7 @@ export default function ResponsePanel({
 
     const handleSaveResponse = async () => {
         if (!response?.body?.body_id || !response.body.available) {
-            notifyError("Response body is no longer available");
+            notifyError("No response data available to save.");
             return;
         }
 
@@ -320,10 +321,8 @@ export default function ResponsePanel({
             responseDiagnosticsLog("save click", {
                 kind: response.body.kind,
                 bodyId: response.body.body_id,
-                filename: response.body.filename,
                 byteSize: response.body.size,
                 mimeType: response.body.mime_type,
-                bodyTextBytes: new TextEncoder().encode(response.body_text).byteLength,
                 rawBytesInFrontend: false,
                 ipcPayload: "metadata only: bodyId + suggestedFilename",
             });
@@ -342,8 +341,10 @@ export default function ResponsePanel({
             if (saved) {
                 notifySuccess("Response saved");
             }
-        } catch {
-            notifyError("Failed to save response");
+        } catch (error) {
+            const message = responseSaveErrorMessage(error);
+            responseDiagnosticsLog("save failed", { message });
+            notifyError(message);
         } finally {
             setSaveState("idle");
         }
@@ -566,7 +567,7 @@ export default function ResponsePanel({
                                         disabled={!canSaveResponse || saveState === "saving"}
                                         className="pg-response-action pg-response-icon-button"
                                         aria-label="Save response" aria-busy={saveState === "saving"}
-                                        title={saveState === "saving" ? "Saving response…" : "Save response"}>
+                                        title={saveState === "saving" ? "Saving response…" : canSaveResponse ? "Save response as file" : "No response data available to save. Send the request again."}>
                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                             <path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                                         </svg>

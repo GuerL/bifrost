@@ -40,16 +40,12 @@ pub async fn save_response_body_to_file(
 ) -> Result<bool, String> {
     let total_start = Instant::now();
     save_response_diagnostics(&total_start, "command entered");
-    save_response_diagnostics(
-        &total_start,
-        format!(
-            "dialog options resolved title=\"Save response\" suggested_filename=\"{}\" default_directory=<none> full_default_path=<none>",
-            suggested_filename
-        ),
-    );
 
     let metadata_start = Instant::now();
-    let body_size = stored_response_body_size(&store, &body_id)?;
+    // Pin this exact response before opening the dialog. A subsequent request may
+    // evict its store entry while the user chooses a destination.
+    let body = stored_response_body(&store, &body_id)?;
+    let body_size = body.bytes.len();
     save_response_diagnostics(
         &total_start,
         format!(
@@ -65,6 +61,8 @@ pub async fn save_response_body_to_file(
     );
 
     let dialog_start = Instant::now();
+    let suggested_filename = sanitize_response_filename(&suggested_filename)
+        .unwrap_or_else(|| "response.bin".to_string());
     let path = open_native_save_dialog(app, suggested_filename).await?;
     let dialog_duration = dialog_start.elapsed();
     save_response_diagnostics(
@@ -81,20 +79,19 @@ pub async fn save_response_body_to_file(
     save_response_diagnostics(&total_start, "destination selected");
     let path = path
         .into_path()
-        .map_err(|error| format!("Failed to resolve selected save path: {error}"))?;
-    save_response_diagnostics(
-        &total_start,
-        format!("destination path resolved path=\"{}\"", path.display()),
-    );
+        .map_err(|_| "save_failed".to_string())?;
 
-    save_response_diagnostics(&total_start, "body store access/write starting");
-    let write_result = write_stored_response_body_to_file(&store, &body_id, &path)?;
+    save_response_diagnostics(&total_start, "filesystem write starting");
+    let write_result = tauri::async_runtime::spawn_blocking(move || {
+        write_response_bytes_to_file(&body.bytes, &path)
+    })
+    .await
+    .map_err(|_| "save_failed".to_string())??;
     save_response_diagnostics(
         &total_start,
         format!(
-            "filesystem write completed bytes={} lookup_ms={} write_ms={}",
+            "filesystem write completed bytes={} write_ms={}",
             write_result.bytes,
-            duration_ms(write_result.lookup_duration),
             duration_ms(write_result.write_duration)
         ),
     );
@@ -151,45 +148,43 @@ async fn open_native_save_dialog(
 
 struct StoredResponseWriteTiming {
     bytes: usize,
-    lookup_duration: Duration,
     write_duration: Duration,
 }
 
+#[cfg(test)]
 fn write_stored_response_body_to_file(
     store: &ResponseBodyStore,
     body_id: &str,
     path: impl AsRef<Path>,
 ) -> Result<StoredResponseWriteTiming, String> {
-    let lookup_start = Instant::now();
-    let bodies = store
-        .bodies
-        .lock()
-        .map_err(|_| "Response body store is unavailable".to_string())?;
-    let body = bodies.get(body_id).ok_or_else(|| {
-        "The response body is no longer available. Send the request again to save it.".to_string()
-    })?;
-    let lookup_duration = lookup_start.elapsed();
-    let bytes = body.bytes.len();
+    let body = stored_response_body(store, body_id)?;
+    write_response_bytes_to_file(&body.bytes, path)
+}
 
+fn write_response_bytes_to_file(bytes: &[u8], path: impl AsRef<Path>) -> Result<StoredResponseWriteTiming, String> {
     let write_start = Instant::now();
-    fs::write(path, &body.bytes)
-        .map_err(|error| format!("Failed to save response body: {error}"))?;
+    fs::write(path, bytes).map_err(|error| {
+        // Log only the error kind: paths and server metadata can contain secrets.
+        response_diagnostics_log(format!("response save failed: {:?}", error.kind()));
+        response_write_error_code(error.kind()).to_string()
+    })?;
     Ok(StoredResponseWriteTiming {
-        bytes,
-        lookup_duration,
+        bytes: bytes.len(),
         write_duration: write_start.elapsed(),
     })
 }
 
-fn stored_response_body_size(store: &ResponseBodyStore, body_id: &str) -> Result<usize, String> {
-    let bodies = store
-        .bodies
-        .lock()
-        .map_err(|_| "Response body store is unavailable".to_string())?;
-    let body = bodies.get(body_id).ok_or_else(|| {
-        "The response body is no longer available. Send the request again to save it.".to_string()
-    })?;
-    Ok(body.bytes.len())
+fn response_write_error_code(kind: io::ErrorKind) -> &'static str {
+    match kind {
+        io::ErrorKind::PermissionDenied => "save_permission_denied",
+        _ => "save_failed",
+    }
+}
+
+fn stored_response_body(store: &ResponseBodyStore, body_id: &str) -> Result<StoredResponseBody, String> {
+    store.bodies.lock()
+        .map_err(|_| "save_failed".to_string())?
+        .get(body_id).cloned().ok_or_else(|| "response_data_unavailable".to_string())
 }
 
 fn store_response_body(
@@ -213,7 +208,7 @@ fn store_response_body(
     if let Some(old_body_id) = old_body_id {
         bodies.remove(&old_body_id);
     }
-    bodies.insert(body_id, StoredResponseBody { bytes });
+    bodies.insert(body_id, StoredResponseBody { bytes: std::sync::Arc::new(bytes) });
     Ok(())
 }
 
@@ -1086,7 +1081,9 @@ fn content_disposition_filename(content_disposition: Option<&str>) -> Option<Str
         };
         if key.trim().eq_ignore_ascii_case("filename*") {
             if let Some(decoded) = decode_rfc5987_filename(value.trim()) {
-                return Some(decoded);
+                if sanitize_response_filename(&decoded).is_some() {
+                    return Some(decoded);
+                }
             }
         } else if key.trim().eq_ignore_ascii_case("filename") && filename.is_none() {
             filename = Some(unquote_header_value(value));
@@ -1115,7 +1112,21 @@ fn sanitize_response_filename(value: &str) -> Option<String> {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    let sanitized = sanitized.trim().trim_matches('.').to_string();
+    let mut sanitized = sanitized.trim().trim_matches('.').trim().to_string();
+    // Leave room for an inferred extension, including on filesystems with a
+    // byte-based component limit. Truncate only on a Unicode boundary.
+    if sanitized.len() > 180 {
+        let mut end = 180;
+        while !sanitized.is_char_boundary(end) { end -= 1; }
+        sanitized.truncate(end);
+        sanitized = sanitized.trim_end_matches([' ', '.']).to_string();
+    }
+    let stem = sanitized.split('.').next().unwrap_or("").to_ascii_uppercase();
+    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()) {
+        sanitized.insert(0, '_');
+    }
     if sanitized.is_empty() {
         None
     } else {
@@ -1130,7 +1141,7 @@ fn extension_for_content_type(content_type: Option<&str>) -> Option<&'static str
         "text/html" | "application/xhtml+xml" => Some("html"),
         "text/plain" => Some("txt"),
         "text/css" => Some("css"),
-        "application/javascript" | "application/ecmascript" | "application/x-javascript" => {
+        "text/javascript" | "application/javascript" | "application/ecmascript" | "application/x-javascript" => {
             Some("js")
         }
         "application/pdf" => Some("pdf"),
@@ -1151,6 +1162,8 @@ fn extension_for_content_type(content_type: Option<&str>) -> Option<&'static str
         "font/woff" => Some("woff"),
         "font/woff2" => Some("woff2"),
         "application/octet-stream" => Some("bin"),
+        value if value.ends_with("+json") => Some("json"),
+        value if value.ends_with("+xml") => Some("xml"),
         _ => None,
     }
 }
@@ -1161,25 +1174,41 @@ fn has_file_extension(filename: &str) -> bool {
     })
 }
 
-fn append_extension_if_missing(filename: String, content_type: Option<&str>) -> String {
+fn resolve_response_extension(filename: String, content_type: Option<&str>) -> String {
+    let extension = extension_for_content_type(content_type).unwrap_or("bin");
     if has_file_extension(&filename) {
-        return filename;
+        let (mut stem, current) = filename.rsplit_once('.').unwrap();
+        // Remove redundant repeats of the final extension without stripping
+        // meaningful compound extensions such as .tar.gz.
+        while let Some((prefix, suffix)) = stem.rsplit_once('.') {
+            if !suffix.eq_ignore_ascii_case(current) { break; }
+            stem = prefix;
+        }
+        // Specific MIME metadata wins over conflicting extensions. Generic or
+        // unknown MIME preserves the server/URL extension (e.g. octet-stream PDF).
+        if extension == "bin" || current.eq_ignore_ascii_case(extension)
+            || (extension == "jpg" && current.eq_ignore_ascii_case("jpeg"))
+            || (extension == "html" && current.eq_ignore_ascii_case("htm"))
+            || (extension == "gz" && current.eq_ignore_ascii_case("tgz")) {
+            return format!("{stem}.{current}");
+        }
+        while let Some((prefix, suffix)) = stem.rsplit_once('.') {
+            if !suffix.eq_ignore_ascii_case(extension) { break; }
+            stem = prefix;
+        }
+        return format!("{stem}.{extension}");
     }
-    match extension_for_content_type(content_type) {
-        Some(ext) => format!("{filename}.{ext}"),
-        None => filename,
-    }
+    format!("{filename}.{extension}")
 }
 
 fn filename_from_url(url: &reqwest::Url) -> Option<String> {
-    url.path_segments()?
-        .filter(|segment| {
-            let trimmed = segment.trim();
-            !trimmed.is_empty() && trimmed != "." && trimmed != ".."
-        })
-        .next_back()
-        .and_then(|segment| percent_decode_utf8(segment).or_else(|| Some(segment.to_string())))
-        .and_then(|segment| sanitize_response_filename(&segment))
+    let segments: Vec<_> = url.path_segments()?.filter(|s| !s.is_empty()).collect();
+    let last = percent_decode_utf8(segments.last()?)?;
+    // Numeric resource IDs are more useful with their resource name.
+    let name = if last.chars().all(|c| c.is_ascii_digit()) && segments.len() > 1 {
+        format!("{}-{last}", percent_decode_utf8(segments[segments.len()-2])?)
+    } else { last };
+    sanitize_response_filename(&name)
 }
 
 fn suggested_response_filename(
@@ -1192,7 +1221,7 @@ fn suggested_response_filename(
         .or_else(|| filename_from_url(url))
         .unwrap_or_else(|| "response".to_string());
 
-    append_extension_if_missing(filename, content_type)
+    resolve_response_extension(filename, content_type)
 }
 
 fn describe_content_type(content_type: Option<&str>) -> String {
@@ -2396,6 +2425,71 @@ mod tests {
     }
 
     #[test]
+    fn universal_filenames_follow_metadata_and_sanitize_untrusted_names() {
+        for (mime, url, disposition, expected) in [
+            ("application/json; charset=utf-8", "https://example.test/users/1?q=secret#x", None, "users-1.json"),
+            ("application/problem+json", "https://example.test/api/status", None, "status.json"),
+            ("application/custom+xml", "https://example.test/", None, "response.xml"),
+            ("image/svg+xml", "https://example.test/avatar", None, "avatar.svg"),
+            ("text/javascript", "https://example.test/code", None, "code.js"),
+            ("image/png", "https://example.test/avatar.png?x=1", None, "avatar.png"),
+            ("application/json", "https://example.test/data.json.json", None, "data.json"),
+            ("application/json", "https://example.test/data.json.exe", None, "data.json"),
+            ("application/json", "https://example.test/ignored", Some("attachment; filename=valid.json; filename*=UTF-8''.."), "valid.json"),
+            ("image/jpeg", "https://example.test/avatar.jpeg", None, "avatar.jpeg"),
+            ("application/pdf", "https://example.test/monthly.txt", None, "monthly.pdf"),
+            ("application/octet-stream", "https://example.test/archive.zip", None, "archive.zip"),
+            ("unknown/type", "https://example.test/", None, "response.bin"),
+            ("text/plain", "https://example.test/hello%20world", None, "hello world.txt"),
+            ("application/json", "https://example.test/ignored", Some("attachment; filename=\"../../CON.json\""), "_CON.json"),
+            ("application/json", "https://example.test/ignored", Some("attachment; filename=\"bad?:*.txt\""), "bad---.json"),
+            ("application/pdf", "https://example.test/ignored", Some("attachment; filename=\"a;b.pdf\""), "a;b.pdf"),
+            ("application/pdf", "https://example.test/ignored", Some("attachment; filename=old.pdf; filename*=UTF-8'en'%E2%82%AC.pdf"), "€.pdf"),
+            ("application/pdf", "https://example.test/report", Some("attachment; filename*=UTF-8''%FF"), "report.pdf"),
+        ] {
+            assert_eq!(suggested_response_filename(disposition, Some(mime), &reqwest::Url::parse(url).unwrap()), expected);
+        }
+    }
+
+    #[test]
+    fn all_body_formats_save_losslessly_including_empty_and_non_utf8_text() {
+        let bodies: &[&[u8]] = &[
+            br#"{ "z": [1, {"nested": true}], "a": 1.00 }"#, b"{}", b"[]",
+            "Unicode: café 日本語".as_bytes(), b"plain text\r\n", b"<html>hi</html>",
+            b"<?xml version=\"1.0\"?><root />", b"\x89PNG\r\n\x1a\n\x00\xff",
+            b"%PDF-1.7\n\x00\xff", b"PK\x03\x04\x00\xff", b"\x00\xff\xfe\x80", b"", b"caf\xe9",
+        ];
+        let store = ResponseBodyStore::default();
+        let path = std::env::temp_dir().join(format!("bifrost-universal-{}", Uuid::new_v4()));
+        for bytes in bodies {
+            store_response_body(&store, "req", "body".to_string(), bytes.to_vec()).unwrap();
+            write_stored_response_body_to_file(&store, "body", &path).unwrap();
+            assert_eq!(fs::read(&path).unwrap(), *bytes);
+        }
+        fs::remove_file(path).unwrap();
+        assert_eq!(stored_response_body(&store, "missing").err().unwrap(), "response_data_unavailable");
+    }
+
+    #[test]
+    fn filesystem_errors_have_safe_distinct_codes() {
+        assert_eq!(response_write_error_code(io::ErrorKind::PermissionDenied), "save_permission_denied");
+        assert_eq!(response_write_error_code(io::ErrorKind::NotFound), "save_failed");
+        // A directory cannot be used as a destination file on supported platforms.
+        assert_eq!(write_response_bytes_to_file(b"data", std::env::temp_dir()).err().unwrap(), "save_failed");
+    }
+
+    #[test]
+    fn pending_save_pins_original_body_while_requests_replace_it() {
+        let store = ResponseBodyStore::default();
+        store_response_body(&store, "a", "a1".into(), vec![1]).unwrap();
+        store_response_body(&store, "b", "b1".into(), vec![2]).unwrap();
+        let pinned = stored_response_body(&store, "a1").unwrap();
+        store_response_body(&store, "a", "a2".into(), vec![3]).unwrap();
+        assert_eq!(*pinned.bytes, vec![1]);
+        assert_eq!(*stored_response_body(&store, "b1").unwrap().bytes, vec![2]);
+    }
+
+    #[test]
     fn saving_stored_response_preserves_exact_bytes() {
         let store = ResponseBodyStore::default();
         let body_id = "body-save-test".to_string();
@@ -2418,7 +2512,7 @@ mod tests {
 
         let bodies = store.bodies.lock().unwrap();
         assert!(!bodies.contains_key("old"));
-        assert_eq!(bodies.get("new").unwrap().bytes, vec![2]);
+        assert_eq!(*bodies.get("new").unwrap().bytes, vec![2]);
     }
 
     #[test]

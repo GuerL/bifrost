@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HttpResponseDto } from "../types.ts";
 import ResponsePanel from "./ResponsePanel.tsx";
 import { invoke } from "@tauri-apps/api/core";
+import { notifyError, notifySuccess } from "../helpers/Toast.tsx";
 import { copyTextToClipboard } from "../helpers/ClipboardRequestTransfer.ts";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(true) }));
 vi.mock("../helpers/ClipboardRequestTransfer.ts", () => ({ copyTextToClipboard: vi.fn().mockResolvedValue(undefined) }));
@@ -44,6 +45,8 @@ beforeEach(() => {
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     HTMLElement.prototype.scrollIntoView = scroll;
     vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { callback(0); return 1; });
+    vi.clearAllMocks();
+    vi.mocked(invoke).mockResolvedValue(true);
     response = { body_text: JSON.stringify({ branch: { needleKey: ["Needle", 42, true, null] }, other: { untouched: 1 } }), status: 200, headers: [], duration_ms: 1 };
     render();
 });
@@ -108,6 +111,42 @@ describe("structured response search", () => {
         expect(invoke).toHaveBeenLastCalledWith("save_response_body_to_file", { bodyId: "stored-body", suggestedFilename: "response.json" });
         await act(async () => { click("Copy response"); });
         expect(copyTextToClipboard).toHaveBeenLastCalledWith(JSON.stringify(JSON.parse(response.body_text), null, 2));
+    });
+    it.each([
+        [true, "Response saved"], [false, null],
+        ["save_permission_denied", "Unable to save response. Check the selected location's permissions."],
+        ["response_data_unavailable", "No response data available to save."],
+        ["unexpected", "Unable to save response."],
+    ])("handles native save outcome %s", async (outcome, message) => {
+        response = { ...response, body: { kind: "text", body_id: "stored-body", available: true,
+            downloadable: true, size: 0, filename: "response.json", description: "JSON" } };
+        render();
+        if (typeof outcome === "string") vi.mocked(invoke).mockRejectedValueOnce(outcome);
+        else vi.mocked(invoke).mockResolvedValueOnce(outcome);
+        await act(async () => { click("Save response"); });
+        if (outcome === true) expect(notifySuccess).toHaveBeenCalledWith(message);
+        else if (message) expect(notifyError).toHaveBeenCalledWith(message);
+        else { expect(notifyError).not.toHaveBeenCalled(); expect(notifySuccess).not.toHaveBeenCalled(); }
+        expect(host.querySelector<HTMLButtonElement>('[aria-label="Save response"]')?.disabled).toBe(false);
+    });
+    it("targets the active tab and preserves folds and search during saving", async () => {
+        response = { ...response, body: { kind: "text", body_id: "first", available: true,
+            downloadable: true, size: 100, filename: "first.json", description: "JSON" } };
+        render("a"); click("Collapse All"); open("needle");
+        await act(async () => { click("Save response"); });
+        expect(collapsed("$.branch")).toBe(true);
+        expect(host.querySelector("input")?.value).toBe("needle");
+        expect(invoke).toHaveBeenLastCalledWith("save_response_body_to_file", { bodyId: "first", suggestedFilename: "first.json" });
+        response = { ...response, body: { ...response.body!, body_id: "second", filename: "second.json" } };
+        render("b");
+        await act(async () => { click("Save response"); });
+        expect(invoke).toHaveBeenLastCalledWith("save_response_body_to_file", { bodyId: "second", suggestedFilename: "second.json" });
+    });
+    it.each(["binary", "text"] as const)("allows zero-byte %s responses", kind => {
+        response = { ...response, body_text: "", status: 204, body: { kind, body_id: "empty", available: true,
+            downloadable: true, size: 0, filename: "empty.bin", description: "Empty" } };
+        render();
+        expect(host.querySelector<HTMLButtonElement>('[aria-label="Save response"]')?.disabled).toBe(false);
     });
     it("keeps non-JSON actions grouped and reveals search immediately below the toolbar", () => {
         response = { ...response, body_text: "plain response" }; render();

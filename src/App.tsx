@@ -1,3 +1,4 @@
+import { invalidateStoredResponseBytes } from "./helpers/responseSaving.ts";
 import { editorSurfaceStyle } from "./design/editorTheme.ts";
 import {
     type ChangeEvent,
@@ -1075,7 +1076,7 @@ function sanitizeResponseEntry(entry: unknown): PersistedResponseEntry | null {
     const testExecution = sanitizePersistedTestExecution(source.testExecution);
 
     return {
-        response: sanitizeHttpResponse(source.response),
+        response: invalidateStoredResponseBytes(sanitizeHttpResponse(source.response)),
         transportError: sanitizePersistedTransportError(source.transportError),
         statusText: normalizeStatusTextWithTestExecution(source.statusText, testExecution),
         updatedAt: source.updatedAt,
@@ -1132,18 +1133,7 @@ function stripVolatileResponseBodies(state: PersistedResponsesState): PersistedR
 }
 
 function stripVolatileResponseBody(response: HttpResponseDto | null): HttpResponseDto | null {
-    if (!response?.body) return response;
-    if (response.body.kind !== "binary") return response;
-    return {
-        ...response,
-        body_text: "",
-        body: {
-            ...response.body,
-            body_id: "",
-            available: false,
-            downloadable: false,
-        },
-    };
+    return invalidateStoredResponseBytes(response);
 }
 
 function safeFileName(value: string): string {
