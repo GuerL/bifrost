@@ -15,7 +15,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+      - name: Fetch exact PR base and head history
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --no-tags --unshallow origin
+          fi
+          git fetch --no-tags origin "$BASE_SHA" "$PR_HEAD_SHA"
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -24,5 +35,6 @@ jobs:
         run: node scripts/validate-version.js
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           CHECK_REMOTE: 'true'
           GITHUB_TOKEN: ${{ github.token }}

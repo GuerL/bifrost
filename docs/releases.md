@@ -24,18 +24,16 @@ Existing Tauri/platform packaging restrictions still apply.
 1. Starting with 1.2.0, run `npm run version:set -- 1.3.0` on a feature branch.
 2. Commit the three version files, open a PR targeting `main`, and merge once
    checks pass. Do not create a tag yourself for the automatic path.
-3. **Release** validates the merged commit, checks published releases and the remote
-   tag, and creates an annotated tag only for a new, increasing version.
-4. In the same workflow run, `auto-tag → validate-tag → publish-tauri` passes
-   the tag and push SHA explicitly. Validation requires the tag to resolve to
-   that SHA, be reachable from `main`, and match all three version files.
-5. The sequential matrix builds macOS ARM64, macOS Intel, and Windows from the
-   validated SHA, preserving signing, notarization, updater assets, and release notes.
+3. **Auto Tag Bifrost** validates the merged commit and remote publication state,
+   then creates an annotated tag for an eligible version. It validates the exact
+   tag/SHA and dispatches the separate **Release** workflow on that tag.
+4. **Release** validates the tag again and builds macOS ARM64, macOS Intel, and
+   Windows sequentially from the validated SHA, preserving signing, notarization,
+   updater assets, and release notes.
 
-No PAT is needed. Tags pushed with `GITHUB_TOKEN` do not start another tag-push
-workflow ([GitHub documentation](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow)).
-Human-pushed `v*` tags and manual dispatches enter the same **Release** workflow,
-skipping automatic tagging. All entry points share one concurrency group.
+No PAT is needed. Auto Tag explicitly dispatches Release with `GITHUB_TOKEN`;
+creating a tag with this token does not itself trigger another workflow.
+Human-pushed tags do not start Release automatically; dispatch Release on the tag.
 
 ## PR check policy
 
@@ -43,24 +41,52 @@ skipping automatic tagging. All entry points share one concurrency group.
 job named **Version validation** as a required branch protection check. It uses
 `pull_request`, a read-only token, and no signing secrets or release jobs.
 
-Every PR must have syntactically valid, synchronized versions. A PR is a version
-change only when the candidate `package.json` version differs from the PR base
-commit's version. Such PRs must:
+Every PR must have valid, synchronized versions. Application changes require a
+strictly higher SemVer version than the target branch, even when the version was
+previously left unchanged. Mixed application/documentation PRs require a bump.
+Unknown paths require a bump, including validation scripts and their tests.
 
-- Increase SemVer precedence relative to the PR base.
-- Request a tag that does not already exist remotely.
-- Exceed the highest relevant published release by SemVer precedence, regardless
-  of publication date. Stable candidates compare against stable versions;
-  prerelease candidates compare against both stable and prerelease versions.
-  Draft releases and tags that are not `v` followed by valid SemVer are ignored.
-  All release API pages are checked; lookup failures fail validation.
+The complete exemption allowlist is:
 
-Unrelated PRs with an unchanged version may reuse the existing tag and need no
-version bump. Synchronization is checked even when only a Rust/Tauri version is
-changed. The check runs against GitHub's PR merge commit and compares with the PR
-base SHA. Enable the branch protection option requiring branches to be up to date
-before merging, so concurrent version PRs are revalidated against the latest base.
-Auto-tagging repeats the checks after merge; an existing tag is always skipped.
+- Root-level `*.md` files (case insensitive).
+- Only Markdown (`*.md`) files under `docs/` and `design/` (case insensitive).
+- `.github/workflows/*.yml` and `*.yaml`, with no nested directories.
+- Direct `.md`, `.yml`, or `.yaml` files in `.github/ISSUE_TEMPLATE/` or
+  `.github/PULL_REQUEST_TEMPLATE/`, and `.github/PULL_REQUEST_TEMPLATE.md`.
+- `.github/FUNDING.yml` (the GitHub path patterns are case insensitive).
+- Exactly `LICENSE`, `LICENSE.md`, `LICENSE.txt`, `.gitignore`, `.gitattributes`,
+  `CODEOWNERS`, and `.github/CODEOWNERS`.
+
+Markdown elsewhere, dependencies/lockfiles, frontend and backend sources, styles,
+resources, tests, and build/application configuration are release-relevant.
+Only PRs exclusively changing exempt paths (or having an empty diff) may retain
+an unchanged version. They explicitly report that no release-relevant changes
+were detected. Consistency and remote lookup checks still run.
+
+Choose patch for compatible fixes, minor for compatible new functionality, and
+major for incompatible changes. Use `npm run version:patch`, `version:minor`,
+`version:major`, or `version:set -- <version>` and commit all three synchronized
+version files in the release PR. The validator suggests versions but never picks
+or changes one. Prereleases use SemVer ordering; build metadata alone is no bump.
+
+Version-changing PRs must also request an unused remote tag and exceed the
+relevant published versions using the existing publication checks. Invalid
+SemVer, mismatched declarations, decreases, missing required bumps, occupied tags,
+and publication lookup failures fail validation. Draft releases and invalid
+version tags are ignored; all release API pages are checked.
+
+The workflow checks out the exact PR head SHA and fetches the immutable base and
+head SHAs from the PR event with complete history. It reads the target version
+from that base SHA, and compares the head tree with its merge base using a
+NUL-delimited Git diff across the entire PR. Rename detection is disabled so
+removed and added paths are both checked. Missing commits/history or an invalid
+base version fail with a diagnostic. No local branch or release tag is used.
+Require branches to be up to date before merging so concurrent PRs are validated
+against the latest target version.
+
+After merge, Auto Tag repeats its existing release checks. An unchanged version
+already tagged/published does not create a new release. An incremented eligible
+version follows Auto Tag → tag validation → Release → signed/notarized builds.
 
 ## Manual releases and recovery
 
@@ -74,15 +100,13 @@ git tag -a v1.3.0 <merged-commit-sha> -m 'Bifrost v1.3.0'
 git push origin refs/tags/v1.3.0
 ```
 
-For an existing tag, open **Actions → Release → Run workflow**, select `main`
-(the workflow implementation), and supply the tag, such as `v1.3.0`. The tag must
-already exist and match the application version in its commit. This also supports
-older tags whose commits predate the new validation script. The build still uses
-the tagged commit. Only release trusted commits merged into `main`.
+For an existing tag, open **Actions → Release → Run workflow**, select the existing tag
+(such as `v1.3.0`) as the workflow ref. The optional tag input must match it. The tag must
+already exist and match the application version in its commit. The tag must contain the current Release workflow and validation scripts;
+the build uses the tagged commit. Only release trusted commits merged into `main`.
 
 If a build fails after tag creation, the failure remains a failed Actions run.
-Re-run failed jobs, or dispatch **Release** for the existing tag. Re-running all
-jobs of **Release** finds the existing tag and skips release, by design.
+Re-run failed jobs, or dispatch **Release** for the existing tag. Already published releases are skipped on reruns.
 Do not delete or move a published tag to retry. Already published releases are
 skipped, including manual dispatches; historical release artifacts are never updated by a new run. For an interrupted published
 release, re-run its failed publication job to finish the original matrix.
@@ -105,7 +129,7 @@ release, re-run its failed publication job to finish the original matrix.
 
 ## Reliability and updater behavior
 
-All release runs are serialized across tagging, validation, and publication.
+Auto Tag and Release each retain their existing separate concurrency groups.
 Unchanged versions, existing tags, and published versions skip automatic release.
 A rejected push is rechecked remotely to handle a competing tag creator; only the
 successful creator proceeds. Lookup and push failures fail closed.

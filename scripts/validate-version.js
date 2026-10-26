@@ -45,6 +45,43 @@ export function assertIncreasing(version, baseline, source) {
     }
 }
 
+// Only repository documentation and explicitly identified maintenance paths are exempt.
+// In particular, Markdown inside application/resource directories is release-relevant.
+export function isReleaseRelevantFile(file) {
+    const rootMarkdown = /^[^/]+\.md$/i.test(file);
+    const documentation = /^(?:docs|design)\/.*\.md$/i.test(file);
+    const maintenance = /^(?:\.github\/workflows\/[^/]+\.ya?ml|\.github\/(?:ISSUE_TEMPLATE|PULL_REQUEST_TEMPLATE)\/[^/]+\.(?:md|ya?ml)|\.github\/PULL_REQUEST_TEMPLATE\.md|\.github\/FUNDING\.yml)$/i.test(file);
+    const metadata = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', '.gitignore', '.gitattributes', 'CODEOWNERS', '.github/CODEOWNERS'].includes(file);
+    return !(rootMarkdown || documentation || maintenance || metadata);
+}
+
+export function validatePullRequestVersion(version, base, files) {
+    const relevant = files.some(isReleaseRelevantFile);
+    if (relevant && compareVersions(version, base) <= 0) {
+        const { core } = parseSemver(base);
+        throw new Error(`Application changes were detected, but the version was not incremented to a strictly higher version (PR base).\n\nBase version: ${base}\nPR version:   ${version}\n\nUpdate the application version before merging.\n\nSuggested next versions:\n- Patch: ${core[0]}.${core[1]}.${BigInt(core[2]) + 1n}\n- Minor: ${core[0]}.${BigInt(core[1]) + 1n}.0`);
+    }
+    if (base !== version) assertIncreasing(version, base, 'PR base');
+    return relevant;
+}
+
+export function resolvePullRequestChanges(base, head) {
+    try {
+        // Immutable event SHAs avoid stale local branches and unrelated release tags.
+        const baseCommit = git('rev-parse', '--verify', `${base}^{commit}`);
+        const headCommit = git('rev-parse', '--verify', `${head}^{commit}`);
+        const mergeBase = git('merge-base', baseCommit, headCommit);
+        // Disable rename detection so both sides of a rename are classified.
+        // NUL delimiters preserve whitespace/newlines in file names.
+        const files = execFileSync('git', ['diff', '--no-renames', '--name-only', '-z', mergeBase, headCommit], { encoding: 'utf8' }).split('\0').filter(Boolean);
+        const version = JSON.parse(git('show', `${baseCommit}:package.json`)).version;
+        if (!parseSemver(version)) throw new Error('Target package.json contains invalid SemVer');
+        return { version, files };
+    } catch (error) {
+        throw new Error(`Cannot resolve PR base/head or changed files reliably (base=${base}, head=${head}). Fetch the exact event commits with complete history and rerun validation. ${error.message}`);
+    }
+}
+
 async function publishedVersions() {
     const versions = [];
     for (let page = 1; ; page++) {
@@ -70,10 +107,15 @@ export async function validateCurrentVersion() {
     if (process.env.EXPECTED_TAG && process.env.EXPECTED_TAG !== tag) throw new Error(`Requested tag ${process.env.EXPECTED_TAG} does not match application tag ${tag}.`);
     let changed = true;
     // PR validation supplies the target main branch's base SHA, not its moving tip.
+    if (process.env.GITHUB_EVENT_NAME === 'pull_request' && (!process.env.BASE_SHA || !process.env.PR_HEAD_SHA)) {
+        throw new Error('PR validation requires BASE_SHA and PR_HEAD_SHA; refusing to skip base/version checks.');
+    }
     if (process.env.BASE_SHA) {
-        const base = JSON.parse(git('show', `${process.env.BASE_SHA}:package.json`)).version;
+        if (!process.env.PR_HEAD_SHA) throw new Error('PR validation requires PR_HEAD_SHA to resolve the complete PR diff.');
+        const { version: base, files } = resolvePullRequestChanges(process.env.BASE_SHA, process.env.PR_HEAD_SHA);
         changed = base !== version;
-        if (changed) assertIncreasing(version, base, 'PR base');
+        validatePullRequestVersion(version, base, files);
+        if (!changed) console.log('Unchanged version accepted: no release-relevant changes were detected.');
     }
     // Automatic pushes compare against their immutable previous main commit.
     const releaseBase = process.env.RELEASE_BASE_SHA;
