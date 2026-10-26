@@ -391,10 +391,6 @@ export async function copyRequestToClipboard(request: Request): Promise<void> {
 }
 
 export async function copyTextToClipboard(text: string): Promise<void> {
-    if (!text) {
-        throw new Error("Nothing to copy.");
-    }
-
     try {
         await writeText(text);
         return;

@@ -2,6 +2,7 @@ import type { CSSProperties, RefObject } from "react";
 import { buttonStyle } from "../helpers/UiStyles.ts";
 
 type FindBarProps = {
+    compact?: boolean;
     query: string;
     activeMatchIndex: number;
     matchCount: number;
@@ -16,6 +17,7 @@ type FindBarProps = {
 };
 
 export default function FindBar({
+    compact = false,
     query,
     activeMatchIndex,
     matchCount,
@@ -33,12 +35,13 @@ export default function FindBar({
     const countText = !canNavigate ? "0/0" : `${activeMatchIndex + 1}/${matchCount}`;
 
     return (
-        <div style={findBarStyle()}>
+        <div className={compact ? "pg-response-search" : undefined} style={compact ? undefined : findBarStyle()}>
             <input
                 ref={inputRef}
                 type="text"
                 value={query}
                 onChange={(event) => onQueryChange(event.target.value)}
+                aria-label={placeholder}
                 placeholder={placeholder}
                 style={findInputStyle()}
                 spellCheck={false}
@@ -78,6 +81,7 @@ export default function FindBar({
                     type="button"
                     onClick={onToggleCaseSensitive}
                     style={findCaseButtonStyle(caseSensitive)}
+                    aria-pressed={caseSensitive}
                     aria-label="Toggle match case"
                     title="Match case"
                 >

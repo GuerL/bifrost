@@ -1,10 +1,13 @@
+import { responseSaveErrorMessage } from "../helpers/responseSaving.ts";
+import { isJsonCollapsed, applyJsonDepth, expandedJson, resolveJsonFoldSnapshot, toggleJsonFold, visibleJsonContainers, maximumJsonExpansionDepth, type JsonExpansionDepth, type JsonFoldState, type JsonFoldSnapshot } from "../helpers/responseJsonFolding.ts";
+import JsonTreeOptions from "./JsonTreeOptions.tsx";
 import { editorSurfaceStyle } from "../design/editorTheme.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { HttpErrorDiagnosticDto, HttpResponseDto } from "../types.ts";
 import type { ScriptTestResult } from "../helpers/RequestScriptsRuntime.ts";
 import ResponseBodyContextMenu from "./ResponseBodyContextMenu.tsx";
-import { indexResponseJson } from "../helpers/responseJsonPath.ts";
+import { indexResponseJson, type JsonContainer } from "../helpers/responseJsonPath.ts";
 import FindBar from "./FindBar.tsx";
 import { copyTextToClipboard } from "../helpers/ClipboardRequestTransfer.ts";
 import { notifyError, notifySuccess } from "../helpers/Toast.tsx";
@@ -46,6 +49,7 @@ type HighlightSegment = {
 };
 
 type ResponsePanelProps = {
+    requestId?: string | null;
     response: HttpResponseDto | null;
     statusText: string;
     requestMethod?: string;
@@ -71,6 +75,7 @@ type ResponsePanelProps = {
 };
 
 export default function ResponsePanel({
+    requestId,
     response,
     statusText,
     requestMethod,
@@ -96,6 +101,13 @@ export default function ResponsePanel({
         () => bodyView.isJson ? indexResponseJson(bodyView.displayText) : null,
         [bodyView.displayText, bodyView.isJson]
     );
+    const maximumJsonDepth = useMemo(() => maximumJsonExpansionDepth(jsonPathIndex?.containers ?? []), [jsonPathIndex]);
+    const [foldSnapshot, setFoldSnapshot] = useState<JsonFoldSnapshot>({ response, requestId, text: bodyView.displayText, state: expandedJson });
+    const currentFoldSnapshot = resolveJsonFoldSnapshot(foldSnapshot, response, requestId, bodyView.displayText);
+    const folds = currentFoldSnapshot.state;
+    if (currentFoldSnapshot !== foldSnapshot) setFoldSnapshot(currentFoldSnapshot);
+    const setFolds = (state: JsonFoldState) => setFoldSnapshot({ response, requestId, text: bodyView.displayText, state });
+
     const cookies = useMemo(() => extractCookies(response), [response]);
     const isBinaryResponse = response?.body?.kind === "binary";
     const canSaveResponse = !!response?.body?.body_id && response.body.available && response.body.downloadable;
@@ -106,26 +118,53 @@ export default function ResponsePanel({
     const [copyState, setCopyState] = useState<CopyState>("idle");
     const [saveState, setSaveState] = useState<SaveState>("idle");
     const [bodyMode, setBodyMode] = useState<BodyMode>("raw");
-    const [bodyControlsHovered, setBodyControlsHovered] = useState(false);
-    const [copyButtonVisible, setCopyButtonVisible] = useState(false);
     const [findOpen, setFindOpen] = useState(false);
     const [findQuery, setFindQuery] = useState("");
     const [findCaseSensitive, setFindCaseSensitive] = useState(false);
     const [activeMatchIndex, setActiveMatchIndex] = useState(-1);
     const copyResetTimerRef = useRef<number | null>(null);
-    const copyHideTimerRef = useRef<number | null>(null);
     const findInputRef = useRef<HTMLInputElement | null>(null);
     const matchElementsRef = useRef<Array<HTMLSpanElement | null>>([]);
 
     const bodySearchMatches = useMemo(
-        () => findTextMatches(bodyView.displayText, findQuery, findCaseSensitive),
-        [bodyView.displayText, findCaseSensitive, findQuery]
+        () => jsonPathIndex
+            ? jsonPathIndex.searchFields.flatMap(field => findTextMatches(field.text, findQuery, findCaseSensitive)
+                .map(match => ({ start: field.offsets[match.start], end: field.offsets[match.end] })))
+            : findTextMatches(bodyView.displayText, findQuery, findCaseSensitive),
+        [bodyView.displayText, jsonPathIndex, findCaseSensitive, findQuery]
     );
+    const [revealed, setRevealed] = useState<ReadonlySet<number>>(new Set());
+    const searchVisible = findOpen && findQuery.trim().length > 0;
+    const effectiveFolds = useMemo(() => {
+        if (!searchVisible || !revealed.size) return folds;
+        const overrides = new Set(folds.overrides);
+        for (const node of jsonPathIndex?.containers ?? []) {
+            if (revealed.has(node.valueStart) && isJsonCollapsed(folds, node)) {
+                if (overrides.has(node.valueStart)) overrides.delete(node.valueStart);
+                else overrides.add(node.valueStart);
+            }
+        }
+        return { ...folds, overrides };
+    }, [folds, revealed, searchVisible, jsonPathIndex]);
+    const foldRanges = useMemo(() => visibleJsonContainers(jsonPathIndex?.containers ?? [], effectiveFolds), [jsonPathIndex, effectiveFolds]);
+    const toggleFold = (node: JsonContainer) => {
+        // Commit only the deliberate choice; automatic ancestor expansion stays temporary.
+        const collapsed = isJsonCollapsed(effectiveFolds, node);
+        setFolds(collapsed === isJsonCollapsed(folds, node) ? toggleJsonFold(folds, node) : folds);
+        setRevealed(previous => new Set([...previous].filter(offset => offset !== node.valueStart)));
+    };
+    const applyDepth = (depth: JsonExpansionDepth) => {
+        setFolds(applyJsonDepth(depth === "all" ? depth : Math.min(maximumJsonDepth, Math.max(1, depth)), folds));
+        setRevealed(new Set());
+    };
     const bodyHighlightSegments = useMemo(
         () => buildHighlightSegments(bodyView.displayText, bodySearchMatches),
         [bodyView.displayText, bodySearchMatches]
     );
     const hasFindQuery = findQuery.trim().length > 0;
+    useEffect(() => {
+        if (!findOpen) setRevealed(new Set());
+    }, [findOpen]);
 
     const scrollMatchIntoView = useCallback((index: number) => {
         window.requestAnimationFrame(() => {
@@ -182,7 +221,16 @@ export default function ResponsePanel({
     useEffect(() => {
         setActiveMatchIndex(-1);
         matchElementsRef.current = [];
-    }, [findCaseSensitive, findQuery, bodyView.displayText]);
+        setRevealed(new Set());
+    }, [findCaseSensitive, findQuery, bodyView.displayText, response, requestId]);
+
+    useEffect(() => {
+        const match = bodySearchMatches[activeMatchIndex];
+        if (!searchVisible || !match || !jsonPathIndex) return;
+        setRevealed(previous => new Set([...previous, ...jsonPathIndex.containers
+            .filter(node => node.valueStart < match.start && match.start < node.end)
+            .map(node => node.valueStart)]));
+    }, [activeMatchIndex, bodySearchMatches, jsonPathIndex, searchVisible]);
 
     useEffect(() => {
         if (bodySearchMatches.length === 0) return;
@@ -194,7 +242,7 @@ export default function ResponsePanel({
         if (activeMatchIndex < 0) return;
         const activeElement = matchElementsRef.current[activeMatchIndex];
         activeElement?.scrollIntoView({ block: "center", inline: "nearest" });
-    }, [activeMatchIndex, bodySearchMatches.length]);
+    }, [activeMatchIndex, bodySearchMatches.length, effectiveFolds]);
 
     useEffect(() => {
         function onKeyDown(event: KeyboardEvent) {
@@ -207,6 +255,8 @@ export default function ResponsePanel({
             ) {
                 event.preventDefault();
                 setFindOpen(true);
+                findInputRef.current?.focus();
+                findInputRef.current?.select();
                 return;
             }
 
@@ -218,7 +268,7 @@ export default function ResponsePanel({
                 return;
             }
 
-            if (event.key === "Enter") {
+            if (event.key === "Enter" && !(event.target instanceof HTMLElement && event.target.closest("button"))) {
                 event.preventDefault();
                 if (event.shiftKey) {
                     moveToPreviousMatch();
@@ -237,30 +287,7 @@ export default function ResponsePanel({
             if (copyResetTimerRef.current !== null) {
                 window.clearTimeout(copyResetTimerRef.current);
             }
-            if (copyHideTimerRef.current !== null) {
-                window.clearTimeout(copyHideTimerRef.current);
-            }
         };
-    }, []);
-
-    const showBodyActions = useCallback(() => {
-        if (copyHideTimerRef.current !== null) {
-            window.clearTimeout(copyHideTimerRef.current);
-            copyHideTimerRef.current = null;
-        }
-        setBodyControlsHovered(true);
-        setCopyButtonVisible(true);
-    }, []);
-
-    const hideBodyActions = useCallback(() => {
-        setBodyControlsHovered(false);
-        if (copyHideTimerRef.current !== null) {
-            window.clearTimeout(copyHideTimerRef.current);
-        }
-        copyHideTimerRef.current = window.setTimeout(() => {
-            setCopyButtonVisible(false);
-            copyHideTimerRef.current = null;
-        }, 120);
     }, []);
 
     const handleCopyBody = async () => {
@@ -285,7 +312,7 @@ export default function ResponsePanel({
 
     const handleSaveResponse = async () => {
         if (!response?.body?.body_id || !response.body.available) {
-            notifyError("Response body is no longer available");
+            notifyError("No response data available to save.");
             return;
         }
 
@@ -294,10 +321,8 @@ export default function ResponsePanel({
             responseDiagnosticsLog("save click", {
                 kind: response.body.kind,
                 bodyId: response.body.body_id,
-                filename: response.body.filename,
                 byteSize: response.body.size,
                 mimeType: response.body.mime_type,
-                bodyTextBytes: new TextEncoder().encode(response.body_text).byteLength,
                 rawBytesInFrontend: false,
                 ipcPayload: "metadata only: bodyId + suggestedFilename",
             });
@@ -316,12 +341,93 @@ export default function ResponsePanel({
             if (saved) {
                 notifySuccess("Response saved");
             }
-        } catch {
-            notifyError("Failed to save response");
+        } catch (error) {
+            const message = responseSaveErrorMessage(error);
+            responseDiagnosticsLog("save failed", { message });
+            notifyError(message);
         } finally {
             setSaveState("idle");
         }
     };
+
+    function renderFoldedJson() {
+        // Binary-search past folded descendants rather than processing or mounting them.
+        let tokenIndex = 0;
+        const renderText = (start: number, end: number) => {
+            const spans = [];
+            let low = tokenIndex, high = jsonTokens.length;
+            while (low < high) {
+                const mid = (low + high) >>> 1;
+                if (jsonTokens[mid].start + jsonTokens[mid].text.length <= start) low = mid + 1;
+                else high = mid;
+            }
+            tokenIndex = low;
+            while (tokenIndex < jsonTokens.length) {
+                const token = jsonTokens[tokenIndex];
+                const tokenEnd = token.start + token.text.length;
+                if (tokenEnd <= start) { tokenIndex++; continue; }
+                if (token.start >= end) break;
+                const from = Math.max(start, token.start);
+                const to = Math.min(end, tokenEnd);
+                const pieces = [];
+                let position = from;
+                let low = 0, high = bodySearchMatches.length;
+                while (low < high) {
+                    const mid = (low + high) >>> 1;
+                    if (bodySearchMatches[mid].end <= from) low = mid + 1;
+                    else high = mid;
+                }
+                if (searchVisible) for (let i = low; i < bodySearchMatches.length && bodySearchMatches[i].start < to; i++) {
+                    const match = bodySearchMatches[i];
+                    const start = Math.max(from, match.start), end = Math.min(to, match.end);
+                    if (position < start) pieces.push(text.slice(position, start));
+                    pieces.push(<span key={i} data-search-match={i} data-search-active={i === activeMatchIndex}
+                        ref={element => { matchElementsRef.current[i] = element; }}
+                        style={findMatchStyle(i === activeMatchIndex)}>{text.slice(start, end)}</span>);
+                    position = end;
+                }
+                if (position < to) pieces.push(text.slice(position, to));
+                spans.push(<span key={from} data-json-offset={from} style={jsonTokenStyle(token.type)}>{pieces}</span>);
+                if (tokenEnd > end) break;
+                tokenIndex++;
+            }
+            return spans;
+        };
+        const text = bodyView.displayText;
+        const rows = [];
+        let cursor = 0;
+        let rangeIndex = 0;
+        while (cursor < text.length) {
+            const lineStart = cursor;
+            while (text[cursor] === " ") cursor++;
+            const contentStart = cursor;
+            const range = foldRanges[rangeIndex]?.start === contentStart ? foldRanges[rangeIndex++] : undefined;
+            const contentEnd = range?.collapsed ? range.end : contentStart;
+            const newline = text.indexOf("\n", contentEnd);
+            const lineEnd = newline < 0 ? text.length : newline;
+            const label = range ? jsonPathIndex?.pathAt(range.node.start) ?? "$" : "";
+            rows.push(<span className="pg-json-row" key={lineStart} tabIndex={-1} data-json-node-offset={contentStart}>
+                <span className="pg-json-indent">{renderText(lineStart, contentStart)}</span>
+                <span className="pg-json-disclosure-slot">{range && <button type="button" className="pg-json-disclosure"
+                    aria-label={`${range.collapsed ? "Expand" : "Collapse"} ${label}`} aria-expanded={!range.collapsed}
+                    onClick={event => { event.stopPropagation(); toggleFold(range.node); }}
+                    onContextMenu={event => event.stopPropagation()}>
+                    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d={range.collapsed ? "M3 1L7 5L3 9" : "M1 3L5 7L9 3"} fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
+                </button>}</span>
+                <span className="pg-json-line-content">
+                    {renderText(contentStart, range?.collapsed ? range.node.valueStart : lineEnd)}
+                    {range?.collapsed && <><button type="button" className="pg-json-fold-preview"
+                        aria-label={`Expand ${range.node.array ? "array" : "object"} ${label}`} aria-expanded={false}
+                        data-json-offset={range.node.valueStart} data-json-anchor=""
+                        onClick={event => { event.stopPropagation(); toggleFold(range.node); }}
+                    >{range.node.array ? "[…]" : "{…}"}</button><span className="pg-json-fold-count" data-json-offset={range.node.valueStart} data-json-anchor=""> {range.node.count} {range.node.array ? (range.node.count === 1 ? "item" : "items") : (range.node.count === 1 ? "key" : "keys")}</span>{renderText(range.end, lineEnd)}</>}
+                    {newline >= 0 && renderText(newline, newline + 1)}
+                </span>
+            </span>);
+            cursor = lineEnd + 1;
+        }
+        return rows;
+    }
 
     return (
         <div
@@ -438,68 +544,86 @@ export default function ResponsePanel({
                             </div>
                         </div>
                     )}
-                    {!transportError && findOpen && bodyMode === "raw" && !isBinaryResponse && (
-                        <FindBar
-                            inputRef={findInputRef}
-                            query={findQuery}
-                            activeMatchIndex={activeMatchIndex}
-                            matchCount={bodySearchMatches.length}
-                            onQueryChange={setFindQuery}
-                            onPreviousMatch={moveToPreviousMatch}
-                            onNextMatch={moveToNextMatch}
-                            onClose={() => setFindOpen(false)}
-                            placeholder="Find in response body"
-                            caseSensitive={findCaseSensitive}
-                            onToggleCaseSensitive={() => setFindCaseSensitive((previous) => !previous)}
-                        />
-                    )}
                     {!transportError && (
                         <div
                             className="pg-response-body-container"
                             style={responseBodyContainerStyle()}
-                            onMouseEnter={showBodyActions}
-                            onMouseLeave={hideBodyActions}
                         >
-                            {bodyView.copyText && !isBinaryResponse && (
-                                <button
-                                    className={[
-                                        "pg-response-copy-button",
-                                        copyButtonVisible ? "pg-response-copy-button-visible" : "",
-                                        `pg-response-copy-button-${copyState}`,
-                                    ].filter(Boolean).join(" ")}
-                                    onClick={() => void handleCopyBody()}
-                                    style={copyBodyButtonStyle(copyState)}
-                                    title={copyButtonTitle(copyState)}
-                                    aria-label="Copy response"
-                                >
-                                    <CopyStatusIcon state={copyState} />
-                                </button>
-                            )}
-                            {canSaveResponse && (
-                                <button
-                                    onClick={() => void handleSaveResponse()}
-                                    disabled={saveState === "saving"}
-                                    style={saveResponseButtonStyle(!!bodyView.copyText && !isBinaryResponse)}
-                                    title="Save response"
-                                >
-                                    {saveState === "saving" ? "Saving..." : "Save response"}
-                                </button>
-                            )}
-                            {bodyView.canPreview && (
-                                <div style={bodyModeControlsStyle(bodyControlsHovered, !!bodyView.copyText || canSaveResponse)}>
-                                    <button
-                                        onClick={() => setBodyMode("raw")}
-                                        style={bodyModeButtonStyle(bodyMode === "raw")}
-                                    >
-                                        Raw
+                            <div className="pg-response-toolbar">
+                                <div className="pg-response-toolbar-actions">
+                                    {bodyMode === "raw" && !isBinaryResponse && (
+                                        <button type="button" className="pg-response-action pg-response-icon-button pg-response-find-button"
+                                            aria-label="Find in response" aria-pressed={findOpen}
+                                            title={`Find in response (${typeof navigator !== "undefined" && /(Mac|iPhone|iPad|iPod)/i.test(navigator.userAgent) ? "⌘F" : "Ctrl+F"})`}
+                                            onClick={() => setFindOpen(previous => !previous)}>
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                                <circle cx="10.5" cy="10.5" r="6.75" stroke="currentColor" strokeWidth="1.8" />
+                                                <path d="m16 16 4.25 4.25" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                                            </svg>
+                                        </button>
+                                    )}
+                                    <button type="button"
+                                        onClick={() => void handleSaveResponse()}
+                                        disabled={!canSaveResponse || saveState === "saving"}
+                                        className="pg-response-action pg-response-icon-button"
+                                        aria-label="Save response" aria-busy={saveState === "saving"}
+                                        title={saveState === "saving" ? "Saving response…" : canSaveResponse ? "Save response as file" : "No response data available to save. Send the request again."}>
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                            <path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
                                     </button>
-                                    <button
-                                        onClick={() => setBodyMode("preview")}
-                                        style={bodyModeButtonStyle(bodyMode === "preview")}
-                                    >
-                                        Preview
-                                    </button>
+                                    {bodyView.copyText && !isBinaryResponse && (
+                                        <button
+                                            className="pg-response-action pg-response-icon-button pg-response-copy-button"
+                                            onClick={() => void handleCopyBody()}
+                                            style={copyBodyButtonStyle(copyState)}
+                                            title={copyButtonTitle(copyState)}
+                                            aria-label="Copy response"
+                                        >
+                                            <CopyStatusIcon state={copyState} />
+                                        </button>
+                                    )}
                                 </div>
+                                {bodyView.isJson && bodyMode === "raw" && (
+                                    <div className="pg-json-fold-toolbar">
+                                        <span className="pg-response-format">JSON</span>
+                                        {jsonPathIndex?.containers.some(node => node.count > 0) && (
+                                            <JsonTreeOptions key={requestId ?? "response"}
+                                                folds={folds} maximumDepth={maximumJsonDepth} onDepthChange={applyDepth} />
+                                        )}
+                                    </div>
+                                )}
+                                {bodyView.canPreview && (
+                                    <div style={bodyModeControlsStyle()}>
+                                        <button
+                                            onClick={() => setBodyMode("raw")}
+                                            style={bodyModeButtonStyle(bodyMode === "raw")}
+                                        >
+                                            Raw
+                                        </button>
+                                        <button
+                                            onClick={() => setBodyMode("preview")}
+                                            style={bodyModeButtonStyle(bodyMode === "preview")}
+                                        >
+                                            Preview
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                            {findOpen && bodyMode === "raw" && !isBinaryResponse && (
+                                <FindBar compact
+                                    inputRef={findInputRef}
+                                    query={findQuery}
+                                    activeMatchIndex={activeMatchIndex}
+                                    matchCount={bodySearchMatches.length}
+                                    onQueryChange={setFindQuery}
+                                    onPreviousMatch={moveToPreviousMatch}
+                                    onNextMatch={moveToNextMatch}
+                                    onClose={() => setFindOpen(false)}
+                                    placeholder="Find in response body"
+                                    caseSensitive={findCaseSensitive}
+                                    onToggleCaseSensitive={() => setFindCaseSensitive((previous) => !previous)}
+                                />
                             )}
                             {isBinaryResponse ? (
                                 <FileResponseState response={response!} onSave={handleSaveResponse} saving={saveState === "saving"} />
@@ -518,9 +642,10 @@ export default function ResponsePanel({
                                         className="bf-code-surface"
                                         tabIndex={0}
                                         aria-label="Response body"
-                                        style={responsePreStyle(bodyView.canPreview)}
+                                        aria-description={jsonPathIndex ? "Use Up and Down arrows to focus JSON lines. Press Shift+F10 for copy actions on the focused line." : undefined}
+                                        style={responsePreStyle()}
                                     >
-                                        {findOpen && hasFindQuery
+                                        {findOpen && hasFindQuery && !bodyView.isJson
                                             ? bodyHighlightSegments.map((segment, index) =>
                                                 segment.matchIndex === null ? (
                                                     <span key={`segment-${index}`} data-json-offset={segment.start}>{segment.text}</span>
@@ -538,11 +663,7 @@ export default function ResponsePanel({
                                                 )
                                             )
                                             : bodyView.isJson
-                                            ? jsonTokens.map((token, index) => (
-                                                <span key={`${token.type}-${index}`} data-json-offset={token.start} style={jsonTokenStyle(token.type)}>
-                                                    {token.text}
-                                                </span>
-                                            ))
+                                            ? renderFoldedJson()
                                             : bodyView.displayText}
                                     </pre>
                                 </ResponseBodyContextMenu>
@@ -1030,42 +1151,17 @@ function responseBodyContainerStyle(): React.CSSProperties {
         flex: 1,
         display: "flex",
         position: "relative",
+        flexDirection: "column",
         overflow: "hidden",
     };
 }
 
-function bodyModeControlsStyle(visible: boolean, hasCopyButton: boolean): React.CSSProperties {
+function bodyModeControlsStyle(): React.CSSProperties {
     return {
-        position: "absolute",
-        top: 10,
-        right: hasCopyButton ? 168 : 10,
+        order: -1,
         zIndex: 4,
         display: "flex",
         gap: 6,
-        opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0)" : "translateY(-4px)",
-        pointerEvents: visible ? "auto" : "none",
-        transition: "opacity 120ms ease, transform 120ms ease",
-    };
-}
-
-function saveResponseButtonStyle(hasCopyButton: boolean): React.CSSProperties {
-    return {
-        ...buttonStyle(false),
-        position: "absolute",
-        top: 12,
-        right: hasCopyButton ? 50 : 12,
-        zIndex: 6,
-        height: 30,
-        padding: "0 10px",
-        borderRadius: 8,
-        border: "1px solid var(--pg-border-soft)",
-        background: "var(--pg-surface-overlay)",
-        color: "var(--pg-text-muted)",
-        cursor: "pointer",
-        fontSize: 12,
-        fontWeight: 650,
-        boxShadow: "0 8px 18px rgba(2, 6, 23, 0.18)",
     };
 }
 
@@ -1101,27 +1197,8 @@ function findMatchStyle(active: boolean): React.CSSProperties {
 }
 
 function copyBodyButtonStyle(copyState: CopyState): React.CSSProperties {
-    const baseStyle: React.CSSProperties = {
-        position: "absolute",
-        top: 12,
-        right: 12,
-        zIndex: 6,
-        width: 30,
-        height: 30,
-        padding: 0,
-        borderRadius: 8,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        boxShadow: "0 8px 18px rgba(2, 6, 23, 0.18)",
-        cursor: "pointer",
-        transition: "opacity 220ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1), filter 220ms ease",
-    };
-
     if (copyState === "copied") {
         return {
-            ...buttonStyle(false),
-            ...baseStyle,
             border: "1px solid rgba(34, 197, 94, 0.7)",
             background: "rgba(22, 163, 74, 0.16)",
             color: "var(--pg-copy-success-text)",
@@ -1130,21 +1207,13 @@ function copyBodyButtonStyle(copyState: CopyState): React.CSSProperties {
 
     if (copyState === "error") {
         return {
-            ...buttonStyle(false),
-            ...baseStyle,
             border: "1px solid rgba(239, 68, 68, 0.75)",
             background: "rgba(239, 68, 68, 0.14)",
             color: "var(--pg-copy-error-text)",
         };
     }
 
-    return {
-        ...buttonStyle(false),
-        ...baseStyle,
-        border: "1px solid var(--pg-border-soft)",
-        background: "var(--pg-surface-overlay)",
-        color: "var(--pg-text-muted)",
-    };
+    return {};
 }
 
 function copyButtonTitle(copyState: CopyState): string {
@@ -1242,7 +1311,7 @@ function CopyStatusIcon({ state }: { state: CopyState }) {
     );
 }
 
-function responsePreStyle(hasBodyModeControls: boolean): React.CSSProperties {
+function responsePreStyle(): React.CSSProperties {
     return {
         margin: 0,
         ...editorSurfaceStyle(),
@@ -1251,8 +1320,9 @@ function responsePreStyle(hasBodyModeControls: boolean): React.CSSProperties {
         minHeight: 0,
         flex: 1,
         overflow: "auto",
-        borderRadius: 12,
-        padding: hasBodyModeControls ? "42px 12px 12px" : 12,
+        border: 0,
+        borderRadius: 6,
+        padding: 8,
         boxSizing: "border-box",
         fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
         fontSize: 13,

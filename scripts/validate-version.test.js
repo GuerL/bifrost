@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import YAML from 'yaml';
 import assert from 'node:assert/strict';
 import { parseSemver } from './set-version.js';
-import { compareVersions, validateVersions, assertIncreasing, validateCurrentVersion } from './validate-version.js';
+import { compareVersions, validateVersions, assertIncreasing, validateCurrentVersion, isReleaseRelevantFile, validatePullRequestVersion, resolvePullRequestChanges } from './validate-version.js';
 
 test('independent tag dispatch orchestration and preserved build configuration', () => {
     const load = name => YAML.parse(fs.readFileSync(`.github/workflows/${name}.yml`, 'utf8'));
@@ -68,10 +68,11 @@ test('only the Cargo package version is used and all three files must agree', ()
 vi.mock('node:child_process', async importOriginal => ({ ...await importOriginal(), execFileSync: vi.fn() }));
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
-async function scenario({ base, exists = false, releases = [], remoteError = false, apiError = false, pages, automatic = false, releaseBase = false } = {}) {
+async function scenario({ base, exists = false, releases = [], remoteError = false, apiError = false, pages, automatic = false, releaseBase = false, files = ['README.md'] } = {}) {
     const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
     vi.stubEnv('RELEASE_BASE_SHA', releaseBase ? 'previous-main' : '');
     vi.stubEnv('BASE_SHA', base === undefined || releaseBase ? '' : 'base-sha');
+    vi.stubEnv('PR_HEAD_SHA', 'head-sha');
     vi.stubEnv('EXPECTED_TAG', '');
     vi.stubEnv('VALIDATION_REF', '');
     vi.stubEnv('CHECK_REMOTE', 'true');
@@ -82,6 +83,9 @@ async function scenario({ base, exists = false, releases = [], remoteError = fal
     vi.stubEnv('GITHUB_OUTPUT', output);
     execFileSync.mockImplementation((command, args) => {
         if (args[0] === 'show') return JSON.stringify({ version: base });
+        if (args[0] === 'rev-parse') return args[2].split('^')[0];
+        if (args[0] === 'merge-base') return 'merge-base';
+        if (args[0] === 'diff') return files.join('\0') + '\0';
         if (remoteError) throw new Error('remote unavailable');
         return exists ? `abc refs/tags/v${version}` : '';
     });
@@ -331,4 +335,114 @@ test('post-tag validation refuses a release published during orchestration', asy
     vi.stubEnv('RELEASE_ELIGIBILITY', 'true');
     await assert.rejects(scenario({ exists: true,
         releases: [{ tag_name: 'v1.16.2', published_at: 'today' }] }), /already published/);
+});
+
+
+test.each([
+    ['README.md', false], ['CONTRIBUTING.md', false], ['docs/releases.md', false],
+    ['design/qvb/v1/README.md', false], ['.github/workflows/release.yml', false],
+    ['.github/ISSUE_TEMPLATE/bug.yml', false], ['.github/PULL_REQUEST_TEMPLATE.md', false],
+    ['.github/FUNDING.yml', false], ['LICENSE', false], ['.gitignore', false],
+    ['src/App.tsx', true], ['src/App.css', true], ['src/README.md', true],
+    ['src-tauri/src/main.rs', true], ['src-tauri/tauri.conf.json', true],
+    ['package.json', true], ['package-lock.json', true], ['src-tauri/Cargo.lock', true],
+    ['vite.config.ts', true], ['scripts/build-macos-release.js', true],
+    ['scripts/validate-version.js', true], ['src/App.test.tsx', true],
+    ['public/help.md', true], ['docs/example.js', true], ['unknown', true],
+])('release relevance of %s is %s', (file, expected) => {
+    assert.equal(isReleaseRelevantFile(file), expected);
+});
+
+test.each([
+    ['1.16.2', ['src/App.tsx'], false],
+    ['1.16.3', ['src/App.tsx'], true],
+    ['1.17.0', ['src/App.tsx'], true],
+    ['2.0.0', ['src/App.tsx'], true],
+    ['1.16.1', ['src/App.tsx'], false],
+    ['1.16.2', ['README.md'], true],
+    ['1.16.2', ['.github/workflows/version-check.yml'], true],
+    ['1.16.2', ['README.md', 'src/App.tsx'], false],
+    ['1.16.2', ['package-lock.json'], false],
+    ['1.16.2', ['vite.config.ts'], false],
+    ['1.16.2+build.1', ['src/App.tsx'], false],
+    ['1.16.3-rc.1', ['src/App.tsx'], true],
+    ['1.16.2-rc.1', ['src/App.tsx'], false],
+    ['invalid', ['src/App.tsx'], false],
+    ['1.16.1', ['README.md'], false],
+])('PR policy: %s with %j passes=%s', (version, files, passes) => {
+    const validate = () => validatePullRequestVersion(version, '1.16.2', files);
+    if (passes) assert.doesNotThrow(validate);
+    else assert.throws(validate);
+});
+
+test('missing bump diagnostic includes versions and suggestions', () => {
+    assert.throws(() => validatePullRequestVersion('1.16.2', '1.16.2', ['src/App.css']),
+        /Base version: 1.16.2[\s\S]*PR version:   1.16.2[\s\S]*Patch: 1.16.3[\s\S]*Minor: 1.17.0/);
+});
+
+test('PR workflow keeps required status name, exact refs, read permissions and no path filters', () => {
+    const workflow = YAML.parse(fs.readFileSync('.github/workflows/version-check.yml', 'utf8'));
+    assert.equal(workflow.name, 'Version validation');
+    assert.equal(workflow.jobs['version-check'].name, 'Version validation');
+    assert.deepEqual(workflow.on, { pull_request: { branches: ['main'] } });
+    assert.deepEqual(workflow.permissions, { contents: 'read' });
+    const steps = workflow.jobs['version-check'].steps;
+    assert.equal(steps[0].with.ref, '${{ github.event.pull_request.head.sha }}');
+    assert.equal(steps[0].with['fetch-depth'], 0);
+    assert.match(steps[1].run, /git fetch --no-tags origin "\$BASE_SHA" "\$PR_HEAD_SHA"/);
+    assert.equal(steps.at(-1).env.BASE_SHA, '${{ github.event.pull_request.base.sha }}');
+    assert.equal(steps.at(-1).env.PR_HEAD_SHA, '${{ github.event.pull_request.head.sha }}');
+});
+
+test('real Git diff covers multiple commits, rebases, renames and exact target version', async () => {
+    const { execFileSync: realExec } = await vi.importActual('node:child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-pr-diff-'));
+    const run = (...args) => realExec('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+    const write = (file, value) => fs.writeFileSync(path.join(dir, file), value);
+    try {
+        run('init', '-b', 'main');
+        run('config', 'user.email', 'fixture@example.com');
+        run('config', 'user.name', 'Fixture');
+        write('package.json', JSON.stringify({ version: '1.16.2' }));
+        write('README.md', 'documentation');
+        run('add', '.'); run('commit', '-m', 'base');
+        const originalBase = run('rev-parse', 'HEAD');
+        run('checkout', '-b', 'feature');
+        write('app.js', 'application'); run('add', '.'); run('commit', '-m', 'application');
+        write('README.md', 'updated docs'); run('add', '.'); run('commit', '-m', 'docs');
+        const head = run('rev-parse', 'HEAD');
+        run('checkout', 'main');
+        write('package.json', JSON.stringify({ version: '1.16.3' }));
+        run('add', '.'); run('commit', '-m', 'target update');
+        const base = run('rev-parse', 'HEAD');
+        execFileSync.mockImplementation((command, args, options) => realExec(command, args, { ...options, cwd: dir }));
+        const before = resolvePullRequestChanges(base, head);
+        assert.equal(before.version, '1.16.3');
+        assert.deepEqual(before.files.sort(), ['README.md', 'app.js']);
+        assert.throws(() => validatePullRequestVersion('1.16.3', before.version, before.files));
+        run('checkout', 'feature'); run('rebase', 'main');
+        run('mv', 'app.js', 'example.md'); run('commit', '-m', 'rename application');
+        const after = resolvePullRequestChanges(base, run('rev-parse', 'HEAD'));
+        assert.deepEqual(after.files.sort(), ['README.md', 'example.md']);
+        // A rename of a file already on the base reports its removed source too.
+        run('checkout', 'main'); write('runtime.js', 'runtime');
+        run('add', '.'); run('commit', '-m', 'runtime base');
+        const renameBase = run('rev-parse', 'HEAD');
+        run('mv', 'runtime.js', 'runtime.md'); run('commit', '-m', 'rename');
+        assert.deepEqual(resolvePullRequestChanges(renameBase, run('rev-parse', 'HEAD')).files.sort(), ['runtime.js', 'runtime.md']);
+        assert.throws(() => resolvePullRequestChanges('missing-commit', head), /Cannot resolve PR base/);
+        assert.throws(() => resolvePullRequestChanges(originalBase, 'missing-head'), /Cannot resolve PR base/);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('full validator rejects unchanged application PR before remote checks', async () => {
+    await assert.rejects(scenario({ base: '1.16.2', files: ['src/App.tsx'] }), /Application changes were detected/);
+});
+
+test('PR event cannot silently omit base or head', async () => {
+    vi.stubEnv('GITHUB_EVENT_NAME', 'pull_request');
+    vi.stubEnv('BASE_SHA', '');
+    vi.stubEnv('PR_HEAD_SHA', '');
+    await assert.rejects(validateCurrentVersion(), /requires BASE_SHA and PR_HEAD_SHA/);
 });

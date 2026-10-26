@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
@@ -15,7 +15,7 @@ pub struct RequestRegistry {
 
 #[derive(Clone)]
 pub struct StoredResponseBody {
-    pub bytes: Vec<u8>,
+    pub bytes: Arc<Vec<u8>>,
 }
 
 #[derive(Default)]
