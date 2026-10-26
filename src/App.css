@@ -998,3 +998,6 @@ button.pg-request-tab-close:hover:not(:disabled) .pg-request-tab-close-icon {
 .pg-json-disclosure-slot { display: flex; align-items: center; justify-content: center; height: 1.5em; }
 .pg-json-disclosure { width: 14px; height: 100%; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 3px; font: inherit; }
 .pg-json-fold-count { color: var(--pg-text-muted); font-size: 11px; }
+.pg-json-fold-preview { appearance: none; border: 0; padding: 0; margin: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.pg-json-fold-preview:hover { color: var(--pg-tab-active-border); }
+.pg-json-fold-preview:focus-visible { outline: 2px solid var(--pg-tab-active-border); outline-offset: 2px; }

@@ -380,7 +380,11 @@ export default function ResponsePanel({
                 </button>}</span>
                 <span className="pg-json-line-content">
                     {renderText(contentStart, range?.collapsed ? range.node.valueStart : lineEnd)}
-                    {range?.collapsed && <><span data-json-offset={range.node.valueStart} data-json-anchor="">{range.node.array ? "[…]" : "{…}"}</span><span className="pg-json-fold-count" data-json-offset={range.node.valueStart} data-json-anchor=""> {range.node.count} {range.node.array ? (range.node.count === 1 ? "item" : "items") : (range.node.count === 1 ? "key" : "keys")}</span>{renderText(range.end, lineEnd)}</>}
+                    {range?.collapsed && <><button type="button" className="pg-json-fold-preview"
+                        aria-label={`Expand ${range.node.array ? "array" : "object"} ${label}`} aria-expanded={false}
+                        data-json-offset={range.node.valueStart} data-json-anchor=""
+                        onClick={event => { event.stopPropagation(); setFolds(toggleJsonFold(folds, range.node)); }}
+                    >{range.node.array ? "[…]" : "{…}"}</button><span className="pg-json-fold-count" data-json-offset={range.node.valueStart} data-json-anchor=""> {range.node.count} {range.node.array ? (range.node.count === 1 ? "item" : "items") : (range.node.count === 1 ? "key" : "keys")}</span>{renderText(range.end, lineEnd)}</>}
                     {newline >= 0 && renderText(newline, newline + 1)}
                 </span>
             </span>);
