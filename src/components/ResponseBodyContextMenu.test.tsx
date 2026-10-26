@@ -22,6 +22,7 @@ let formatted: string;
 beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
+    HTMLElement.prototype.scrollIntoView = vi.fn();
     vi.mocked(copyTextToClipboard).mockResolvedValue(undefined);
     host = document.createElement("div");
     document.body.append(host);
@@ -49,6 +50,11 @@ async function click(element: HTMLElement) {
 }
 async function key(element: HTMLElement, value: string, shiftKey = false) {
     await act(async () => element.dispatchEvent(new KeyboardEvent("keydown", { key: value, shiftKey, bubbles: true, cancelable: true })));
+}
+async function treeAction(label: string) {
+    await key(button("JSON tree options"), "ArrowDown");
+    const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(item => item.textContent?.includes(label))!;
+    await click(option);
 }
 async function context(token: string, target?: HTMLElement) {
     const offset = formatted.indexOf(token);
@@ -113,8 +119,8 @@ describe("response JSON row layout", () => {
                 // Folding descendants before parents also exercises retained nested state.
                 for (const path of [...paths].reverse()) { await click(button(`Collapse ${path}`)); checkRows(); }
                 for (const path of paths) { await click(button(`Expand ${path}`)); checkRows(); }
-                await click(button("Collapse All")); checkRows();
-                await click(button("Expand All")); checkRows();
+                await treeAction("Collapse All"); checkRows();
+                await treeAction("Expand All"); checkRows();
             }
         } finally {
             style.remove();
@@ -151,7 +157,7 @@ describe("response JSON contextual copy actions", () => {
     it("copies a full collapsed subtree without changing folds, then still expands its preview", async () => {
         const subtree = { nested: [{ id: 42 }, { id: 7 }], empty: [] };
         await render({ selected: subtree, after: true });
-        await click(button("Collapse All"));
+        await treeAction("Collapse All");
         const preview = host.querySelector<HTMLButtonElement>(".pg-json-fold-preview")!;
         expect(preview.textContent).toBe("{…}");
         // The preview is anchored at the actual value, not the abbreviated visible text.
@@ -163,7 +169,7 @@ describe("response JSON contextual copy actions", () => {
         expect(button("Expand $.selected").getAttribute("aria-expanded")).toBe("false");
         await click(preview);
         expect(button("Collapse $.selected").getAttribute("aria-expanded")).toBe("true");
-        await click(button("Expand All"));
+        await treeAction("Expand All");
         expect(host.querySelector(".pg-json-fold-preview")).toBeNull();
         expect(host.textContent).toContain("42");
     });
@@ -284,15 +290,15 @@ describe("response JSON contextual copy actions", () => {
 });
 
 
-describe("JSON expansion depth toolbar", () => {
+describe("JSON tree options toolbar", () => {
     async function selectDepth(label: string) {
-        const trigger = host.querySelector<HTMLButtonElement>('[aria-label="JSON expansion depth"]')!;
+        const trigger = host.querySelector<HTMLButtonElement>('[aria-label="JSON tree options"]')!;
         // Radix scrolls the active option; jsdom does not implement element geometry.
         const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
         try {
             await click(trigger);
             const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'))
-                .find(element => element.textContent?.replace("✓", "").trim() === label)!;
+                .find(element => element.textContent?.replace("✓", "").trim() === `Depth ${label}`)!;
             expect(option).toBeDefined();
             await click(option);
             await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
@@ -300,14 +306,31 @@ describe("JSON expansion depth toolbar", () => {
         return trigger;
     }
 
+    it("opens with the keyboard, marks the active depth and dismisses with Escape or outside click", async () => {
+        await render({ child: { value: 1 } });
+        const trigger = button("JSON tree options");
+        trigger.focus();
+        await key(trigger, "ArrowDown");
+        expect(document.querySelector('[role="listbox"]')).toBeTruthy();
+        expect(document.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain("Depth All");
+        await key(document.activeElement as HTMLElement, "Escape");
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+        expect(document.querySelector('[role="listbox"]')).toBeNull();
+        expect(document.activeElement).toBe(trigger);
+        await key(trigger, "ArrowDown");
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+        await act(async () => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+        expect(document.querySelector('[role="listbox"]')).toBeNull();
+    });
+
     it("synchronizes presets, bulk actions and manual previews while preserving copy actions", async () => {
         HTMLElement.prototype.scrollIntoView ??= () => {};
         await render({ parent: [{ child: { values: [42] } }], empty: {}, primitive: true });
-        const trigger = host.querySelector<HTMLButtonElement>('[aria-label="JSON expansion depth"]')!;
-        expect(trigger.textContent).toBe("All");
+        const trigger = host.querySelector<HTMLButtonElement>('[aria-label="JSON tree options"]')!;
+        expect(trigger.textContent).toBe("Tree");
         for (const depth of ["1", "2", "3", "All", "1", "3"]) {
             await selectDepth(depth);
-            expect(trigger.textContent).toBe(depth);
+            expect(trigger.textContent).toBe("Tree");
             expect(button("Collapse $").getAttribute("aria-expanded")).toBe("true");
             const collapsedPath = { "1": "$.parent", "2": "$.parent[0]", "3": "$.parent[0].child" }[depth];
             if (collapsedPath) expect(button(`Expand ${collapsedPath}`).getAttribute("aria-expanded")).toBe("false");
@@ -323,11 +346,11 @@ describe("JSON expansion depth toolbar", () => {
         await click(button("Copy JSON"));
         expect(copyTextToClipboard).toHaveBeenLastCalledWith(JSON.stringify({ values: [42] }, null, 2));
         await click(preview);
-        expect(trigger.textContent).toBe("Custom");
-        await click(button("Collapse All"));
-        expect(trigger.textContent).toBe("1");
-        await click(button("Expand All"));
-        expect(trigger.textContent).toBe("All");
+        expect(trigger.textContent).toBe("Tree · Custom");
+        await treeAction("Collapse All");
+        expect(trigger.textContent).toBe("Tree");
+        await treeAction("Expand All");
+        expect(trigger.textContent).toBe("Tree");
         await context("42");
         await click(button("Copy Value"));
         expect(copyTextToClipboard).toHaveBeenLastCalledWith("42");
@@ -344,15 +367,15 @@ describe("JSON expansion depth toolbar", () => {
         await show();
         await selectDepth("2");
         await show();
-        expect(host.querySelector('[aria-label="JSON expansion depth"]')?.textContent).toBe("2");
+        expect(host.querySelector('[aria-label="JSON tree options"]')?.textContent).toBe("Tree");
         await show(response, "second");
-        expect(host.querySelector('[aria-label="JSON expansion depth"]')?.textContent).toBe("All");
+        expect(host.querySelector('[aria-label="JSON tree options"]')?.textContent).toBe("Tree");
         await selectDepth("1");
         await show({ ...response });
-        expect(host.querySelector('[aria-label="JSON expansion depth"]')?.textContent).toBe("All");
+        expect(host.querySelector('[aria-label="JSON tree options"]')?.textContent).toBe("Tree");
         await show({ ...response, body_text: "plain text" });
-        expect(host.querySelector('[aria-label="JSON expansion depth"]')).toBeNull();
+        expect(host.querySelector('[aria-label="JSON tree options"]')).toBeNull();
         await show();
-        expect(host.querySelector('[aria-label="JSON expansion depth"]')?.textContent).toBe("All");
+        expect(host.querySelector('[aria-label="JSON tree options"]')?.textContent).toBe("Tree");
     });
 });

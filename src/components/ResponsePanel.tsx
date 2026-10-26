@@ -539,21 +539,6 @@ export default function ResponsePanel({
                             </div>
                         </div>
                     )}
-                    {!transportError && findOpen && bodyMode === "raw" && !isBinaryResponse && (
-                        <FindBar
-                            inputRef={findInputRef}
-                            query={findQuery}
-                            activeMatchIndex={activeMatchIndex}
-                            matchCount={bodySearchMatches.length}
-                            onQueryChange={setFindQuery}
-                            onPreviousMatch={moveToPreviousMatch}
-                            onNextMatch={moveToNextMatch}
-                            onClose={() => setFindOpen(false)}
-                            placeholder="Find in response body"
-                            caseSensitive={findCaseSensitive}
-                            onToggleCaseSensitive={() => setFindCaseSensitive((previous) => !previous)}
-                        />
-                    )}
                     {!transportError && (
                         <div
                             className="pg-response-body-container"
@@ -572,16 +557,16 @@ export default function ResponsePanel({
                                             </svg>
                                         </button>
                                     )}
-                                    {canSaveResponse && (
-                                        <button
-                                            onClick={() => void handleSaveResponse()}
-                                            disabled={saveState === "saving"}
-                                            className="pg-response-action"
-                                            title="Save response"
-                                        >
-                                            {saveState === "saving" ? "Saving..." : "Save response"}
-                                        </button>
-                                    )}
+                                    <button type="button"
+                                        onClick={() => void handleSaveResponse()}
+                                        disabled={!canSaveResponse || saveState === "saving"}
+                                        className="pg-response-action pg-response-icon-button"
+                                        aria-label="Save response" aria-busy={saveState === "saving"}
+                                        title={saveState === "saving" ? "Saving response…" : "Save response"}>
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                            <path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
+                                    </button>
                                     {bodyView.copyText && !isBinaryResponse && (
                                         <button
                                             className="pg-response-action pg-response-icon-button pg-response-copy-button"
@@ -594,20 +579,21 @@ export default function ResponsePanel({
                                         </button>
                                     )}
                                 </div>
-                                {jsonPathIndex?.containers.some(node => node.count > 0) && bodyMode === "raw" && (
+                                {bodyView.isJson && bodyMode === "raw" && (
                                     <div className="pg-json-fold-toolbar">
-                                        <button onClick={() => applyDepth(1)}>Collapse All</button>
-                                        <button onClick={() => applyDepth("all")}>Expand All</button>
-                                        <div className="pg-json-depth">
-                                            <span>Depth</span>
-                                            <AppSelect ariaLabel="JSON expansion depth" value={String(jsonDepthSelection(folds))}
+                                        <span className="pg-response-format">JSON</span>
+                                        {jsonPathIndex?.containers.some(node => node.count > 0) && (
+                                            <AppSelect ariaLabel="JSON tree options" triggerLabel={jsonDepthSelection(folds) === "custom" ? "Tree · Custom" : "Tree"}
+                                                value={String(jsonDepthSelection(folds))}
                                                 options={[
-                                                    { value: "1", label: "1" }, { value: "2", label: "2" },
-                                                    { value: "3", label: "3" }, { value: "all", label: "All" },
+                                                    { value: "collapse", label: "Collapse All" },
+                                                    { value: "expand", label: "Expand All" },
+                                                    { value: "1", label: "Depth 1" }, { value: "2", label: "Depth 2" },
+                                                    { value: "3", label: "Depth 3" }, { value: "all", label: "Depth All" },
                                                     ...(jsonDepthSelection(folds) === "custom" ? [{ value: "custom", label: "Custom", disabled: true }] : []),
                                                 ]}
-                                                onValueChange={value => applyDepth(value === "all" ? "all" : Number(value) as JsonDepthPreset)} />
-                                        </div>
+                                                onValueChange={value => applyDepth(value === "expand" || value === "all" ? "all" : value === "collapse" ? 1 : Number(value) as JsonDepthPreset)} />
+                                        )}
                                     </div>
                                 )}
                                 {bodyView.canPreview && (
@@ -627,6 +613,21 @@ export default function ResponsePanel({
                                     </div>
                                 )}
                             </div>
+                            {findOpen && bodyMode === "raw" && !isBinaryResponse && (
+                                <FindBar compact
+                                    inputRef={findInputRef}
+                                    query={findQuery}
+                                    activeMatchIndex={activeMatchIndex}
+                                    matchCount={bodySearchMatches.length}
+                                    onQueryChange={setFindQuery}
+                                    onPreviousMatch={moveToPreviousMatch}
+                                    onNextMatch={moveToNextMatch}
+                                    onClose={() => setFindOpen(false)}
+                                    placeholder="Find in response body"
+                                    caseSensitive={findCaseSensitive}
+                                    onToggleCaseSensitive={() => setFindCaseSensitive((previous) => !previous)}
+                                />
+                            )}
                             {isBinaryResponse ? (
                                 <FileResponseState response={response!} onSave={handleSaveResponse} saving={saveState === "saving"} />
                             ) : bodyMode === "preview" && bodyView.canPreview ? (
@@ -1322,8 +1323,9 @@ function responsePreStyle(): React.CSSProperties {
         minHeight: 0,
         flex: 1,
         overflow: "auto",
-        borderRadius: 12,
-        padding: 12,
+        border: 0,
+        borderRadius: 6,
+        padding: 8,
         boxSizing: "border-box",
         fontFamily: '"JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace',
         fontSize: 13,

@@ -14,6 +14,7 @@ type AppSelectProps = {
     disabled?: boolean;
     ariaLabel?: string;
     style?: CSSProperties;
+    triggerLabel?: string;
 };
 
 const EMPTY_VALUE_TOKEN = "__pg-app-select-empty__";
@@ -33,6 +34,7 @@ export default function AppSelect({
     disabled,
     ariaLabel,
     style,
+    triggerLabel,
 }: AppSelectProps) {
     const normalizedValue = encodeOptionValue(value);
 
@@ -43,7 +45,7 @@ export default function AppSelect({
             onValueChange={(nextValue) => onValueChange(decodeOptionValue(nextValue))}
         >
             <Select.Trigger className="pg-app-select-trigger" style={style} aria-label={ariaLabel}>
-                <Select.Value />
+                <Select.Value>{triggerLabel}</Select.Value>
                 <Select.Icon className="pg-app-select-chevron" aria-hidden>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
                         <path

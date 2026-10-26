@@ -61,8 +61,7 @@ describe("response JSON disclosure integration", () => {
         expect(html.match(/class="pg-json-disclosure"/g)).toHaveLength(3);
         expect(html).toContain('type="button"');
         expect(html).toContain('data-json-offset=');
-        expect(html).toContain('Collapse All');
-        expect(html).toContain('Expand All');
+        expect(html).toContain('aria-label="JSON tree options"');
         expect(html).toContain('42');
     });
 

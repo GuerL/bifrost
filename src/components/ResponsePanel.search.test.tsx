@@ -4,6 +4,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HttpResponseDto } from "../types.ts";
 import ResponsePanel from "./ResponsePanel.tsx";
+import { invoke } from "@tauri-apps/api/core";
+import { copyTextToClipboard } from "../helpers/ClipboardRequestTransfer.ts";
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(true) }));
+vi.mock("../helpers/ClipboardRequestTransfer.ts", () => ({ copyTextToClipboard: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../helpers/Toast.tsx", () => ({ notifyError: vi.fn(), notifySuccess: vi.fn() }));
 
 // Keep the depth control accessible in jsdom without testing Radix's pointer handling.
 vi.mock("./AppSelect.tsx", () => ({ default: ({ value, options, onValueChange, ariaLabel }: {
@@ -24,7 +29,12 @@ function render(requestId = "a") {
 }
 function click(label: string) {
     const button = host.querySelector(`[aria-label="${label}"]`) ?? [...host.querySelectorAll("button")].find(button => button.textContent === label);
-    expect(button, label).toBeTruthy();
+    if (!["Collapse All", "Expand All"].includes(label)) expect(button, label).toBeTruthy();
+    if (!button && ["Collapse All", "Expand All"].includes(label)) {
+        const select = host.querySelector("select")!;
+        act(() => { select.value = label === "Collapse All" ? "collapse" : "expand"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+        return;
+    }
     act(() => (button as HTMLButtonElement).click());
 }
 function query(value: string) {
@@ -97,9 +107,28 @@ describe("structured response search", () => {
         const buttons = [...group.querySelectorAll("button")];
         expect(buttons).toHaveLength(3);
         expect(buttons[0].getAttribute("aria-label")).toBe("Find in response");
-        expect(buttons[1].textContent).toBe("Save response");
+        expect(buttons[1].getAttribute("aria-label")).toBe("Save response");
         expect(buttons[1].disabled).toBe(false);
         expect(buttons[2].getAttribute("aria-label")).toBe("Copy response");
+    });
+    it("saves the stored body and copies the formatted response through icon actions", async () => {
+        response = { ...response, body: { kind: "text", body_id: "stored-body", available: true,
+            downloadable: true, size: 100, filename: "response.json", description: "JSON" } };
+        render();
+        await act(async () => { click("Save response"); });
+        expect(invoke).toHaveBeenLastCalledWith("save_response_body_to_file", { bodyId: "stored-body", suggestedFilename: "response.json" });
+        await act(async () => { click("Copy response"); });
+        expect(copyTextToClipboard).toHaveBeenLastCalledWith(JSON.stringify(JSON.parse(response.body_text), null, 2));
+    });
+    it("keeps non-JSON actions grouped and reveals search immediately below the toolbar", () => {
+        response = { ...response, body_text: "plain response" }; render();
+        expect(host.querySelector(".pg-json-fold-toolbar")).toBeNull();
+        expect(host.querySelectorAll(".pg-response-toolbar-actions button")).toHaveLength(3);
+        expect(host.querySelector<HTMLButtonElement>('[aria-label="Save response"]')?.disabled).toBe(true);
+        expect(host.querySelector(".pg-response-search")).toBeNull();
+        click("Find in response");
+        expect(host.querySelector(".pg-response-toolbar")?.nextElementSibling?.className).toBe("pg-response-search");
+        expect(document.activeElement).toBe(host.querySelector("input"));
     });
     it("finds hidden keys and values, reveals only ancestors, highlights exact text and wraps navigation", () => {
         click("Collapse All"); open("needle");
