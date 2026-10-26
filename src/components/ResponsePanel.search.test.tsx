@@ -51,6 +51,56 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); scroll.mockClear(); });
 
 describe("structured response search", () => {
+    it("toggles the shared search interface, focuses it, preserves queries and cleans up JSON expansion", () => {
+        const button = host.querySelector<HTMLButtonElement>('[aria-label="Find in response"]')!;
+        expect(button.getAttribute("aria-pressed")).toBe("false");
+        expect(button.textContent).toBe("");
+        expect(button.querySelector('svg[aria-hidden="true"]')).toBeTruthy();
+        click("Collapse All"); click("Find in response");
+        expect(document.activeElement).toBe(host.querySelector("input"));
+        expect(button.getAttribute("aria-pressed")).toBe("true");
+        query("Needle"); click("Next match");
+        expect(collapsed("$.branch")).toBe(false);
+        click("Find in response");
+        expect(host.querySelector("input")).toBeNull();
+        expect(button.getAttribute("aria-pressed")).toBe("false");
+        expect(collapsed("$.branch")).toBe(true);
+        for (let i = 0; i < 3; i++) {
+            click("Find in response");
+            expect(host.querySelector("input")?.value).toBe("Needle");
+            expect(document.activeElement).toBe(host.querySelector("input"));
+            click("Find in response");
+        }
+        open("Needle");
+        expect(button.getAttribute("aria-pressed")).toBe("true");
+        button.focus();
+        act(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true })));
+        expect(document.activeElement).toBe(host.querySelector("input"));
+        expect(host.querySelectorAll('input[placeholder="Find in response body"]')).toHaveLength(1);
+        click("Close find"); expect(button.getAttribute("aria-pressed")).toBe("false");
+    });
+    it.each([
+        ["Mozilla/5.0 (Macintosh; Intel Mac OS X)", "⌘F"],
+        ["Mozilla/5.0 (Windows NT 10.0)", "Ctrl+F"],
+        ["Mozilla/5.0 (X11; Linux x86_64)", "Ctrl+F"],
+    ])("labels the search shortcut for %s", (userAgent, shortcut) => {
+        vi.spyOn(navigator, "userAgent", "get").mockReturnValue(userAgent);
+        render();
+        expect(host.querySelector('[aria-label="Find in response"]')?.getAttribute("title"))
+            .toBe(`Find in response (${shortcut})`);
+    });
+    it("groups search immediately before Save response and leaves clipboard available", () => {
+        response = { ...response, body: { kind: "text", body_id: "response-body", available: true,
+            downloadable: true, size: 100, filename: "response.json", description: "JSON" } };
+        render();
+        const group = host.querySelector(".pg-response-toolbar-actions")!;
+        const buttons = [...group.querySelectorAll("button")];
+        expect(buttons).toHaveLength(3);
+        expect(buttons[0].getAttribute("aria-label")).toBe("Find in response");
+        expect(buttons[1].textContent).toBe("Save response");
+        expect(buttons[1].disabled).toBe(false);
+        expect(buttons[2].getAttribute("aria-label")).toBe("Copy response");
+    });
     it("finds hidden keys and values, reveals only ancestors, highlights exact text and wraps navigation", () => {
         click("Collapse All"); open("needle");
         expect(collapsed("$.branch")).toBe(true);
