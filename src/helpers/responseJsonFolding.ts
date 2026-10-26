@@ -2,10 +2,17 @@ import type { JsonContainer } from "./responseJsonPath.ts";
 
 // Offsets identify structural nodes within one immutable response snapshot.
 // The default lets bulk actions remain O(1); overrides preserve nested choices.
-export type JsonFoldState = { collapsed: boolean; overrides: ReadonlySet<number> };
+export type JsonDepthPreset = 1 | 2 | 3 | "all";
+export type JsonFoldState = { collapsed: boolean; depth?: 1 | 2 | 3; overrides: ReadonlySet<number> };
 export const expandedJson: JsonFoldState = { collapsed: false, overrides: new Set() };
+export function applyJsonDepth(depth: JsonDepthPreset): JsonFoldState {
+    return depth === "all" ? expandedJson : { collapsed: true, depth, overrides: new Set() };
+}
+export function jsonDepthSelection(state: JsonFoldState): JsonDepthPreset | "custom" {
+    return state.overrides.size ? "custom" : state.collapsed ? state.depth ?? 1 : "all";
+}
 export function isJsonCollapsed(state: JsonFoldState, node: JsonContainer): boolean {
-    const base = state.collapsed && node.depth > 0;
+    const base = state.collapsed && node.depth >= (state.depth ?? 1);
     return state.overrides.has(node.valueStart) ? !base : base;
 }
 export function toggleJsonFold(state: JsonFoldState, node: JsonContainer): JsonFoldState {

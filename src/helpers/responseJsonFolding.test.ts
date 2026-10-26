@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expandedJson, isJsonCollapsed, toggleJsonFold, visibleJsonContainers } from "./responseJsonFolding.ts";
+import { applyJsonDepth, jsonDepthSelection, expandedJson, isJsonCollapsed, toggleJsonFold, visibleJsonContainers } from "./responseJsonFolding.ts";
 import { indexResponseJson } from "./responseJsonPath.ts";
 
 const fixture = (value: unknown) => {
@@ -90,6 +90,53 @@ describe("response fold snapshot isolation", () => {
             expect(next.state).toBe(expandedJson);
             expect(next).not.toBe(previous);
             expect(resolveJsonFoldSnapshot(next, response, "first", previous.text).state).toBe(expandedJson);
+        }
+    });
+});
+
+
+describe("JSON depth presets", () => {
+    it.each([
+        { a: [{ b: { c: [1] } }], empty: {}, primitive: true },
+        [[{ b: { c: [1] } }], [], null],
+    ])("applies repeated presets using root-relative container depth: %j", value => {
+        const { text, index } = fixture(value);
+        for (const depth of [1, 2, 3, "all", 3, 1, "all", 2] as const) {
+            const state = applyJsonDepth(depth);
+            expect(jsonDepthSelection(state)).toBe(depth);
+            for (const node of index.containers) {
+                expect(isJsonCollapsed(state, node)).toBe(depth !== "all" && node.depth >= depth);
+                expect(index.copyAt(node.valueStart)?.text).toBe(JSON.stringify(JSON.parse(text.slice(node.valueStart, node.end)), null, 2));
+                expect(index.pathAt(node.start)).toBe(index.pathAt(node.valueStart));
+            }
+            const visible = visibleJsonContainers(index.containers, state);
+            expect(visible.every(range => range.node.count > 0)).toBe(true);
+            expect(visible.every(range => depth === "all" || range.node.depth <= depth)).toBe(true);
+            expect(isJsonCollapsed(state, index.containers[0])).toBe(false);
+        }
+        expect(JSON.parse(text)).toEqual(value);
+    });
+
+    it("keeps child overrides stable and replaces manual changes on the next preset", () => {
+        const { index } = fixture({ parent: { child: [1] }, sibling: [2] });
+        const [, parent, child, sibling] = index.containers;
+        let state = toggleJsonFold(applyJsonDepth(2), child);
+        expect(jsonDepthSelection(state)).toBe("custom");
+        state = toggleJsonFold(state, parent);
+        state = toggleJsonFold(state, parent);
+        expect(isJsonCollapsed(state, child)).toBe(false);
+        expect(isJsonCollapsed(state, sibling)).toBe(false);
+        expect(jsonDepthSelection(applyJsonDepth(1))).toBe(1);
+        expect(isJsonCollapsed(applyJsonDepth(1), child)).toBe(true);
+        expect(jsonDepthSelection(applyJsonDepth("all"))).toBe("all");
+    });
+
+    it.each([{}, [], null, 1, true, "text", { shallow: [1] }])("handles empty, primitive and shallow responses: %j", value => {
+        const { index } = fixture(value);
+        for (const depth of [1, 2, 3, "all"] as const) {
+            const visible = visibleJsonContainers(index.containers, applyJsonDepth(depth));
+            expect(visible.filter(range => range.node.count === 0)).toEqual([]);
+            if (depth === 3 || depth === "all") expect(visible.every(range => !range.collapsed)).toBe(true);
         }
     });
 });

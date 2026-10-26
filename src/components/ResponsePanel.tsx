@@ -1,4 +1,5 @@
-import { expandedJson, resolveJsonFoldSnapshot, toggleJsonFold, visibleJsonContainers, type JsonFoldState, type JsonFoldSnapshot } from "../helpers/responseJsonFolding.ts";
+import { applyJsonDepth, jsonDepthSelection, expandedJson, resolveJsonFoldSnapshot, toggleJsonFold, visibleJsonContainers, type JsonDepthPreset, type JsonFoldState, type JsonFoldSnapshot } from "../helpers/responseJsonFolding.ts";
+import AppSelect from "./AppSelect.tsx";
 import { editorSurfaceStyle } from "../design/editorTheme.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -557,8 +558,19 @@ export default function ResponsePanel({
                             )}
                             {jsonPathIndex?.containers.some(node => node.count > 0) && bodyMode === "raw" && (
                                 <div className="pg-json-fold-toolbar">
-                                    <button disabled={findOpen && hasFindQuery} onClick={() => setFolds({ collapsed: true, overrides: new Set() })}>Collapse All</button>
-                                    <button disabled={findOpen && hasFindQuery} onClick={() => setFolds(expandedJson)}>Expand All</button>
+                                    <button disabled={findOpen && hasFindQuery} onClick={() => setFolds(applyJsonDepth(1))}>Collapse All</button>
+                                    <button disabled={findOpen && hasFindQuery} onClick={() => setFolds(applyJsonDepth("all"))}>Expand All</button>
+                                    <div className="pg-json-depth">
+                                        <span>Depth</span>
+                                        <AppSelect ariaLabel="JSON expansion depth" value={String(jsonDepthSelection(folds))}
+                                            disabled={findOpen && hasFindQuery}
+                                            options={[
+                                                { value: "1", label: "1" }, { value: "2", label: "2" },
+                                                { value: "3", label: "3" }, { value: "all", label: "All" },
+                                                ...(jsonDepthSelection(folds) === "custom" ? [{ value: "custom", label: "Custom", disabled: true }] : []),
+                                            ]}
+                                            onValueChange={value => setFolds(applyJsonDepth(value === "all" ? "all" : Number(value) as JsonDepthPreset))} />
+                                    </div>
                                 </div>
                             )}
                             {bodyView.canPreview && (

@@ -282,3 +282,77 @@ describe("response JSON contextual copy actions", () => {
         expect(menu()).toBeNull();
     });
 });
+
+
+describe("JSON expansion depth toolbar", () => {
+    async function selectDepth(label: string) {
+        const trigger = host.querySelector<HTMLButtonElement>('[aria-label="JSON expansion depth"]')!;
+        // Radix scrolls the active option; jsdom does not implement element geometry.
+        const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+        try {
+            await click(trigger);
+            const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'))
+                .find(element => element.textContent?.replace("✓", "").trim() === label)!;
+            expect(option).toBeDefined();
+            await click(option);
+            await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+        } finally { scroll.mockRestore(); }
+        return trigger;
+    }
+
+    it("synchronizes presets, bulk actions and manual previews while preserving copy actions", async () => {
+        HTMLElement.prototype.scrollIntoView ??= () => {};
+        await render({ parent: [{ child: { values: [42] } }], empty: {}, primitive: true });
+        const trigger = host.querySelector<HTMLButtonElement>('[aria-label="JSON expansion depth"]')!;
+        expect(trigger.textContent).toBe("All");
+        for (const depth of ["1", "2", "3", "All", "1", "3"]) {
+            await selectDepth(depth);
+            expect(trigger.textContent).toBe(depth);
+            expect(button("Collapse $").getAttribute("aria-expanded")).toBe("true");
+            const collapsedPath = { "1": "$.parent", "2": "$.parent[0]", "3": "$.parent[0].child" }[depth];
+            if (collapsedPath) expect(button(`Expand ${collapsedPath}`).getAttribute("aria-expanded")).toBe("false");
+            else expect(host.querySelector(".pg-json-fold-preview")).toBeNull();
+            expect(document.activeElement).toBe(trigger);
+        }
+        const preview = host.querySelector<HTMLButtonElement>(".pg-json-fold-preview")!;
+        preview.focus();
+        await key(preview, "F10", true);
+        await click(button("Copy JSONPath"));
+        expect(copyTextToClipboard).toHaveBeenLastCalledWith("$.parent[0].child");
+        await key(preview, "F10", true);
+        await click(button("Copy JSON"));
+        expect(copyTextToClipboard).toHaveBeenLastCalledWith(JSON.stringify({ values: [42] }, null, 2));
+        await click(preview);
+        expect(trigger.textContent).toBe("Custom");
+        await click(button("Collapse All"));
+        expect(trigger.textContent).toBe("1");
+        await click(button("Expand All"));
+        expect(trigger.textContent).toBe("All");
+        await context("42");
+        await click(button("Copy Value"));
+        expect(copyTextToClipboard).toHaveBeenLastCalledWith("42");
+    });
+
+    it("resets the preset when receiving another response or switching request tabs and modes", async () => {
+        HTMLElement.prototype.scrollIntoView ??= () => {};
+        const response = { body_text: '{"child":[{"nested":[1]}]}', status: 200, headers: [], duration_ms: 1 };
+        const show = async (nextResponse = response, requestId = "first") => {
+            await act(async () => root.render(<ResponsePanel response={nextResponse} requestId={requestId}
+                statusText="OK" scriptReport={null} runtimeVariables={{}} onClearRuntimeVariables={() => {}}
+                activeTab="body" onTabChange={() => {}} />));
+        };
+        await show();
+        await selectDepth("2");
+        await show();
+        expect(host.querySelector('[aria-label="JSON expansion depth"]')?.textContent).toBe("2");
+        await show(response, "second");
+        expect(host.querySelector('[aria-label="JSON expansion depth"]')?.textContent).toBe("All");
+        await selectDepth("1");
+        await show({ ...response });
+        expect(host.querySelector('[aria-label="JSON expansion depth"]')?.textContent).toBe("All");
+        await show({ ...response, body_text: "plain text" });
+        expect(host.querySelector('[aria-label="JSON expansion depth"]')).toBeNull();
+        await show();
+        expect(host.querySelector('[aria-label="JSON expansion depth"]')?.textContent).toBe("All");
+    });
+});
