@@ -990,7 +990,7 @@ button.pg-request-tab-close:hover:not(:disabled) .pg-request-tab-close-icon {
 
 .pg-json-fold-toolbar { position: absolute; top: 10px; left: 12px; z-index: 4; display: flex; align-items: center; gap: 8px; }
 .pg-json-depth { display: flex; align-items: center; gap: 4px; margin-left: 12px; font-size: 11px; color: var(--pg-text-muted); }
-.pg-json-depth .pg-app-select-trigger { width: 72px; min-width: 72px; height: auto; min-height: 0; border: 0; background: transparent; box-shadow: none; }
+.pg-json-depth .pg-app-select-trigger { width: auto; min-width: 80px; height: auto; min-height: 0; border: 0; background: transparent; box-shadow: none; }
 .pg-json-fold-toolbar button, .pg-json-disclosure { border: 0; background: transparent; color: var(--pg-text-muted); cursor: pointer; transition: color 120ms ease, background 120ms ease; }
 .pg-json-fold-toolbar button { font: inherit; font-size: 11px; border-radius: 4px; padding: 4px 6px; }
 .pg-json-fold-toolbar button:hover, .pg-json-disclosure:hover { background: var(--pg-surface-alt); color: var(--pg-text); }
