@@ -59,6 +59,71 @@ async function context(token: string, target?: HTMLElement) {
 }
 function menu() { return document.querySelector<HTMLElement>('[role="menu"]'); }
 
+describe("response JSON row layout", () => {
+    const object = {
+        name: "Quentin",
+        address: { city: "Brussels", geo: { lat: 1, lng: 2 } },
+        company: { name: "Bifrost", roles: ["dev", "admin"] },
+        active: true, empty: {}, nil: null,
+    };
+    it.each(["dark", "light"].flatMap(theme => [
+        { theme, kind: "object", value: object },
+        { theme, kind: "array", value: [object, [1, { nested: [{ id: 1 }] }], [], false] },
+    ]))("keeps shared row structure and inline control sizing through repeated folds: $theme $kind", async ({ theme, value }) => {
+        const style = document.createElement("style");
+        // Vitest stubs CSS imports; load the actual cascade without adding Node types to the app.
+        const { readFileSync } = await vi.importActual<{ readFileSync: (path: URL, encoding: "utf8") => string }>("node:fs");
+        style.textContent = ["../App.css", "../design/qvb-tokens.css", "../design/bifrost-qvb.css"]
+            .map(path => readFileSync(new URL(path, import.meta.url), "utf8")).join("\n");
+        document.head.append(style);
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.visualIdentity = "qvb";
+        try {
+            await render(value);
+            const snapshot = (row: HTMLElement) => ({
+                columns: getComputedStyle(row).gridTemplateColumns,
+                children: Array.from(row.children, child => child.className),
+                indent: row.querySelector(".pg-json-indent")!.textContent,
+                slotHeight: getComputedStyle(row.querySelector(".pg-json-disclosure-slot")!).height,
+            });
+            const baseline = new Map(Array.from(host.querySelectorAll<HTMLElement>(".pg-json-row"), row => [row.dataset.jsonNodeOffset, snapshot(row)]));
+            const paths = Array.from(host.querySelectorAll<HTMLButtonElement>(".pg-json-disclosure"), control => control.getAttribute("aria-label")!.slice("Collapse ".length));
+            const checkRows = () => {
+                for (const row of host.querySelectorAll<HTMLElement>(".pg-json-row")) {
+                    expect(snapshot(row)).toEqual(baseline.get(row.dataset.jsonNodeOffset));
+                    expect(getComputedStyle(row).display).toBe("grid");
+                    expect(Array.from(row.children, child => child.className)).toEqual([
+                        "pg-json-indent", "pg-json-disclosure-slot", "pg-json-line-content",
+                    ]);
+                    // The gutter follows the text line, including on primitive/empty rows.
+                    expect(getComputedStyle(row.querySelector(".pg-json-disclosure-slot")!).height).toBe("1lh");
+                }
+                for (const control of host.querySelectorAll<HTMLButtonElement>(".pg-json-disclosure, .pg-json-fold-preview")) {
+                    // Neither control may inherit the global 30px form-control minimum.
+                    expect(parseFloat(getComputedStyle(control).minHeight)).toBe(0);
+                    if (control.classList.contains("pg-json-disclosure")) {
+                        expect(getComputedStyle(control).width).toBe("100%");
+                        expect(getComputedStyle(control).height).toBe("100%");
+                        expect(control.parentElement!.className).toBe("pg-json-disclosure-slot");
+                    }
+                }
+            };
+            checkRows();
+            for (let cycle = 0; cycle < 2; cycle++) {
+                // Folding descendants before parents also exercises retained nested state.
+                for (const path of [...paths].reverse()) { await click(button(`Collapse ${path}`)); checkRows(); }
+                for (const path of paths) { await click(button(`Expand ${path}`)); checkRows(); }
+                await click(button("Collapse All")); checkRows();
+                await click(button("Expand All")); checkRows();
+            }
+        } finally {
+            style.remove();
+            delete document.documentElement.dataset.theme;
+            delete document.documentElement.dataset.visualIdentity;
+        }
+    });
+});
+
 describe("response JSON contextual copy actions", () => {
     it.each(["Quentin", "", 'é🦄\n"\\', 42, -2.5, true, false, null])("copies primitive %j without keys and restores focus", async value => {
         await render({ selected: value, sibling: 1 });
