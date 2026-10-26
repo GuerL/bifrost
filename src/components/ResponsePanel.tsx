@@ -1,5 +1,4 @@
 import { expandedJson, resolveJsonFoldSnapshot, toggleJsonFold, visibleJsonContainers, type JsonFoldState, type JsonFoldSnapshot } from "../helpers/responseJsonFolding.ts";
-import { Fragment } from "react";
 import { editorSurfaceStyle } from "../design/editorTheme.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -358,23 +357,36 @@ export default function ResponsePanel({
             }
             return spans;
         };
+        const text = bodyView.displayText;
+        const rows = [];
         let cursor = 0;
-        const result = foldRanges.map(range => {
-            const prefix = renderText(cursor, range.start);
-            cursor = range.end;
-            const label = jsonPathIndex?.pathAt(range.node.start) ?? "$";
-            return <Fragment key={range.start}>
-                {prefix}<span className="pg-json-disclosure-slot"><button type="button" className="pg-json-disclosure"
+        let rangeIndex = 0;
+        while (cursor < text.length) {
+            const lineStart = cursor;
+            while (text[cursor] === " ") cursor++;
+            const contentStart = cursor;
+            const range = foldRanges[rangeIndex]?.start === contentStart ? foldRanges[rangeIndex++] : undefined;
+            const contentEnd = range?.collapsed ? range.end : contentStart;
+            const newline = text.indexOf("\n", contentEnd);
+            const lineEnd = newline < 0 ? text.length : newline;
+            const label = range ? jsonPathIndex?.pathAt(range.node.start) ?? "$" : "";
+            rows.push(<span className="pg-json-row" key={lineStart}>
+                <span className="pg-json-indent">{renderText(lineStart, contentStart)}</span>
+                <span className="pg-json-disclosure-slot">{range && <button type="button" className="pg-json-disclosure"
                     aria-label={`${range.collapsed ? "Expand" : "Collapse"} ${label}`} aria-expanded={!range.collapsed}
                     onClick={event => { event.stopPropagation(); setFolds(toggleJsonFold(folds, range.node)); }}
                     onContextMenu={event => event.stopPropagation()}>
                     <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d={range.collapsed ? "M3 1L7 5L3 9" : "M1 3L5 7L9 3"} fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
-                </button></span>
-                {renderText(range.start, range.node.valueStart)}
-                {range.collapsed && <><span data-json-offset={range.node.valueStart} data-json-anchor="">{range.node.array ? "[…]" : "{…}"}</span><span className="pg-json-fold-count" data-json-offset={range.node.valueStart} data-json-anchor=""> {range.node.count} {range.node.array ? (range.node.count === 1 ? "item" : "items") : (range.node.count === 1 ? "key" : "keys")}</span></>}
-            </Fragment>;
-        });
-        return <>{result}{renderText(cursor, bodyView.displayText.length)}</>;
+                </button>}</span>
+                <span className="pg-json-line-content">
+                    {renderText(contentStart, range?.collapsed ? range.node.valueStart : lineEnd)}
+                    {range?.collapsed && <><span data-json-offset={range.node.valueStart} data-json-anchor="">{range.node.array ? "[…]" : "{…}"}</span><span className="pg-json-fold-count" data-json-offset={range.node.valueStart} data-json-anchor=""> {range.node.count} {range.node.array ? (range.node.count === 1 ? "item" : "items") : (range.node.count === 1 ? "key" : "keys")}</span>{renderText(range.end, lineEnd)}</>}
+                    {newline >= 0 && renderText(newline, newline + 1)}
+                </span>
+            </span>);
+            cursor = lineEnd + 1;
+        }
+        return rows;
     }
 
     return (
@@ -578,7 +590,7 @@ export default function ResponsePanel({
                                         className="bf-code-surface"
                                         tabIndex={0}
                                         aria-label="Response body"
-                                        style={{ ...responsePreStyle(bodyView.canPreview || !!jsonPathIndex?.containers.some(node => node.count > 0)), ...(jsonPathIndex ? { paddingLeft: 28 } : {}) }}
+                                        style={{ ...responsePreStyle(bodyView.canPreview || !!jsonPathIndex?.containers.some(node => node.count > 0)) }}
                                     >
                                         {findOpen && hasFindQuery
                                             ? bodyHighlightSegments.map((segment, index) =>

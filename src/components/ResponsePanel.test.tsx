@@ -21,6 +21,28 @@ describe("response JSON disclosure integration", () => {
         expect(html).toContain('42');
     });
 
+    it.each([
+        { object: { nested: [{ value: 42 }, 7], primitive: true, empty: {} }, sibling: null },
+        [{ nested: { value: 42 }, primitive: true }, [], 7],
+    ])("preserves formatted lines and reserves a disclosure slot at every depth: %j", body => {
+        const formatted = JSON.stringify(body, null, 2);
+        const html = render(JSON.stringify(body));
+        const rows = [...html.matchAll(/<span class="pg-json-row">([\s\S]*?)(?=<span class="pg-json-row">|<\/pre>)/g)];
+        expect(rows).toHaveLength(formatted.split("\n").length);
+        expect(html.match(/class="pg-json-disclosure-slot"/g)).toHaveLength(rows.length);
+        const visibleText = rows.map(([, row]) => row
+            .replace(/<button[\s\S]*?<\/button>/g, "")
+            .replace(/<[^>]*>/g, "")
+            .replace(/&quot;/g, '\"'))
+            .join("");
+        expect(visibleText).toBe(formatted);
+        for (const [index, [, row]] of rows.entries()) {
+            const indent = formatted.split("\n")[index].match(/^ */)![0];
+            const indentHtml = row.match(/<span class="pg-json-indent">([\s\S]*?)<\/span>/)![1];
+            expect(indentHtml.replace(/<[^>]*>/g, "")).toBe(indent);
+        }
+    });
+
     it.each(['{}', '[]', 'null', '42', '"hello"', '{invalid', '<html>hello</html>'])("keeps empty, primitive, invalid and non-JSON responses readable: %s", body => {
         const html = render(body);
         expect(html).not.toContain('class="pg-json-disclosure"');
