@@ -7689,6 +7689,7 @@ export default function App() {
                                     }}
                                 >
                                     <ResponsePanel
+                                        requestId={selectedRequestId}
                                         response={selectedTransportError ? null : resp}
                                         statusText={selectedResponseStatusText}
                                         requestMethod={draft.method}

@@ -1,3 +1,5 @@
+import { expandedJson, resolveJsonFoldSnapshot, toggleJsonFold, visibleJsonContainers, type JsonFoldState, type JsonFoldSnapshot } from "../helpers/responseJsonFolding.ts";
+import { Fragment } from "react";
 import { editorSurfaceStyle } from "../design/editorTheme.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -46,6 +48,7 @@ type HighlightSegment = {
 };
 
 type ResponsePanelProps = {
+    requestId?: string | null;
     response: HttpResponseDto | null;
     statusText: string;
     requestMethod?: string;
@@ -71,6 +74,7 @@ type ResponsePanelProps = {
 };
 
 export default function ResponsePanel({
+    requestId,
     response,
     statusText,
     requestMethod,
@@ -96,6 +100,12 @@ export default function ResponsePanel({
         () => bodyView.isJson ? indexResponseJson(bodyView.displayText) : null,
         [bodyView.displayText, bodyView.isJson]
     );
+    const [foldSnapshot, setFoldSnapshot] = useState<JsonFoldSnapshot>({ response, requestId, text: bodyView.displayText, state: expandedJson });
+    const currentFoldSnapshot = resolveJsonFoldSnapshot(foldSnapshot, response, requestId, bodyView.displayText);
+    const folds = currentFoldSnapshot.state;
+    if (currentFoldSnapshot !== foldSnapshot) setFoldSnapshot(currentFoldSnapshot);
+    const setFolds = (state: JsonFoldState) => setFoldSnapshot({ response, requestId, text: bodyView.displayText, state });
+    const foldRanges = useMemo(() => visibleJsonContainers(jsonPathIndex?.containers ?? [], folds), [jsonPathIndex, folds]);
     const cookies = useMemo(() => extractCookies(response), [response]);
     const isBinaryResponse = response?.body?.kind === "binary";
     const canSaveResponse = !!response?.body?.body_id && response.body.available && response.body.downloadable;
@@ -218,7 +228,7 @@ export default function ResponsePanel({
                 return;
             }
 
-            if (event.key === "Enter") {
+            if (event.key === "Enter" && !(event.target instanceof HTMLElement && event.target.closest("button"))) {
                 event.preventDefault();
                 if (event.shiftKey) {
                     moveToPreviousMatch();
@@ -322,6 +332,50 @@ export default function ResponsePanel({
             setSaveState("idle");
         }
     };
+
+    function renderFoldedJson() {
+        // Binary-search past folded descendants rather than processing or mounting them.
+        let tokenIndex = 0;
+        const renderText = (start: number, end: number) => {
+            const spans = [];
+            let low = tokenIndex, high = jsonTokens.length;
+            while (low < high) {
+                const mid = (low + high) >>> 1;
+                if (jsonTokens[mid].start + jsonTokens[mid].text.length <= start) low = mid + 1;
+                else high = mid;
+            }
+            tokenIndex = low;
+            while (tokenIndex < jsonTokens.length) {
+                const token = jsonTokens[tokenIndex];
+                const tokenEnd = token.start + token.text.length;
+                if (tokenEnd <= start) { tokenIndex++; continue; }
+                if (token.start >= end) break;
+                const from = Math.max(start, token.start);
+                const to = Math.min(end, tokenEnd);
+                spans.push(<span key={from} data-json-offset={from} style={jsonTokenStyle(token.type)}>{token.text.slice(from - token.start, to - token.start)}</span>);
+                if (tokenEnd > end) break;
+                tokenIndex++;
+            }
+            return spans;
+        };
+        let cursor = 0;
+        const result = foldRanges.map(range => {
+            const prefix = renderText(cursor, range.start);
+            cursor = range.end;
+            const label = jsonPathIndex?.pathAt(range.node.start) ?? "$";
+            return <Fragment key={range.start}>
+                {prefix}<span className="pg-json-disclosure-slot"><button type="button" className="pg-json-disclosure"
+                    aria-label={`${range.collapsed ? "Expand" : "Collapse"} ${label}`} aria-expanded={!range.collapsed}
+                    onClick={event => { event.stopPropagation(); setFolds(toggleJsonFold(folds, range.node)); }}
+                    onContextMenu={event => event.stopPropagation()}>
+                    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d={range.collapsed ? "M3 1L7 5L3 9" : "M1 3L5 7L9 3"} fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
+                </button></span>
+                {renderText(range.start, range.node.valueStart)}
+                {range.collapsed && <><span data-json-offset={range.node.valueStart} data-json-anchor="">{range.node.array ? "[…]" : "{…}"}</span><span className="pg-json-fold-count" data-json-offset={range.node.valueStart} data-json-anchor=""> {range.node.count} {range.node.array ? (range.node.count === 1 ? "item" : "items") : (range.node.count === 1 ? "key" : "keys")}</span></>}
+            </Fragment>;
+        });
+        return <>{result}{renderText(cursor, bodyView.displayText.length)}</>;
+    }
 
     return (
         <div
@@ -485,6 +539,12 @@ export default function ResponsePanel({
                                     {saveState === "saving" ? "Saving..." : "Save response"}
                                 </button>
                             )}
+                            {jsonPathIndex?.containers.some(node => node.count > 0) && bodyMode === "raw" && (
+                                <div className="pg-json-fold-toolbar">
+                                    <button disabled={findOpen && hasFindQuery} onClick={() => setFolds({ collapsed: true, overrides: new Set() })}>Collapse All</button>
+                                    <button disabled={findOpen && hasFindQuery} onClick={() => setFolds(expandedJson)}>Expand All</button>
+                                </div>
+                            )}
                             {bodyView.canPreview && (
                                 <div style={bodyModeControlsStyle(bodyControlsHovered, !!bodyView.copyText || canSaveResponse)}>
                                     <button
@@ -518,7 +578,7 @@ export default function ResponsePanel({
                                         className="bf-code-surface"
                                         tabIndex={0}
                                         aria-label="Response body"
-                                        style={responsePreStyle(bodyView.canPreview)}
+                                        style={{ ...responsePreStyle(bodyView.canPreview || !!jsonPathIndex?.containers.some(node => node.count > 0)), ...(jsonPathIndex ? { paddingLeft: 28 } : {}) }}
                                     >
                                         {findOpen && hasFindQuery
                                             ? bodyHighlightSegments.map((segment, index) =>
@@ -538,11 +598,7 @@ export default function ResponsePanel({
                                                 )
                                             )
                                             : bodyView.isJson
-                                            ? jsonTokens.map((token, index) => (
-                                                <span key={`${token.type}-${index}`} data-json-offset={token.start} style={jsonTokenStyle(token.type)}>
-                                                    {token.text}
-                                                </span>
-                                            ))
+                                            ? renderFoldedJson()
                                             : bodyView.displayText}
                                     </pre>
                                 </ResponseBodyContextMenu>

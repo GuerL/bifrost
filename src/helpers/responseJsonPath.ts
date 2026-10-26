@@ -21,7 +21,10 @@ export function bifrostExpressionFromSegments(segments: readonly (string | numbe
     return "bf.response.json()" + propertyAccessors(segments);
 }
 
+export type JsonContainer = { start: number; valueStart: number; end: number; count: number; array: boolean; depth: number };
+
 export type ResponseJsonIndex = {
+    containers: JsonContainer[];
     segmentsAt: (offset: number) => (string | number)[] | null;
     pathAt: (offset: number) => string | null;
 };
@@ -38,6 +41,7 @@ export function indexResponseJson(text: string): ResponseJsonIndex | null {
         return null;
     }
     const nodes: JsonPathNode[] = [];
+    const containers: JsonContainer[] = [];
     let cursor = 0;
     function visit(value: unknown, parent: JsonPathNode | null, segment: string | number | null, depth: number, keyStart?: number) {
         const node: JsonPathNode = { start: keyStart ?? cursor, end: 0, parent, segment };
@@ -45,6 +49,8 @@ export function indexResponseJson(text: string): ResponseJsonIndex | null {
         if (value !== null && typeof value === "object") {
             const array = Array.isArray(value);
             const entries = Object.entries(value);
+            const container: JsonContainer = { start: node.start, valueStart: cursor, end: 0, count: entries.length, array, depth };
+            containers.push(container);
             cursor++; // Opening brace/bracket.
             entries.forEach(([key, child], index) => {
                 cursor += 1 + (depth + 1) * 2; // Newline and indentation.
@@ -55,6 +61,7 @@ export function indexResponseJson(text: string): ResponseJsonIndex | null {
             });
             if (entries.length) cursor += 1 + depth * 2;
             cursor++; // Closing brace/bracket.
+            container.end = cursor;
         } else {
             cursor += JSON.stringify(value).length;
         }
@@ -86,6 +93,7 @@ export function indexResponseJson(text: string): ResponseJsonIndex | null {
         return segments.reverse();
     }
     return {
+        containers,
         segmentsAt,
         pathAt(offset) {
             const segments = segmentsAt(offset);
@@ -121,5 +129,5 @@ export function responseTextOffsetAtPoint(root: HTMLElement, x: number, y: numbe
     const prefix = doc.createRange();
     prefix.selectNodeContents(span);
     prefix.setEnd(node, character.startOffset);
-    return Number(span.dataset.jsonOffset) + prefix.toString().length;
+    return Number(span.dataset.jsonOffset) + (span.hasAttribute("data-json-anchor") ? 0 : prefix.toString().length);
 }
