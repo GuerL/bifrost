@@ -1383,6 +1383,22 @@ fn resolve_request_vars(
     let mut unresolved = HashSet::new();
     let mut dynamic_values = HashMap::new();
 
+    // Extract query data before substitution so resolved &, =, ? and # cannot
+    // change URL structure. This also covers legacy URL-only saved requests.
+    let hash_index = req.url.find('#').unwrap_or(req.url.len());
+    if let Some(query_index) = req.url[..hash_index].find('?') {
+        if req.query.is_empty() {
+            let mut query_url = reqwest::Url::parse("http://localhost").unwrap();
+            query_url.set_query(Some(&req.url[query_index + 1..hash_index]));
+            req.query = query_url.query_pairs().map(|(key, value)| KeyValue {
+                key: key.into_owned(),
+                value: value.into_owned(),
+                enabled: true,
+            }).collect();
+        }
+        req.url = format!("{}{}", &req.url[..query_index], &req.url[hash_index..]);
+    }
+
     req.url = replace_vars_in_text(&req.url, vars, &mut unresolved, &mut dynamic_values);
 
     for kv in req.headers.iter_mut() {
@@ -2663,6 +2679,52 @@ mod tests {
         let request = build_request();
         assert!(is_generated_header_enabled(&request, "content-type"));
         assert!(is_generated_header_enabled(&request, "host"));
+    }
+
+    #[test]
+    fn query_templates_resolve_before_encoding_without_changing_structure() {
+        for method in [HttpMethod::Get, HttpMethod::Post] {
+            for structured in [false, true] {
+                let mut request = build_request();
+                request.method = method.clone();
+                request.url = "https://example.com/api?q={{first}}-{{last}}&tag=one&tag=two&literal=a%26b#section".into();
+                if structured {
+                    request.query = reqwest::Url::parse(&request.url).unwrap().query_pairs()
+                        .map(|(key, value)| KeyValue { key: key.into_owned(), value: value.into_owned(), enabled: true }).collect();
+                }
+                let original = request.clone();
+                let vars = HashMap::from([
+                    ("first".into(), "hello world&x=1?#%+{}".into()),
+                    ("last".into(), "世界".into()),
+                ]);
+                let (resolved, unresolved) = resolve_request_vars(request, &vars);
+                assert!(unresolved.is_empty());
+                let url = apply_query_params_to_url(reqwest::Url::parse(&resolved.url).unwrap(), &resolved.query);
+                assert_eq!(url.query_pairs().collect::<Vec<_>>(), vec![
+                    ("q".into(), "hello world&x=1?#%+{}-世界".into()),
+                    ("tag".into(), "one".into()), ("tag".into(), "two".into()),
+                    ("literal".into(), "a&b".into()),
+                ]);
+                assert_eq!(url.fragment(), Some("section"));
+                assert!(original.url.contains("{{first}}"));
+            }
+        }
+    }
+
+    #[test]
+    fn query_resolution_keeps_unresolved_policy_and_disabled_rows() {
+        let mut request = build_request();
+        request.url = "https://example.com?q={{missing}}".into();
+        let (resolved, unresolved) = resolve_request_vars(request, &HashMap::new());
+        assert_eq!(unresolved, vec!["missing"]);
+        assert_eq!(resolved.query[0].value, "{{missing}}");
+
+        let mut request = build_request();
+        request.url = "https://example.com?disabled=stale".into();
+        request.query = vec![KeyValue { key: "disabled".into(), value: "value".into(), enabled: false }];
+        let (resolved, _) = resolve_request_vars(request, &HashMap::new());
+        let url = apply_query_params_to_url(reqwest::Url::parse(&resolved.url).unwrap(), &resolved.query);
+        assert_eq!(url.query_pairs().count(), 0);
     }
 
     #[test]

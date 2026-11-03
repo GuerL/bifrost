@@ -184,3 +184,13 @@ describe("parseCurlCommand", () => {
         expect(curl).toContain(`-F 'file=@/tmp/it'"'"'s.png'`);
     });
 });
+
+
+it("round trips query templates and encoded literals through cURL", () => {
+    const url = "https://example.com?q={{name}}&tag=one&tag=two&literal=a%26b";
+    const command = buildCurlCommand({ method: "POST", url, query: [
+        { key: "q", value: "{{name}}" }, { key: "tag", value: "one" },
+        { key: "tag", value: "two" }, { key: "literal", value: "a&b" },
+    ] });
+    expect(parseCurlCommand(command).url).toBe(url);
+});

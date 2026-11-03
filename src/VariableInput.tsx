@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+
+import { createPortal } from "react-dom";
 
 export type VariableStatus = "ok" | "missing";
 
@@ -135,7 +137,7 @@ export default function VariableInput({
     containerStyle,
     style,
 }: VariableInputProps) {
-    const containerRef = useRef<HTMLDivElement | null>(null);
+    const tooltipRef = useRef<HTMLDivElement | null>(null);
     const overlayContentRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLInputElement | null>(null);
     const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -214,6 +216,35 @@ export default function VariableInput({
         });
     }, [value]);
 
+    useLayoutEffect(() => {
+        const tooltip = tooltipRef.current;
+        if (!hoverState || !tooltip) return;
+        const rect = tooltip.getBoundingClientRect();
+        const margin = 8;
+        tooltip.style.left = `${Math.max(margin, Math.min(hoverState.left, window.innerWidth - rect.width - margin))}px`;
+        // Flip above the pointer when there is insufficient space below it.
+        const top = hoverState.top + rect.height > window.innerHeight - margin
+            ? hoverState.top - 28 - rect.height
+            : hoverState.top;
+        tooltip.style.top = `${Math.max(margin, Math.min(top, window.innerHeight - rect.height - margin))}px`;
+    }, [hoverState]);
+
+    const isHovering = hoverState !== null;
+    useEffect(() => {
+        if (!isHovering) return;
+        // Capture scrolls from any ancestor, including the Params editor. Re-hovering
+        // computes fresh viewport coordinates without leaving a detached tooltip.
+        const dismiss = () => setHoverState(null);
+        window.addEventListener("scroll", dismiss, true);
+        window.addEventListener("resize", dismiss);
+        window.addEventListener("blur", dismiss);
+        return () => {
+            window.removeEventListener("scroll", dismiss, true);
+            window.removeEventListener("resize", dismiss);
+            window.removeEventListener("blur", dismiss);
+        };
+    }, [isHovering]);
+
     function syncScroll(scrollLeft: number) {
         if (!overlayContentRef.current) return;
         overlayContentRef.current.style.transform = `translateX(${-scrollLeft}px)`;
@@ -279,8 +310,6 @@ export default function VariableInput({
             setHoverState(null);
             return;
         }
-        const container = containerRef.current;
-        if (!container) return;
 
         const charIndex = characterIndexAtPointer(e.clientX);
         const hoveredMatch =
@@ -291,10 +320,9 @@ export default function VariableInput({
             return;
         }
 
-        const containerRect = container.getBoundingClientRect();
         setHoverState({
-            left: e.clientX - containerRect.left + 10,
-            top: e.clientY - containerRect.top + 18,
+            left: e.clientX + 10,
+            top: e.clientY + 18,
             match: hoveredMatch,
             resolvedValue: resolveVariableValue?.(hoveredMatch.name),
         });
@@ -332,7 +360,6 @@ export default function VariableInput({
 
     return (
         <div
-            ref={containerRef}
             style={{
                 display: "flex",
                 position: "relative",
@@ -486,14 +513,20 @@ export default function VariableInput({
                 </div>
             )}
 
-            {hoverState && (
+            {hoverState && createPortal(
                 <div
+                    ref={tooltipRef}
+                    role="tooltip"
                     style={{
-                        position: "absolute",
+                        position: "fixed",
                         zIndex: 9,
                         left: hoverState.left,
                         top: hoverState.top,
-                        maxWidth: 380,
+                        maxWidth: "min(380px, calc(100vw - 16px))",
+                        maxHeight: "calc(100vh - 16px)",
+                        boxSizing: "border-box",
+                        overflowWrap: "anywhere",
+                        overflowY: "auto",
                         padding: "8px 10px",
                         borderRadius: 8,
                         border: "1px solid var(--pg-border)",
@@ -511,7 +544,8 @@ export default function VariableInput({
                         {"}}"}
                     </div>
                     <div>{variableValueLabel(hoverState.match.status, hoverState.resolvedValue)}</div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );

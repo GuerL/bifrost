@@ -59,6 +59,7 @@ import {
 import {
     buildUrlWithQueryParams,
     reconcileUrlQueryWithParams,
+    synchronizeEditableUrl,
 } from "./helpers/queryParams.ts";
 import {
     getRunnerSelectedRequestsForCollection,
@@ -3251,7 +3252,7 @@ export default function App() {
                 return;
             }
         }
-        const effectiveUrl = buildUrlWithQueryParams(draft.url, draft.query);
+        const effectiveUrl = synchronizeEditableUrl(draft.url, draft.query);
         if (effectiveUrl === draft.url) return;
         updateDraft({ url: effectiveUrl });
     }, [draft, selectedRequestIsRunning, updateDraft]);

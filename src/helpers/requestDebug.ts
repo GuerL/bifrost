@@ -14,7 +14,7 @@ import {
     generatedHeaderControlMap,
     generatedHeaderLabel,
 } from "./requestHeadersPreview.ts";
-import { effectiveRequestUrl } from "./queryParams.ts";
+import { resolveExecutableUrl } from "./queryParams.ts";
 
 const VARIABLE_PATTERN = /{{\s*([^{}]+?)\s*}}/g;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
@@ -255,7 +255,13 @@ export function buildRequestDebugInfo(args: {
     generalSettings?: GeneralSettings;
 }): RequestDebugInfo {
     const variableValues = args.variableValues ?? new Map<string, string>();
-    const resolvedUrl = resolveKnownVariables(effectiveRequestUrl(args.request), variableValues);
+    const unresolved = new Set<string>();
+    const resolvedUrlValue = resolveExecutableUrl(args.request, (text) => {
+        const result = resolveKnownVariables(text, variableValues);
+        result.unresolvedVariables.forEach((name) => unresolved.add(name));
+        return result.value;
+    });
+    const resolvedUrl = { value: resolvedUrlValue, unresolvedVariables: [...unresolved].sort() };
     const generatedRows = buildGeneratedHeadersPreview({
         request: args.request,
         variableValues,

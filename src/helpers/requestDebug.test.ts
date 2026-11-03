@@ -169,3 +169,17 @@ describe("buildRequestDebugText", () => {
         expect(text).toContain("TLS validation: enabled");
     });
 });
+
+
+it("previews resolved query values safely while retaining editable templates", () => {
+    const request = buildRequest({
+        url: "https://example.com?q={{search}}&missing={{missing}}",
+        query: [{ key: "q", value: "{{search}}", enabled: true }, { key: "missing", value: "{{missing}}", enabled: true }],
+    });
+    const info = buildRequestDebugInfo({ request, variableValues: new Map([["search", "hello world&x=1?#世界"]]) });
+    expect([...new URL(info.resolvedUrl).searchParams]).toEqual([
+        ["q", "hello world&x=1?#世界"], ["missing", "{{missing}}"],
+    ]);
+    expect(info.unresolvedVariables).toEqual(["missing"]);
+    expect(request.query[0].value).toBe("{{search}}");
+});
