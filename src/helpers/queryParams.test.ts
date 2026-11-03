@@ -6,6 +6,8 @@ import {
     parseQueryString,
     reconcileUrlQueryWithParams,
     serializeQueryParams,
+    synchronizeEditableUrl,
+    resolveExecutableUrl,
 } from "./queryParams.ts";
 
 function request(overrides: Partial<Request> = {}): Request {
@@ -164,5 +166,57 @@ describe("query param URL synchronization", () => {
             query: [{ key: "foo", value: "1", enabled: true }],
             auth: { type: "api_key", key: "token", value: "abc", in: "query" },
         }))).toBe("https://example.com/api?foo=1&token=abc");
+    });
+});
+
+
+describe("editable URL fidelity", () => {
+    it.each([
+        "https://example.com/users?",
+        "https://example.com/users?name",
+        "https://example.com/users?name=",
+        "https://example.com/users?name={{name}}&tag=one&tag=two",
+        "https://example.com/users?q=hello%20world&other=%2b&literal=%25#fragment?x=1",
+        "https://example.com/users?=value&&q=a+",
+        "https://example.com/users",
+    ])("keeps raw input and reaches a stable synchronization state: %s", (url) => {
+        const query = reconcileUrlQueryWithParams([], url);
+        expect(synchronizeEditableUrl(url, query)).toBe(url);
+        expect(synchronizeEditableUrl(synchronizeEditableUrl(url, query), query)).toBe(url);
+    });
+
+    it("switches editors, persists templates, and preserves disabled rows and duplicates", () => {
+        const url = "https://example.com/users?name={{name}}&tag=one&tag=two#section";
+        const query = reconcileUrlQueryWithParams([{ key: "debug", value: "true", enabled: false }], url);
+        const saved = JSON.parse(JSON.stringify(request({ url, query })));
+        expect(synchronizeEditableUrl(saved.url, saved.query)).toBe(url);
+        query[1].value = "{{first}} {{last}}";
+        const edited = buildUrlWithQueryParams(url, query);
+        expect(edited).toBe("https://example.com/users?name={{first}}+{{last}}&tag=one&tag=two#section");
+        expect(reconcileUrlQueryWithParams(query, edited)).toEqual(query);
+        expect(reconcileUrlQueryWithParams(query, "https://example.com/users?")).toEqual([query[0]]);
+    });
+
+    it("hydrates legacy base-only URLs without encoding templates", () => {
+        expect(synchronizeEditableUrl("https://example.com", [{ key: "q", value: "{{name}}", enabled: true }]))
+            .toBe("https://example.com?q={{name}}");
+    });
+
+    it.each(["{}", "hello world", "abc&def=123", "?#", "%", "+", "世界", "%26"])(
+        "encodes resolved data once: %s", (value) => {
+            const original = request({ url: "https://example.com?q={{name}}", query: [{ key: "q", value: "{{name}}", enabled: true }] });
+            const resolved = resolveExecutableUrl(original, (text) => text.split("{{name}}").join(value));
+            expect([...new URL(resolved).searchParams]).toEqual([["q", value]]);
+            expect(original.query[0].value).toBe("{{name}}");
+            expect(original.url).toContain("{{name}}");
+        }
+    );
+
+    it("decodes encoded literals once and resolves multiple templates in each component", () => {
+        const original = request({ url: "https://example.com?q={{first}}-{{last}}&literal=a%26b%3Dc&missing={{unknown}}" });
+        const resolve = (text: string) => text.split("{{first}}").join("A&B").split("{{last}}").join("世界");
+        expect([...new URL(resolveExecutableUrl(original, resolve)).searchParams]).toEqual([
+            ["q", "A&B-世界"], ["literal", "a&b=c"], ["missing", "{{unknown}}"],
+        ]);
     });
 });

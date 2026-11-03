@@ -43,12 +43,43 @@ export function enabledQueryParams(query: KeyValue[]): KeyValue[] {
     return query.filter((entry) => entry.enabled !== false && entry.key.trim().length > 0);
 }
 
+function encodeQueryComponent(value: string): string {
+    return new URLSearchParams([["", value]]).toString().slice(1);
+}
+
+// Templates belong to the editor language; encode only the surrounding URL data.
+function encodeEditableComponent(value: string): string {
+    return value.split(/({{[^{}]*}})/g).map((part, index) =>
+        index % 2 === 1 ? part : encodeQueryComponent(part)
+    ).join("");
+}
+
 export function serializeQueryParams(query: KeyValue[]): string {
+    return enabledQueryParams(query).map((entry) =>
+        `${encodeEditableComponent(entry.key)}=${encodeEditableComponent(entry.value)}`
+    ).join("&");
+}
+
+// Reconcile legacy/base-only saved URLs without rewriting equivalent raw input.
+export function synchronizeEditableUrl(url: string, query: KeyValue[]): string {
+    const parsed = parseQueryString(splitUrlQuery(url).query);
+    const active = query.filter((entry) => entry.enabled !== false);
+    if (parsed.length === active.length && parsed.every((entry, index) =>
+        entry.key === active[index].key && entry.value === active[index].value
+    )) return url;
+    return buildUrlWithQueryParams(url, query);
+}
+
+// Reuse the caller's resolver on decoded components, then encode exactly once.
+export function resolveExecutableUrl(request: Request, resolve: (text: string) => string): string {
+    const { beforeQuery, hash } = splitUrlQuery(request.url);
     const params = new URLSearchParams();
-    for (const entry of enabledQueryParams(query)) {
-        params.append(entry.key, entry.value);
+    const query = request.query.length ? request.query : parseQueryString(splitUrlQuery(request.url).query);
+    for (const entry of enabledQueryParams([...query, ...authQueryParam(request.auth)])) {
+        params.append(resolve(entry.key), resolve(entry.value));
     }
-    return params.toString();
+    const serialized = params.toString();
+    return `${resolve(beforeQuery)}${serialized ? `?${serialized}` : ""}${resolve(hash)}`;
 }
 
 export function buildUrlWithQueryParams(url: string, query: KeyValue[]): string {
